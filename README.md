@@ -83,5 +83,6 @@ Then open:
 - `PRODUCT_OPTIONS.md`
 - `DOCKER_DEPLOY.md`
 - `PRODUCTION_DEPLOY.md`
+- `VPS_AUDIT_AND_DEPLOYMENT_SAFETY.md`
 - `VIDEO_PLAN.md`
 - `django_backend\README.md`
