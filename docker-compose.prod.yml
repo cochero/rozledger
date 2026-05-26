@@ -1,9 +1,6 @@
 version: "2.4"
 
 services:
-  web:
-    ports: []
-
   caddy:
     image: caddy:2.8
     container_name: rozledger_caddy

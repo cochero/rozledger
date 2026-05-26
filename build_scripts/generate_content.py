@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PAGES_DIR = ROOT / "pages"
 VIDEOS_DIR = ROOT / "videos"
-BASE_URL = os.getenv("ROZLEDGER_PUBLIC_URL", "http://192.168.68.103:18080").rstrip("/")
+BASE_URL = os.getenv("ROZLEDGER_PUBLIC_URL", "https://rozledger.in").rstrip("/")
 
 
 PAGES = [

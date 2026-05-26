@@ -29,8 +29,6 @@ services:
         condition: service_healthy
     env_file:
       - ./django_backend/.env.docker
-    ports:
-      - "${ROZLEDGER_HOST_PORT:-18080}:8000"
     healthcheck:
       test:
         [

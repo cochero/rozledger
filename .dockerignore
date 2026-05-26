@@ -1,5 +1,4 @@
 .git
-backend/.venv
 django_backend/.venv
 __pycache__
 *.pyc

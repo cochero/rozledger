@@ -126,22 +126,22 @@ Cons:
 
 Use this when you want login, saved invoices and cloud storage quickly.
 
-### Option 3: Flask plus SQLite
+### Option 3: Django REST Framework later
 
-Best only for quick local experiments.
+Best when the frontend becomes a separate React or mobile app.
 
 Pros:
 
-- Simple
-- Easy to run locally
-- Good for prototypes
+- Keeps the current Django/MySQL foundation
+- Adds cleaner API versioning
+- Better for authenticated app flows
 
 Cons:
 
-- Not ideal for the final SaaS product
-- No built-in admin panel
+- Extra dependency and API design work
+- Not needed for the current static frontend
 
-Keep the old Flask version only as a reference.
+Use this after paid Pro features need richer dashboards or mobile clients.
 
 ## Features to build next
 

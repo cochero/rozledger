@@ -47,7 +47,7 @@ Use this on your Ubuntu staging server:
 cd /home/user/RozLedger
 cp django_backend/.env.docker.example django_backend/.env.docker
 nano django_backend/.env.docker
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build
 ```
 
 Then open:
@@ -87,3 +87,8 @@ Then open:
 - `VPS_AUDIT_REPORT_185_193_19_146.md`
 - `VIDEO_PLAN.md`
 - `django_backend\README.md`
+
+## Architecture
+
+RozLedger's maintained backend is Django + MySQL in `django_backend`.
+The Docker entrypoint runs migrations, regenerates SEO sitemap files from `ROZLEDGER_PUBLIC_URL`, collects static files and starts Gunicorn.
