@@ -84,5 +84,6 @@ Then open:
 - `DOCKER_DEPLOY.md`
 - `PRODUCTION_DEPLOY.md`
 - `VPS_AUDIT_AND_DEPLOYMENT_SAFETY.md`
+- `VPS_AUDIT_REPORT_185_193_19_146.md`
 - `VIDEO_PLAN.md`
 - `django_backend\README.md`

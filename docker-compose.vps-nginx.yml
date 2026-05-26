@@ -1,0 +1,6 @@
+version: "2.4"
+
+services:
+  web:
+    ports:
+      - "127.0.0.1:${ROZLEDGER_HOST_PORT:-18080}:8000"
