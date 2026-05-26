@@ -1,0 +1,11 @@
+.git
+backend/.venv
+django_backend/.venv
+__pycache__
+*.pyc
+.env
+django_backend/.env
+django_backend/.env.docker
+data
+mysql_data
+*.log

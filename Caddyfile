@@ -1,0 +1,16 @@
+rozledger.in {
+  encode gzip
+  reverse_proxy web:8000
+}
+
+www.rozledger.in {
+  redir https://rozledger.in{uri} permanent
+}
+
+rozledger.com {
+  redir https://rozledger.in{uri} permanent
+}
+
+www.rozledger.com {
+  redir https://rozledger.in{uri} permanent
+}

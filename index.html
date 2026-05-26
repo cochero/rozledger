@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Free daily GST invoice, UPI payment link, WhatsApp reminder and profit planner for Indian freelancers, tutors, agencies and small shops."
+    />
+    <title>RozLedger Daily Tools for Indian Small Business</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#tool" aria-label="RozLedger home">
+        <span class="brand-mark">R</span>
+        <span>RozLedger</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#tool">Tool</a>
+        <a href="/content/">Templates</a>
+        <a href="#pro">Pro</a>
+        <a href="#offers">Offers</a>
+        <a href="#plan">15-day plan</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" id="tool">
+        <div class="hero-copy">
+          <p class="eyebrow">Built for India: freelancers, tutors, agencies, local shops</p>
+          <h1>Make today's invoice, payment link and follow-up message in 60 seconds.</h1>
+          <p class="subcopy">
+            A daily utility people can bookmark: GST-ready invoice math, UPI collection text,
+            WhatsApp reminders and a simple profit target. Monetize with finance, accounting
+            software and payment affiliate offers.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#tool-panel">Start using</a>
+            <a class="button secondary" href="/content/">Browse templates</a>
+            <a class="button secondary" href="#business">Business model</a>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="tool-panel" aria-label="Daily business tool">
+          <div class="tabs" role="tablist" aria-label="Daily tools">
+            <button class="tab active" data-tab="invoice" type="button">Invoice</button>
+            <button class="tab" data-tab="upi" type="button">UPI</button>
+            <button class="tab" data-tab="target" type="button">Target</button>
+          </div>
+
+          <section class="tab-panel active" data-panel="invoice">
+            <div class="grid two">
+              <label>
+                Business name
+                <input id="bizName" value="Sharma Digital Services" />
+              </label>
+              <label>
+                Client name
+                <input id="clientName" value="Client Pvt Ltd" />
+              </label>
+              <label>
+                Service
+                <input id="serviceName" value="Monthly social media management" />
+              </label>
+              <label>
+                Amount before GST
+                <input id="amount" type="number" min="0" value="12000" />
+              </label>
+              <label>
+                GST rate
+                <select id="gstRate">
+                  <option value="0">0%</option>
+                  <option value="5">5%</option>
+                  <option value="12">12%</option>
+                  <option value="18" selected>18%</option>
+                  <option value="28">28%</option>
+                </select>
+              </label>
+              <label>
+                Due in days
+                <input id="dueDays" type="number" min="0" value="7" />
+              </label>
+            </div>
+            <div class="result-strip" aria-live="polite">
+              <div>
+                <span>GST</span>
+                <strong id="gstValue">Rs 0</strong>
+              </div>
+              <div>
+                <span>Total</span>
+                <strong id="totalValue">Rs 0</strong>
+              </div>
+              <div>
+                <span>Due date</span>
+                <strong id="dueDate">Today</strong>
+              </div>
+            </div>
+            <textarea id="invoiceText" rows="7" readonly></textarea>
+            <div class="actions">
+              <button class="button primary" id="copyInvoice" type="button">Copy invoice text</button>
+              <button class="button secondary" id="saveInvoice" type="button">Save invoice lead</button>
+              <button class="button ghost" id="printInvoice" type="button">Print</button>
+            </div>
+            <p class="status-text" id="invoiceStatus" aria-live="polite"></p>
+          </section>
+
+          <section class="tab-panel" data-panel="upi">
+            <div class="grid two">
+              <label>
+                UPI ID
+                <input id="upiId" value="yourname@upi" />
+              </label>
+              <label>
+                Payee name
+                <input id="payeeName" value="RozLedger User" />
+              </label>
+              <label>
+                Collection amount
+                <input id="upiAmount" type="number" min="0" value="14160" />
+              </label>
+              <label>
+                Note
+                <input id="upiNote" value="Invoice payment" />
+              </label>
+            </div>
+            <div class="qr-box">
+              <img id="upiQr" alt="UPI payment QR code" />
+              <div>
+                <p class="small-title">UPI payment URI</p>
+                <textarea id="upiLink" rows="4" readonly></textarea>
+                <button class="button primary" id="copyUpi" type="button">Copy UPI link</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="target">
+            <div class="grid two">
+              <label>
+                Monthly revenue goal
+                <input id="monthlyGoal" type="number" min="0" value="250000" />
+              </label>
+              <label>
+                Working days this month
+                <input id="workDays" type="number" min="1" value="24" />
+              </label>
+              <label>
+                Today collected
+                <input id="collected" type="number" min="0" value="4500" />
+              </label>
+              <label>
+                Average order value
+                <input id="aov" type="number" min="1" value="2500" />
+              </label>
+            </div>
+            <div class="result-strip target-results" aria-live="polite">
+              <div>
+                <span>Daily target</span>
+                <strong id="dailyTarget">Rs 0</strong>
+              </div>
+              <div>
+                <span>Left today</span>
+                <strong id="leftToday">Rs 0</strong>
+              </div>
+              <div>
+                <span>Orders needed</span>
+                <strong id="ordersNeeded">0</strong>
+              </div>
+            </div>
+            <textarea id="reminderText" rows="6" readonly></textarea>
+            <button class="button primary" id="copyReminder" type="button">Copy WhatsApp reminder</button>
+          </section>
+        </div>
+      </section>
+
+      <section class="band" id="business">
+        <div class="section-head">
+          <p class="eyebrow">Best idea for 15 days</p>
+          <h2>Daily-use tool plus high-intent monetization</h2>
+        </div>
+        <div class="business-grid">
+          <article>
+            <h3>Why this can work</h3>
+            <p>
+              Small businesses repeatedly need invoices, reminders, UPI text, tax math and
+              cash targets. That gives the website a reason to be used daily, not just read once.
+            </p>
+          </article>
+          <article>
+            <h3>Revenue stack</h3>
+            <p>
+              Start with affiliate/lead offers for current accounts, credit cards, accounting
+              software, payment gateways, business loans and GST filing. Add a Rs 299/month pro
+              plan after traffic starts.
+            </p>
+          </article>
+          <article>
+            <h3>Organic hook</h3>
+            <p>
+              Publish hundreds of narrow pages: invoice format for tutors, rent receipt generator,
+              GST calculator for agencies, UPI reminder templates in Hindi, Tamil and Telugu.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="offers" id="offers">
+        <div class="section-head">
+          <p class="eyebrow">Replace these with your real affiliate links</p>
+          <h2>Money pages users naturally click</h2>
+        </div>
+        <div class="offer-list">
+          <a class="offer" href="#" rel="nofollow sponsored">
+            <span>Business credit card</span>
+            <strong>Compare cards for GST, fuel and office spend</strong>
+          </a>
+          <a class="offer" href="#" rel="nofollow sponsored">
+            <span>Accounting software</span>
+            <strong>Try GST billing, inventory and e-way bill tools</strong>
+          </a>
+          <a class="offer" href="#" rel="nofollow sponsored">
+            <span>Payment gateway</span>
+            <strong>Accept cards, UPI and links from customers</strong>
+          </a>
+          <a class="offer" href="#" rel="nofollow sponsored">
+            <span>Business loan</span>
+            <strong>Check working-capital eligibility</strong>
+          </a>
+        </div>
+      </section>
+
+      <section class="pro" id="pro">
+        <div class="section-head">
+          <p class="eyebrow">Paid product</p>
+          <h2>RozLedger Pro for repeat users</h2>
+        </div>
+        <div class="pro-layout">
+          <div>
+            <p>
+              The free tool brings daily visitors. The paid product sells convenience:
+              saved clients, invoice history, PDF branding, reminder scheduling and payment tracking.
+            </p>
+            <ul class="feature-list">
+              <li>Starter: free invoice, UPI and reminder tools.</li>
+              <li>Pro: Rs 299/month for saved client and invoice history.</li>
+              <li>Setup service: Rs 999 to Rs 2,999 for local businesses.</li>
+            </ul>
+          </div>
+          <form class="lead-form" id="leadForm">
+            <label>
+              Your name
+              <input id="leadName" name="name" placeholder="Business owner name" required />
+            </label>
+            <label>
+              Mobile or WhatsApp
+              <input id="leadPhone" name="phone" placeholder="10-digit mobile number" required />
+            </label>
+            <label>
+              Business type
+              <select id="leadBusiness" name="business_type">
+                <option>Freelancer</option>
+                <option>Tutor or coaching</option>
+                <option>Agency</option>
+                <option>Shop or local service</option>
+                <option>Consultant</option>
+              </select>
+            </label>
+            <button class="button primary" type="submit">Join Pro waitlist</button>
+            <p class="status-text" id="leadStatus" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+
+      <section class="plan" id="plan">
+        <div class="section-head">
+          <p class="eyebrow">Execution matters more than the idea</p>
+          <h2>15-day launch sprint</h2>
+        </div>
+        <ol>
+          <li><strong>Days 1-2:</strong> buy domain, publish this tool, add analytics and search console.</li>
+          <li><strong>Days 3-5:</strong> create 30 long-tail pages for invoice, GST, receipt and WhatsApp templates.</li>
+          <li><strong>Days 6-8:</strong> publish 20 short videos showing daily use cases in Hindi and English.</li>
+          <li><strong>Days 9-11:</strong> post templates in business, freelancer and city groups without spam.</li>
+          <li><strong>Days 12-15:</strong> add affiliate links, collect emails, call 50 local businesses, sell Rs 299/month pro access.</li>
+        </ol>
+      </section>
+    </main>
+
+    <footer>
+      <p>RozLedger is a starter MVP. Add your affiliate disclosures, privacy policy and verified financial disclaimers before launch.</p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
