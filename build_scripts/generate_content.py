@@ -119,15 +119,44 @@ def layout(title: str, description: str, body: str) -> str:
       </nav>
     </header>
     {body}
-    <footer>
-      <p>
-        RozLedger templates are practical business helpers. Verify tax and legal details with a professional.
-        Owned and operated by Klickevents Infosolutions Private Limited.
-        Support: <a href="mailto:cs@rozledger.in">cs@rozledger.in</a>,
-        <a href="tel:+919516811111">95168 11111</a>,
-        <a href="https://wa.me/919516811111" rel="noopener">WhatsApp</a>.
-        <a href="/privacy/">Privacy</a> <a href="/terms/">Terms</a> <a href="/contact/">Contact</a>
-      </p>
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="/"><span class="brand-mark">R</span><span>RozLedger</span></a>
+          <p>Practical invoice, GST, UPI and payment reminder helpers for Indian small businesses.</p>
+          <p class="footer-note">Verify tax and legal details with a qualified professional.</p>
+        </div>
+        <div>
+          <h2>Support</h2>
+          <ul>
+            <li><a href="mailto:cs@rozledger.in">cs@rozledger.in</a></li>
+            <li><a href="tel:+919516811111">95168 11111</a></li>
+            <li><a href="https://wa.me/919516811111" rel="noopener">WhatsApp: 9516811111</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Company</h2>
+          <p>
+            Klickevents Infosolutions Private Limited<br />
+            CC-39/2342, South Janath Road, Palarivattom<br />
+            2nd Floor, Thaimuriyil Building<br />
+            Ernakulam, Kerala 682025
+          </p>
+        </div>
+        <div>
+          <h2>Links</h2>
+          <ul>
+            <li><a href="/content/">Templates</a></li>
+            <li><a href="/privacy/">Privacy Policy</a></li>
+            <li><a href="/terms/">Terms of Use</a></li>
+            <li><a href="/contact/">Contact</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>Owned and operated by Klickevents Infosolutions Private Limited.</span>
+        <span>&copy; 2026 RozLedger. All rights reserved.</span>
+      </div>
     </footer>
   </body>
 </html>

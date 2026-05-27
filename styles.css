@@ -449,15 +449,77 @@ textarea {
   line-height: 1.7;
 }
 
-footer {
-  padding: 22px clamp(18px, 4vw, 54px);
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 42px clamp(18px, 4vw, 54px) 24px;
   color: var(--muted);
   background: #fff;
+  font-size: 14px;
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(150px, 0.75fr) minmax(230px, 1fr) minmax(130px, 0.55fr);
+  gap: 28px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.site-footer h2 {
+  margin: 2px 0 12px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.site-footer p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.footer-brand {
+  max-width: 360px;
+}
+
+.footer-brand .brand {
+  margin-bottom: 14px;
+}
+
+.footer-note {
+  margin-top: 10px !important;
+  color: #6c746f;
   font-size: 13px;
 }
 
-footer p {
-  margin-bottom: 0;
+.site-footer ul {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-footer a {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.site-footer a:hover {
+  color: var(--green-dark);
+}
+
+.footer-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  max-width: 1180px;
+  margin: 28px auto 0;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  color: #6c746f;
+  font-size: 12px;
 }
 
 .article-shell {
@@ -556,7 +618,8 @@ footer p {
   .business-grid,
   .offer-list,
   .pro-layout,
-  .content-grid {
+  .content-grid,
+  .footer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -582,8 +645,13 @@ footer p {
   .business-grid,
   .offer-list,
   .pro-layout,
-  .content-grid {
+  .content-grid,
+  .footer-grid {
     grid-template-columns: 1fr;
+  }
+
+  .footer-bottom {
+    flex-direction: column;
   }
 
   #upiQr {
