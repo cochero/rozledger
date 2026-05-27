@@ -5,9 +5,9 @@ from .models import AffiliateClick, Invoice, Lead
 
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
-    list_display = ("name", "phone", "business_type", "source", "created_at")
-    search_fields = ("name", "phone", "business_type")
-    list_filter = ("business_type", "source", "created_at")
+    list_display = ("name", "email", "phone", "business_type", "source", "notification_sent", "created_at")
+    search_fields = ("name", "email", "phone", "business_type")
+    list_filter = ("business_type", "source", "notification_sent", "created_at")
 
 
 @admin.register(Invoice)

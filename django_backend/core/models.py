@@ -3,9 +3,11 @@ from django.db import models
 
 class Lead(models.Model):
     name = models.CharField(max_length=160)
+    email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40)
     business_type = models.CharField(max_length=80)
     source = models.CharField(max_length=80, default="website")
+    notification_sent = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

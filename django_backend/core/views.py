@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
+from django.core.mail import send_mail
 from django.http import FileResponse, Http404, HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -31,6 +32,59 @@ def decimal_value(value: Any) -> Decimal:
         return Decimal(str(value or "0"))
     except (InvalidOperation, ValueError):
         return Decimal("0")
+
+
+def notify_lead(lead: Lead) -> bool:
+    if not settings.EMAIL_HOST and "smtp" in settings.EMAIL_BACKEND:
+        return False
+
+    owner_subject = f"New RozLedger early-access request: {lead.name}"
+    owner_message = "\n".join(
+        [
+            "A new RozLedger Pro early-access request was submitted.",
+            "",
+            f"Name: {lead.name}",
+            f"Email: {lead.email or 'Not provided'}",
+            f"Phone/WhatsApp: {lead.phone}",
+            f"Business type: {lead.business_type}",
+            f"Source: {lead.source}",
+        ]
+    )
+
+    customer_sent = True
+    if lead.email:
+        customer_sent = bool(
+            send_mail(
+                "We received your RozLedger early-access request",
+                "\n".join(
+                    [
+                        f"Hi {lead.name},",
+                        "",
+                        "Thanks for requesting RozLedger Pro early access.",
+                        "We have received your details and will contact you if your business is a fit for the next testing batch.",
+                        "",
+                        "For urgent help, WhatsApp us at 9516811111.",
+                        "",
+                        "RozLedger",
+                        "Klickevents Infosolutions Private Limited",
+                    ]
+                ),
+                settings.DEFAULT_FROM_EMAIL,
+                [lead.email],
+                fail_silently=False,
+            )
+        )
+
+    owner_sent = bool(
+        send_mail(
+            owner_subject,
+            owner_message,
+            settings.DEFAULT_FROM_EMAIL,
+            [settings.ROZLEDGER_NOTIFY_EMAIL],
+            fail_silently=False,
+        )
+    )
+    return owner_sent and customer_sent
 
 
 def serve_project_file(filename: str, content_type: str | None = None) -> FileResponse:
@@ -123,21 +177,33 @@ def options(request: HttpRequest) -> JsonResponse:
 def create_lead(request: HttpRequest) -> JsonResponse:
     payload = json_payload(request)
     name = clean_text(payload.get("name"), max_length=160)
+    email = clean_text(payload.get("email"), max_length=254)
     phone = clean_text(payload.get("phone"), max_length=40)
     business_type = clean_text(payload.get("business_type"), "Unknown", 80)
     source = clean_text(payload.get("source"), "website", 80)
 
-    if len(name) < 2 or len(phone) < 8:
-        return JsonResponse({"error": "Name and phone are required."}, status=400)
+    if len(name) < 2 or len(phone) < 8 or "@" not in email:
+        return JsonResponse({"error": "Name, email and phone are required."}, status=400)
 
     lead = Lead.objects.create(
         name=name,
+        email=email,
         phone=phone,
         business_type=business_type,
         source=source,
     )
 
-    return JsonResponse({"ok": True, "id": lead.id}, status=201)
+    notification_sent = False
+    try:
+        notification_sent = notify_lead(lead)
+    except Exception:
+        notification_sent = False
+
+    if notification_sent:
+        lead.notification_sent = True
+        lead.save(update_fields=["notification_sent"])
+
+    return JsonResponse({"ok": True, "id": lead.id, "notification_sent": notification_sent}, status=201)
 
 
 @csrf_exempt

@@ -230,14 +230,18 @@ byId("leadForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = {
     name: byId("leadName").value.trim(),
+    email: byId("leadEmail").value.trim(),
     phone: byId("leadPhone").value.trim(),
     business_type: byId("leadBusiness").value,
     source: "pro_waitlist",
   };
 
   try {
-    await postJson("/api/leads", payload);
-    showStatus("leadStatus", "Thanks. We received your early-access request.");
+    const result = await postJson("/api/leads", payload);
+    const message = result.notification_sent
+      ? "Thanks. We emailed your confirmation and received your early-access request."
+      : "Thanks. We received your request. Email confirmation is being enabled; for urgent help, WhatsApp us.";
+    showStatus("leadStatus", message);
     event.currentTarget.reset();
   } catch {
     saveFallback("rozledger_leads", payload);
