@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Free daily GST invoice, UPI payment link, WhatsApp reminder and profit planner for Indian freelancers, tutors, agencies and small shops."
+      content="Free invoice text, GST calculation, UPI payment link and WhatsApp reminder helper for Indian freelancers, tutors, agencies and small shops."
     />
     <title>RozLedger Daily Tools for Indian Small Business</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -26,7 +26,7 @@
         <a href="#tool">Tool</a>
         <a href="/content/">Templates</a>
         <a href="#pro">Pro</a>
-        <a href="#partners">Partners</a>
+        <a href="/contact/">Contact</a>
       </nav>
     </header>
 
@@ -34,11 +34,11 @@
       <section class="hero" id="tool">
         <div class="hero-copy">
           <p class="eyebrow">Built for India: freelancers, tutors, agencies, local shops</p>
-          <h1>Make today's invoice, payment link and follow-up message in 60 seconds.</h1>
+          <h1>Create invoice text, GST totals, UPI links and payment reminders quickly.</h1>
           <p class="subcopy">
-            A daily utility people can bookmark: GST-ready invoice math, UPI collection text,
-            WhatsApp reminders and a simple profit target for freelancers, tutors, agencies and
-            local shops.
+            RozLedger helps you prepare everyday billing text, GST calculations, UPI collection
+            links, WhatsApp reminders and daily collection targets. It is a practical helper,
+            not a replacement for accounting or tax advice.
           </p>
           <div class="hero-actions">
             <a class="button primary" href="#tool-panel">Start using</a>
@@ -104,7 +104,7 @@
             <textarea id="invoiceText" rows="7" readonly></textarea>
             <div class="actions">
               <button class="button primary" id="copyInvoice" type="button">Copy invoice text</button>
-              <button class="button secondary" id="saveInvoice" type="button">Save invoice lead</button>
+              <button class="button secondary" id="saveInvoice" type="button">Save invoice details</button>
               <button class="button ghost" id="printInvoice" type="button">Print</button>
             </div>
             <p class="status-text" id="invoiceStatus" aria-live="polite"></p>
@@ -142,7 +142,7 @@
           <section class="tab-panel" data-panel="target">
             <div class="grid two">
               <label>
-                Monthly revenue goal
+                Monthly collection target
                 <input id="monthlyGoal" type="number" min="0" value="250000" />
               </label>
               <label>
@@ -187,8 +187,8 @@
           <article>
             <h3>Use it every day</h3>
             <p>
-              Small businesses repeatedly need invoices, reminders, UPI text, tax math and
-              cash targets. That gives the website a reason to be used daily, not just read once.
+              Small businesses repeatedly prepare invoices, reminders, UPI text, GST totals and
+              collection targets. RozLedger keeps those everyday tasks in one simple browser tool.
             </p>
           </article>
           <article>
@@ -208,46 +208,22 @@
         </div>
       </section>
 
-      <section class="offers" id="partners">
-        <div class="section-head">
-          <p class="eyebrow">Useful partner categories</p>
-          <h2>Business services that fit the workflow</h2>
-        </div>
-        <div class="offer-list">
-          <a class="offer" href="#" rel="nofollow sponsored">
-            <span>Business credit card</span>
-            <strong>Compare cards for GST, fuel and office spend</strong>
-          </a>
-          <a class="offer" href="#" rel="nofollow sponsored">
-            <span>Accounting software</span>
-            <strong>Try GST billing, inventory and e-way bill tools</strong>
-          </a>
-          <a class="offer" href="#" rel="nofollow sponsored">
-            <span>Payment gateway</span>
-            <strong>Accept cards, UPI and links from customers</strong>
-          </a>
-          <a class="offer" href="#" rel="nofollow sponsored">
-            <span>Business loan</span>
-            <strong>Check working-capital eligibility</strong>
-          </a>
-        </div>
-      </section>
-
       <section class="pro" id="pro">
         <div class="section-head">
-          <p class="eyebrow">Paid product</p>
-          <h2>RozLedger Pro for repeat users</h2>
+          <p class="eyebrow">Early access</p>
+          <h2>Help shape RozLedger Pro</h2>
         </div>
         <div class="pro-layout">
           <div>
             <p>
-              The free tool brings daily visitors. The paid product sells convenience:
-              saved clients, invoice history, PDF branding, reminder scheduling and payment tracking.
+              RozLedger Pro is being planned for users who need saved clients, invoice history,
+              branded PDFs, payment tracking and reminder records. Join the early-access list if
+              you want to be contacted before the paid version is launched.
             </p>
             <ul class="feature-list">
-              <li>Starter: free invoice, UPI and reminder tools.</li>
-              <li>Pro: Rs 299/month for saved client and invoice history.</li>
-              <li>Setup service: Rs 999 to Rs 2,999 for local businesses.</li>
+              <li>Current free tools: invoice text, GST totals, UPI link and reminder copy.</li>
+              <li>Planned Pro features: saved clients, invoice records and branded PDF export.</li>
+              <li>No paid plan is active yet. Pricing will be shown clearly before launch.</li>
             </ul>
           </div>
           <form class="lead-form" id="leadForm">
@@ -269,7 +245,7 @@
                 <option>Consultant</option>
               </select>
             </label>
-            <button class="button primary" type="submit">Join Pro waitlist</button>
+            <button class="button primary" type="submit">Request early access</button>
             <p class="status-text" id="leadStatus" aria-live="polite"></p>
           </form>
         </div>
@@ -277,7 +253,10 @@
     </main>
 
     <footer>
-      <p>RozLedger templates are practical business helpers. Verify tax and legal details with a professional.</p>
+      <p>
+        RozLedger templates are practical business helpers. Verify tax and legal details with a professional.
+        <a href="/privacy/">Privacy</a> <a href="/terms/">Terms</a> <a href="/contact/">Contact</a>
+      </p>
     </footer>
 
     <script src="app.js"></script>

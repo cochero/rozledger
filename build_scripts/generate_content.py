@@ -62,39 +62,39 @@ VIDEOS = [
     ("invoice-due-date-planning", "Invoice due date planning", "invoice"),
     ("daily-collection-gap", "Find today's collection gap", "target"),
     ("upi-qr-for-service-business", "UPI QR for service business", "upi"),
-    ("save-client-lead-demo", "Save client lead demo", "lead"),
-    ("pro-waitlist-demo", "Pro waitlist demo", "lead"),
-    ("business-loan-affiliate-offer-placement", "Business loan offer placement", "affiliate"),
+    ("save-invoice-details-demo", "Save invoice details demo", "lead"),
+    ("request-early-access-demo", "Request early access demo", "lead"),
+    ("request-a-new-template", "Request a new template", "feedback"),
     ("rozledger-daily-routine", "RozLedger daily routine", "overview"),
 ]
 
 
 def page_copy(title: str, audience: str, category: str) -> dict[str, list[str] | str]:
     intro = {
-        "invoice": f"Use this {title.lower()} when you need a clean bill, GST amount, total payable, due date and payment message for your customer.",
-        "receipt": f"Use this {title.lower()} when a customer has paid and you need a simple proof-of-payment message or printable receipt note.",
-        "gst": f"Use this {title.lower()} to quickly calculate taxable value, GST amount and total payable before sending a payment request.",
-        "whatsapp": f"Use this {title.lower()} when you want a polite payment follow-up that can be copied directly to WhatsApp.",
-        "target": f"Use this {title.lower()} to understand how much money you still need to collect today to stay on track.",
+        "invoice": f"Use this {title} when you need a clean bill, GST amount, total payable, due date and payment message for your customer.",
+        "receipt": f"Use this {title} when a customer has paid and you need a simple proof-of-payment message or printable receipt note.",
+        "gst": f"Use this {title} to quickly calculate taxable value, GST amount and total payable before sending a payment request.",
+        "whatsapp": f"Use this {title} when you want a polite payment follow-up that can be copied directly to WhatsApp.",
+        "target": f"Use this {title} to understand how much money you still need to collect today to stay on track.",
     }[category]
     steps = {
         "invoice": ["Enter your business and client name.", "Add the service or product details.", "Choose the GST rate and due date.", "Copy the invoice text or print it."],
         "receipt": ["Enter the payer and payment purpose.", "Add the amount received.", "Mention the payment mode, such as cash, UPI or bank transfer.", "Copy the receipt text for your records."],
         "gst": ["Enter the base amount before tax.", "Select the GST percentage.", "Check GST and final payable amount.", "Copy the result into your invoice or reminder."],
         "whatsapp": ["Enter the payable amount.", "Generate or paste your UPI payment link.", "Choose a polite reminder tone.", "Copy and send the message to the customer."],
-        "target": ["Set your monthly revenue goal.", "Enter working days and today collection.", "Check today's remaining amount.", "Use the order count to plan follow-ups."],
+        "target": ["Set your monthly collection target.", "Enter working days and today's collection.", "Check today's remaining amount.", "Use the order count to plan follow-ups."],
     }[category]
     template = {
         "invoice": "Invoice from [Business Name]\\nBill to: [Client Name]\\nService: [Service Details]\\nAmount: Rs [Amount]\\nGST: Rs [GST]\\nTotal payable: Rs [Total]\\nDue date: [Date]",
         "receipt": "Receipt from [Business Name]\\nReceived from: [Customer Name]\\nAmount: Rs [Amount]\\nMode: [Cash/UPI/Bank]\\nPurpose: [Reason]\\nDate: [Date]",
         "gst": "Base amount: Rs [Amount]\\nGST rate: [Rate]%\\nGST amount: Rs [GST]\\nTotal amount: Rs [Total]",
         "whatsapp": "Hi [Name], gentle reminder for the pending payment of Rs [Amount]. You can pay using this link: [UPI Link]. Please complete it today if possible. Thank you.",
-        "target": "Monthly goal: Rs [Goal]\\nDaily target: Rs [Daily Target]\\nCollected today: Rs [Collected]\\nLeft today: Rs [Balance]",
+        "target": "Monthly collection target: Rs [Goal]\\nDaily target: Rs [Daily Target]\\nCollected today: Rs [Collected]\\nLeft today: Rs [Balance]",
     }[category]
     faqs = [
-        ("Is this format legally final?", "It is a practical business template. Verify tax and compliance details with your CA."),
-        ("Can I use it for GST billing?", "Yes, you can use it for GST math and text, but add your GSTIN and required invoice fields before official use."),
-        ("Does RozLedger save my data?", "The free tool can work in the browser. On the Django version, saved leads and invoices go to your MySQL database."),
+        ("Is this an official tax invoice?", "No. It is a practical template and calculation helper. Add your required business, GST and invoice details, and verify compliance with a qualified professional."),
+        ("Can I use it for GST billing?", "You can use it to calculate GST amounts and draft invoice text. Official invoices should include all fields required for your business and tax status."),
+        ("Does RozLedger save my data?", "The calculator works in your browser. If you submit an early-access form or save invoice details, the submitted information may be stored so the site owner can follow up or improve the service."),
     ]
     return {"intro": intro, "steps": steps, "template": template, "faqs": faqs, "audience": audience}
 
@@ -119,7 +119,12 @@ def layout(title: str, description: str, body: str) -> str:
       </nav>
     </header>
     {body}
-    <footer><p>RozLedger templates are practical business helpers. Verify tax and legal details with a professional.</p></footer>
+    <footer>
+      <p>
+        RozLedger templates are practical business helpers. Verify tax and legal details with a professional.
+        <a href="/privacy/">Privacy</a> <a href="/terms/">Terms</a> <a href="/contact/">Contact</a>
+      </p>
+    </footer>
   </body>
 </html>
 """
@@ -140,7 +145,7 @@ def render_page(slug: str, title: str, audience: str, category: str) -> str:
         <p class="article-lead">{escape(copy["intro"])}</p>
         <div class="article-actions">
           <a class="button primary" href="/#tool-panel">Open free tool</a>
-          <a class="button secondary" href="/#pro">Join Pro waitlist</a>
+          <a class="button secondary" href="/#pro">Request early access</a>
         </div>
         <section>
           <h2>Who this is for</h2>
@@ -170,8 +175,15 @@ def render_page(slug: str, title: str, audience: str, category: str) -> str:
 
 
 def render_content_index() -> str:
+    category_labels = {
+        "gst": "GST",
+        "whatsapp": "WhatsApp",
+        "invoice": "Invoice",
+        "receipt": "Receipt",
+        "target": "Target",
+    }
     items = "\n".join(
-        f'<a class="content-link" href="/pages/{slug}/"><span>{escape(category.title())}</span><strong>{escape(title)}</strong></a>'
+        f'<a class="content-link" href="/pages/{slug}/"><span>{escape(category_labels[category])}</span><strong>{escape(title)}</strong></a>'
         for slug, title, _audience, category in PAGES
     )
     body = f"""
@@ -194,8 +206,8 @@ def render_video(slug: str, title: str, category: str) -> str:
         "whatsapp": "Payment follow-up awkward lagta hai? Yeh copy karo.",
         "target": "Aaj kitna collect karna baaki hai? Jaldi check karo.",
         "receipt": "Payment mil gaya? Receipt text turant banao.",
-        "lead": "Repeat users ko Pro waitlist me capture karo.",
-        "affiliate": "Free tool ke saath useful finance offer dikhao.",
+        "lead": "RozLedger me details save ya early access request karna hai?",
+        "feedback": "Naya template chahiye? RozLedger ko request bhejo.",
         "overview": "RozLedger ko daily business routine ka part banao.",
         "gst": "GST total manually calculate mat karo.",
     }[category]
@@ -205,8 +217,8 @@ def render_video(slug: str, title: str, category: str) -> str:
         "whatsapp": "Payment follow-ups feel awkward? Copy this.",
         "target": "Want to know today’s collection gap? Check it fast.",
         "receipt": "Payment received? Generate receipt text quickly.",
-        "lead": "Capture repeat users with the Pro waitlist.",
-        "affiliate": "Place useful finance offers next to a free tool.",
+        "lead": "Want to save details or request early access?",
+        "feedback": "Need a new template? Send a request to RozLedger.",
         "overview": "Make RozLedger part of the daily business routine.",
         "gst": "Stop calculating GST totals manually.",
     }[category]
@@ -276,7 +288,7 @@ def main() -> None:
 
     (ROOT / "content.html").write_text(render_content_index(), encoding="utf-8")
 
-    sitemap_urls = [f"{BASE_URL}/", f"{BASE_URL}/content/"] + [
+    sitemap_urls = [f"{BASE_URL}/", f"{BASE_URL}/content/", f"{BASE_URL}/privacy/", f"{BASE_URL}/terms/", f"{BASE_URL}/contact/"] + [
         f"{BASE_URL}/pages/{slug}/" for slug, *_ in PAGES
     ]
     sitemap = "\n".join(

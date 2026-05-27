@@ -62,6 +62,21 @@ def content_index(request: HttpRequest) -> FileResponse:
 
 
 @require_GET
+def privacy(request: HttpRequest) -> FileResponse:
+    return serve_project_file("privacy.html", "text/html")
+
+
+@require_GET
+def terms(request: HttpRequest) -> FileResponse:
+    return serve_project_file("terms.html", "text/html")
+
+
+@require_GET
+def contact(request: HttpRequest) -> FileResponse:
+    return serve_project_file("contact.html", "text/html")
+
+
+@require_GET
 def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     safe_slug = slug.strip().lower()
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:

@@ -237,11 +237,11 @@ byId("leadForm").addEventListener("submit", async (event) => {
 
   try {
     await postJson("/api/leads", payload);
-    showStatus("leadStatus", "You are on the Pro waitlist.");
+    showStatus("leadStatus", "Thanks. We received your early-access request.");
     event.currentTarget.reset();
   } catch {
     saveFallback("rozledger_leads", payload);
-    showStatus("leadStatus", "Saved in this browser. Backend is not running yet.");
+    showStatus("leadStatus", "Saved in this browser. Please try again later if you want us to contact you.");
   }
 });
 
