@@ -158,6 +158,15 @@ def layout(title: str, description: str, body: str) -> str:
         <span>&copy; 2026 RozLedger. All rights reserved.</span>
       </div>
     </footer>
+    <a
+      class="whatsapp-float"
+      href="https://wa.me/919516811111"
+      aria-label="Chat with RozLedger on WhatsApp"
+      rel="noopener"
+    >
+      <span class="whatsapp-icon" aria-hidden="true">W</span>
+      <span class="whatsapp-text">WhatsApp</span>
+    </a>
   </body>
 </html>
 """
