@@ -122,6 +122,10 @@ def layout(title: str, description: str, body: str) -> str:
     <footer>
       <p>
         RozLedger templates are practical business helpers. Verify tax and legal details with a professional.
+        Owned and operated by Klickevents Infosolutions Private Limited.
+        Support: <a href="mailto:cs@rozledger.in">cs@rozledger.in</a>,
+        <a href="tel:+919516811111">95168 11111</a>,
+        <a href="https://wa.me/919516811111" rel="noopener">WhatsApp</a>.
         <a href="/privacy/">Privacy</a> <a href="/terms/">Terms</a> <a href="/contact/">Contact</a>
       </p>
     </footer>
