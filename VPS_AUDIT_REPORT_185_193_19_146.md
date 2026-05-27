@@ -91,18 +91,16 @@ Then symlink it:
 /etc/nginx/sites-enabled/rozledger.in
 ```
 
-## Domain DNS Problem
+## Domain DNS Status
 
-Current DNS lookup from Windows showed:
+Initial DNS lookup from Windows showed:
 
 ```text
 rozledger.in  -> 127.0.0.1
 rozledger.com -> 127.0.0.1
 ```
 
-This is not correct for production.
-
-Set DNS records to:
+That was not correct for production. DNS was later fixed and verified:
 
 ```text
 rozledger.in      A 185.193.19.146
@@ -110,6 +108,14 @@ www.rozledger.in  A 185.193.19.146
 rozledger.com     A 185.193.19.146
 www.rozledger.com A 185.193.19.146
 ```
+
+Production canonical routing:
+
+```text
+https://rozledger.in
+```
+
+All HTTP, `www`, and `.com` requests redirect to `https://rozledger.in`.
 
 ## Safe RozLedger Deployment Plan
 
@@ -158,6 +164,8 @@ systemctl reload nginx
 ```bash
 certbot --nginx -d rozledger.in -d www.rozledger.in -d rozledger.com -d www.rozledger.com
 ```
+
+8. Keep `rozledger.in` as the canonical host. Use `ops/nginx_rozledger.conf` as the production Nginx layout after certificates exist.
 
 ## Do Not Use On This VPS
 

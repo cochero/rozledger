@@ -52,12 +52,14 @@ https://rozledger.in
 Redirect:
 
 ```text
+http://rozledger.in -> https://rozledger.in
+https://www.rozledger.in -> https://rozledger.in
 https://rozledger.com -> https://rozledger.in
+https://www.rozledger.com -> https://rozledger.in
 ```
 
 ## Before Production Launch
 
-- Fix DNS so both domains point to the VPS IP.
 - Add legal pages: Privacy, Terms, Affiliate Disclosure.
 - Replace placeholder affiliate links.
 - Submit `https://rozledger.in/sitemap.xml` to Google Search Console.
