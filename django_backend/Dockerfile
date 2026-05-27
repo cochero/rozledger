@@ -12,7 +12,7 @@ RUN apt-get update \
 COPY django_backend/requirements.txt /app/django_backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/django_backend/requirements.txt
 
-COPY index.html app.js styles.css content.html sitemap.xml robots.txt BUSINESS_PLAN.md PRODUCT_OPTIONS.md README.md VIDEO_PLAN.md /app/
+COPY index.html app.js styles.css content.html sitemap.xml robots.txt VIDEO_PLAN.md /app/
 COPY pages /app/pages
 COPY videos /app/videos
 COPY build_scripts /app/build_scripts

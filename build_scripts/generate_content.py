@@ -114,7 +114,7 @@ def layout(title: str, description: str, body: str) -> str:
       <a class="brand" href="/"><span class="brand-mark">R</span><span>RozLedger</span></a>
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
-        <a href="/content/">Content</a>
+        <a href="/content/">Templates</a>
         <a href="/#pro">Pro</a>
       </nav>
     </header>
@@ -177,9 +177,9 @@ def render_content_index() -> str:
     body = f"""
     <main class="article-shell">
       <section class="article">
-        <p class="eyebrow">RozLedger SEO library</p>
+        <p class="eyebrow">RozLedger template library</p>
         <h1>Invoice, GST, Receipt and WhatsApp Templates for India</h1>
-        <p class="article-lead">Use these long-tail pages to attract small business owners, freelancers, tutors, agencies and shop owners who need daily payment tools.</p>
+        <p class="article-lead">Browse practical invoice, receipt, GST and WhatsApp payment templates for Indian freelancers, tutors, agencies and shop owners.</p>
         <div class="content-grid">{items}</div>
       </section>
     </main>
