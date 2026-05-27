@@ -1,4 +1,4 @@
-# Pro waitlist demo
+# Request early access demo
 
 ## Format
 
@@ -9,7 +9,7 @@
 
 ## Hindi Script
 
-Hook: Repeat users ko Pro waitlist me capture karo.
+Hook: RozLedger me details save ya early access request karna hai?
 
 Scene 1: Show RozLedger homepage on mobile.
 
@@ -27,7 +27,7 @@ CTA: "RozLedger try karo. Link bio me hai."
 
 ## English Script
 
-Hook: Capture repeat users with the Pro waitlist.
+Hook: Want to save details or request early access?
 
 Scene 1: Show RozLedger on a phone screen.
 

@@ -1,4 +1,4 @@
-# Business loan offer placement
+# Request a new template
 
 ## Format
 
@@ -9,7 +9,7 @@
 
 ## Hindi Script
 
-Hook: Free tool ke saath useful finance offer dikhao.
+Hook: Naya template chahiye? RozLedger ko request bhejo.
 
 Scene 1: Show RozLedger homepage on mobile.
 
@@ -27,7 +27,7 @@ CTA: "RozLedger try karo. Link bio me hai."
 
 ## English Script
 
-Hook: Place useful finance offers next to a free tool.
+Hook: Need a new template? Send a request to RozLedger.
 
 Scene 1: Show RozLedger on a phone screen.
 
