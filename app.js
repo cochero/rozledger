@@ -34,6 +34,28 @@ function showStatus(id, message, isError = false) {
   status.style.color = isError ? "#9f2f22" : "#0a4a39";
 }
 
+function showStatusActions(id, message, actions = [], isError = false) {
+  const status = byId(id);
+  status.textContent = message;
+  status.style.color = isError ? "#9f2f22" : "#0a4a39";
+
+  if (!actions.length) return;
+
+  const wrap = document.createElement("span");
+  wrap.className = "status-actions";
+  actions.forEach((action) => {
+    const link = document.createElement("a");
+    link.href = action.href;
+    link.textContent = action.label;
+    link.rel = "noopener";
+    if (action.newTab) {
+      link.target = "_blank";
+    }
+    wrap.appendChild(link);
+  });
+  status.appendChild(wrap);
+}
+
 function invoicePayload() {
   return {
     business_name: byId("bizName").value.trim(),
@@ -200,8 +222,11 @@ byId("saveInvoice").addEventListener("click", async () => {
   const payload = invoicePayload();
 
   try {
-    await postJson("/api/invoices", payload);
-    showStatus("invoiceStatus", "Saved to backend.");
+    const result = await postJson("/api/invoices", payload);
+    showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", [
+      { label: "Open invoice", href: result.print_url, newTab: true },
+      { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
+    ]);
   } catch {
     saveFallback("rozledger_invoices", payload);
     showStatus("invoiceStatus", "Saved in this browser. Run the backend to save centrally.");
@@ -241,7 +266,10 @@ byId("leadForm").addEventListener("submit", async (event) => {
     const message = result.notification_sent
       ? "Thanks. We emailed your confirmation and received your early-access request."
       : "Thanks. We received your request. Email confirmation is being enabled; for urgent help, WhatsApp us.";
-    showStatus("leadStatus", message);
+    showStatusActions("leadStatus", message, [
+      { label: "View confirmation", href: result.thanks_url, newTab: true },
+      { label: "WhatsApp RozLedger", href: result.whatsapp_url, newTab: true },
+    ]);
     event.currentTarget.reset();
   } catch {
     saveFallback("rozledger_leads", payload);

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal, InvalidOperation
+from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from django.conf import settings
 from django.core.mail import send_mail
-from django.http import FileResponse, Http404, HttpRequest, JsonResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -94,6 +96,14 @@ def serve_project_file(filename: str, content_type: str | None = None) -> FileRe
     return FileResponse(path.open("rb"), content_type=content_type)
 
 
+def absolute_url(request: HttpRequest, path: str) -> str:
+    return request.build_absolute_uri(path)
+
+
+def whatsapp_url(message: str) -> str:
+    return f"https://wa.me/919516811111?text={quote_plus(message)}"
+
+
 @require_GET
 def index(request: HttpRequest) -> FileResponse:
     return serve_project_file("index.html", "text/html")
@@ -136,6 +146,91 @@ def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:
         raise Http404("Page not found")
     return serve_project_file(f"pages/{safe_slug}/index.html", "text/html")
+
+
+@require_GET
+def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
+    try:
+        invoice = Invoice.objects.get(public_token=token)
+    except Invoice.DoesNotExist as exc:
+        raise Http404("Invoice not found") from exc
+
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invoice | RozLedger</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="print-page">
+    <main class="print-invoice">
+      <header class="print-header">
+        <div>
+          <p class="eyebrow">RozLedger invoice</p>
+          <h1>{escape(invoice.business_name)}</h1>
+        </div>
+        <button class="button primary no-print" type="button" onclick="window.print()">Print / Save PDF</button>
+      </header>
+      <section class="print-meta">
+        <div><span>Client</span><strong>{escape(invoice.client_name)}</strong></div>
+        <div><span>Service</span><strong>{escape(invoice.service_name)}</strong></div>
+        <div><span>GST rate</span><strong>{escape(str(invoice.gst_rate))}%</strong></div>
+        <div><span>Total</span><strong>{escape(invoice.total_text)}</strong></div>
+      </section>
+      <pre class="template-box">{escape(invoice.invoice_text)}</pre>
+      <section class="print-actions no-print">
+        <a class="button secondary" href="{escape(invoice.upi_link)}">Open UPI link</a>
+        <a class="button secondary" href="{escape(whatsapp_url(invoice.invoice_text))}" rel="noopener">Send on WhatsApp</a>
+        <a class="button ghost" href="/">Create another invoice</a>
+      </section>
+      <p class="print-disclaimer">This is a practical invoice helper. Verify tax and legal details with a qualified professional.</p>
+    </main>
+  </body>
+</html>
+"""
+    return HttpResponse(html, content_type="text/html")
+
+
+@require_GET
+def lead_thanks(request: HttpRequest, token: str) -> HttpResponse:
+    try:
+        lead = Lead.objects.get(public_token=token)
+    except Lead.DoesNotExist as exc:
+        raise Http404("Request not found") from exc
+
+    message = (
+        f"Hi RozLedger, I requested Pro early access. "
+        f"My name is {lead.name}, business type is {lead.business_type}, phone is {lead.phone}."
+    )
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Early Access Request Received | RozLedger</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="content-page">
+    <main class="article-shell">
+      <article class="article">
+        <p class="eyebrow">Request received</p>
+        <h1>Thanks, {escape(lead.name)}.</h1>
+        <p class="article-lead">Your RozLedger Pro early-access request has been saved. We will contact you when the next testing batch is ready.</p>
+        <section>
+          <h2>Your details</h2>
+          <p>Email: {escape(lead.email)}<br />Phone/WhatsApp: {escape(lead.phone)}<br />Business type: {escape(lead.business_type)}</p>
+        </section>
+        <div class="article-actions">
+          <a class="button primary" href="{escape(whatsapp_url(message))}" rel="noopener">Message us on WhatsApp</a>
+          <a class="button secondary" href="/">Back to RozLedger</a>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>
+"""
+    return HttpResponse(html, content_type="text/html")
 
 
 @require_GET
@@ -203,7 +298,21 @@ def create_lead(request: HttpRequest) -> JsonResponse:
         lead.notification_sent = True
         lead.save(update_fields=["notification_sent"])
 
-    return JsonResponse({"ok": True, "id": lead.id, "notification_sent": notification_sent}, status=201)
+    thanks_path = f"/pro/thanks/{lead.public_token}/"
+    follow_up = (
+        f"Hi RozLedger, I requested Pro early access. "
+        f"My name is {lead.name}, business type is {lead.business_type}, phone is {lead.phone}."
+    )
+    return JsonResponse(
+        {
+            "ok": True,
+            "id": lead.id,
+            "notification_sent": notification_sent,
+            "thanks_url": absolute_url(request, thanks_path),
+            "whatsapp_url": whatsapp_url(follow_up),
+        },
+        status=201,
+    )
 
 
 @csrf_exempt
@@ -228,7 +337,16 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         invoice_text=clean_text(payload.get("invoice_text")),
     )
 
-    return JsonResponse({"ok": True, "id": invoice.id}, status=201)
+    print_path = f"/invoice/{invoice.public_token}/"
+    return JsonResponse(
+        {
+            "ok": True,
+            "id": invoice.id,
+            "print_url": absolute_url(request, print_path),
+            "whatsapp_url": whatsapp_url(invoice.invoice_text),
+        },
+        status=201,
+    )
 
 
 @csrf_exempt

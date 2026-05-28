@@ -1,7 +1,14 @@
+import secrets
+
 from django.db import models
 
 
+def public_token() -> str:
+    return secrets.token_urlsafe(18)
+
+
 class Lead(models.Model):
+    public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     name = models.CharField(max_length=160)
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40)
@@ -18,6 +25,7 @@ class Lead(models.Model):
 
 
 class Invoice(models.Model):
+    public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     business_name = models.CharField(max_length=180)
     client_name = models.CharField(max_length=180)
     service_name = models.CharField(max_length=240)

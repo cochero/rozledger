@@ -15,6 +15,8 @@ urlpatterns = [
     path("terms/", views.terms, name="terms"),
     path("contact/", views.contact, name="contact"),
     path("pages/<slug:slug>/", views.seo_page, name="seo_page"),
+    path("invoice/<str:token>/", views.invoice_print, name="invoice_print"),
+    path("pro/thanks/<str:token>/", views.lead_thanks, name="lead_thanks"),
     path("admin/", admin.site.urls),
     path("api/health", views.health, name="health"),
     path("api/options", views.options, name="options"),

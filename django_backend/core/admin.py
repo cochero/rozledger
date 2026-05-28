@@ -6,7 +6,8 @@ from .models import AffiliateClick, Invoice, Lead
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
     list_display = ("name", "email", "phone", "business_type", "source", "notification_sent", "created_at")
-    search_fields = ("name", "email", "phone", "business_type")
+    readonly_fields = ("public_token", "created_at")
+    search_fields = ("name", "email", "phone", "business_type", "public_token")
     list_filter = ("business_type", "source", "notification_sent", "created_at")
 
 
@@ -20,7 +21,8 @@ class InvoiceAdmin(admin.ModelAdmin):
         "total_text",
         "created_at",
     )
-    search_fields = ("business_name", "client_name", "service_name")
+    readonly_fields = ("public_token", "created_at")
+    search_fields = ("business_name", "client_name", "service_name", "public_token")
     list_filter = ("gst_rate", "created_at")
 
 
