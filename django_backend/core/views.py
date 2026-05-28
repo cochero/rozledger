@@ -152,6 +152,7 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
         user_link = '<a href="/accounts/logout/">Logout</a>'
     else:
         user_link = '<a href="/accounts/login/">Login</a>'
+    dashboard_link = '<a href="/dashboard/">Dashboard</a>' if request and request.user.is_authenticated else ""
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -168,7 +169,9 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
         <a href="/content/">Templates</a>
-        <a href="/dashboard/">Dashboard</a>
+        <a href="/blog/">Blog</a>
+        <a href="/pricing/">Pricing</a>
+        {dashboard_link}
         <a href="/contact/">Contact</a>
         {user_link}
       </nav>

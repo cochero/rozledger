@@ -335,8 +335,11 @@ def layout(title: str, description: str, body: str) -> str:
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
         <a href="/content/">Templates</a>
+        <a href="/blog/">Blog</a>
         <a href="/pricing/">Pricing</a>
         <a href="/#pro">Pro</a>
+        <a href="/contact/">Contact</a>
+        <a href="/accounts/login/">Login</a>
       </nav>
     </header>
     {body}
@@ -368,6 +371,7 @@ def layout(title: str, description: str, body: str) -> str:
           <h2>Links</h2>
           <ul>
             <li><a href="/content/">Templates</a></li>
+            <li><a href="/blog/">Blog</a></li>
             <li><a href="/pricing/">Pricing</a></li>
             <li><a href="/privacy/">Privacy Policy</a></li>
             <li><a href="/terms/">Terms of Use</a></li>
