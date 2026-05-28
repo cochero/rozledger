@@ -56,6 +56,18 @@ function showStatusActions(id, message, actions = [], isError = false) {
   status.appendChild(wrap);
 }
 
+function attributionPayload(source) {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    source,
+    landing_path: `${window.location.pathname}${window.location.search}`,
+    referrer: document.referrer,
+    utm_source: params.get("utm_source") || "",
+    utm_medium: params.get("utm_medium") || "",
+    utm_campaign: params.get("utm_campaign") || "",
+  };
+}
+
 function invoicePayload() {
   return {
     business_name: byId("bizName").value.trim(),
@@ -194,89 +206,99 @@ function switchTab(tabName) {
   });
 }
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => switchTab(tab.dataset.tab));
-});
+const hasTool = Boolean(byId("bizName"));
 
-[
-  "bizName",
-  "clientName",
-  "serviceName",
-  "amount",
-  "gstRate",
-  "dueDays",
-].forEach((id) => byId(id).addEventListener("input", updateInvoice));
+if (hasTool) {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+  });
 
-["upiId", "payeeName", "upiAmount", "upiNote"].forEach((id) => {
-  byId(id).addEventListener("input", updateUpi);
-});
+  [
+    "bizName",
+    "clientName",
+    "serviceName",
+    "amount",
+    "gstRate",
+    "dueDays",
+  ].forEach((id) => byId(id).addEventListener("input", updateInvoice));
 
-["monthlyGoal", "workDays", "collected", "aov"].forEach((id) => {
-  byId(id).addEventListener("input", updateTarget);
-});
+  ["upiId", "payeeName", "upiAmount", "upiNote"].forEach((id) => {
+    byId(id).addEventListener("input", updateUpi);
+  });
 
-byId("copyInvoice").addEventListener("click", (event) => {
-  copyText(byId("invoiceText").value, event.currentTarget);
-});
+  ["monthlyGoal", "workDays", "collected", "aov"].forEach((id) => {
+    byId(id).addEventListener("input", updateTarget);
+  });
 
-byId("saveInvoice").addEventListener("click", async () => {
-  const payload = invoicePayload();
+  byId("copyInvoice").addEventListener("click", (event) => {
+    copyText(byId("invoiceText").value, event.currentTarget);
+  });
 
-  try {
-    const result = await postJson("/api/invoices", payload);
-    showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", [
-      { label: "Open invoice", href: result.print_url, newTab: true },
-      { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
-      { label: "Dashboard", href: result.dashboard_url },
-    ]);
-  } catch {
-    saveFallback("rozledger_invoices", payload);
-    showStatus("invoiceStatus", "Saved in this browser. Run the backend to save centrally.");
-  }
-});
+  byId("saveInvoice").addEventListener("click", async () => {
+    const payload = invoicePayload();
 
-byId("copyUpi").addEventListener("click", (event) => {
-  copyText(byId("upiLink").value, event.currentTarget);
-});
+    try {
+      const result = await postJson("/api/invoices", payload);
+      showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", [
+        { label: "Open invoice", href: result.print_url, newTab: true },
+        { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
+        { label: "Dashboard", href: result.dashboard_url },
+      ]);
+    } catch {
+      saveFallback("rozledger_invoices", payload);
+      showStatus("invoiceStatus", "Saved in this browser. Run the backend to save centrally.");
+    }
+  });
 
-byId("copyReminder").addEventListener("click", (event) => {
-  copyText(byId("reminderText").value, event.currentTarget);
-});
+  byId("copyUpi").addEventListener("click", (event) => {
+    copyText(byId("upiLink").value, event.currentTarget);
+  });
 
-byId("printInvoice").addEventListener("click", () => {
-  const printWindow = window.open("", "invoice-print");
-  printWindow.document.write(`
-    <title>Invoice</title>
-    <pre style="font: 16px/1.6 system-ui; white-space: pre-wrap;">${byId("invoiceText").value}</pre>
-  `);
-  printWindow.document.close();
-  printWindow.print();
-});
+  byId("copyReminder").addEventListener("click", (event) => {
+    copyText(byId("reminderText").value, event.currentTarget);
+  });
 
-byId("leadForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const payload = {
-    name: byId("leadName").value.trim(),
-    email: byId("leadEmail").value.trim(),
-    phone: byId("leadPhone").value.trim(),
-    business_type: byId("leadBusiness").value,
-    source: "pro_waitlist",
-  };
+  byId("printInvoice").addEventListener("click", () => {
+    const printWindow = window.open("", "invoice-print");
+    printWindow.document.write(`
+      <title>Invoice</title>
+      <pre style="font: 16px/1.6 system-ui; white-space: pre-wrap;">${byId("invoiceText").value}</pre>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  });
+}
 
-  try {
-    const result = await postJson("/api/leads", payload);
-    const message = result.notification_sent
-      ? "Thanks. We emailed your confirmation and received your early-access request."
-      : "Thanks. We received your request. Email confirmation is being enabled; for urgent help, WhatsApp us.";
-    showStatusActions("leadStatus", message, [
-      { label: "View confirmation", href: result.thanks_url, newTab: true },
-      { label: "WhatsApp RozLedger", href: result.whatsapp_url, newTab: true },
-    ]);
-    event.currentTarget.reset();
-  } catch {
-    saveFallback("rozledger_leads", payload);
-    showStatus("leadStatus", "Saved in this browser. Please try again later if you want us to contact you.");
-  }
-});
+const leadForm = byId("leadForm");
+if (leadForm) {
+  leadForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const source = event.currentTarget.dataset.source || "pro_waitlist";
+    const payload = {
+      name: byId("leadName").value.trim(),
+      email: byId("leadEmail").value.trim(),
+      phone: byId("leadPhone").value.trim(),
+      business_type: byId("leadBusiness").value,
+      ...attributionPayload(source),
+    };
 
-updateInvoice();
+    try {
+      const result = await postJson("/api/leads", payload);
+      const message = result.notification_sent
+        ? "Thanks. We emailed your confirmation and received your early-access request."
+        : "Thanks. We received your request. Email confirmation is being enabled; for urgent help, WhatsApp us.";
+      showStatusActions("leadStatus", message, [
+        { label: "View confirmation", href: result.thanks_url, newTab: true },
+        { label: "WhatsApp RozLedger", href: result.whatsapp_url, newTab: true },
+      ]);
+      event.currentTarget.reset();
+    } catch {
+      saveFallback("rozledger_leads", payload);
+      showStatus("leadStatus", "Saved in this browser. Please try again later if you want us to contact you.");
+    }
+  });
+}
+
+if (hasTool) {
+  updateInvoice();
+}

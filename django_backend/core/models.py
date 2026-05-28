@@ -47,6 +47,11 @@ class Lead(models.Model):
     phone = models.CharField(max_length=40)
     business_type = models.CharField(max_length=80)
     source = models.CharField(max_length=80, default="website")
+    landing_path = models.CharField(max_length=300, blank=True)
+    referrer = models.URLField(max_length=1000, blank=True)
+    utm_source = models.CharField(max_length=120, blank=True)
+    utm_medium = models.CharField(max_length=120, blank=True)
+    utm_campaign = models.CharField(max_length=160, blank=True)
     notification_sent = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 

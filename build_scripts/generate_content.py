@@ -126,6 +126,7 @@ def layout(title: str, description: str, body: str) -> str:
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
         <a href="/content/">Templates</a>
+        <a href="/pricing/">Pricing</a>
         <a href="/#pro">Pro</a>
       </nav>
     </header>
@@ -158,6 +159,7 @@ def layout(title: str, description: str, body: str) -> str:
           <h2>Links</h2>
           <ul>
             <li><a href="/content/">Templates</a></li>
+            <li><a href="/pricing/">Pricing</a></li>
             <li><a href="/privacy/">Privacy Policy</a></li>
             <li><a href="/terms/">Terms of Use</a></li>
             <li><a href="/contact/">Contact</a></li>
@@ -198,7 +200,7 @@ def render_page(slug: str, title: str, audience: str, category: str) -> str:
         <p class="article-lead">{escape(copy["intro"])}</p>
         <div class="article-actions">
           <a class="button primary" href="/#tool-panel">Open free tool</a>
-          <a class="button secondary" href="/#pro">Request early access</a>
+          <a class="button secondary" href="/pricing/">See Pro pricing</a>
         </div>
         <section>
           <h2>Who this is for</h2>
@@ -341,7 +343,7 @@ def main() -> None:
 
     (ROOT / "content.html").write_text(render_content_index(), encoding="utf-8")
 
-    sitemap_urls = [f"{BASE_URL}/", f"{BASE_URL}/content/", f"{BASE_URL}/privacy/", f"{BASE_URL}/terms/", f"{BASE_URL}/contact/"] + [
+    sitemap_urls = [f"{BASE_URL}/", f"{BASE_URL}/content/", f"{BASE_URL}/pricing/", f"{BASE_URL}/privacy/", f"{BASE_URL}/terms/", f"{BASE_URL}/contact/"] + [
         f"{BASE_URL}/pages/{slug}/" for slug, *_ in PAGES
     ]
     sitemap = "\n".join(

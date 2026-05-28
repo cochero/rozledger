@@ -319,6 +319,11 @@ def contact(request: HttpRequest) -> FileResponse:
 
 
 @require_http_methods(GET_OR_HEAD)
+def pricing(request: HttpRequest) -> FileResponse:
+    return serve_project_file("pricing.html", "text/html")
+
+
+@require_http_methods(GET_OR_HEAD)
 def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     safe_slug = slug.strip().lower()
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:
@@ -915,6 +920,11 @@ def create_lead(request: HttpRequest) -> JsonResponse:
     phone = clean_text(payload.get("phone"), max_length=40)
     business_type = clean_text(payload.get("business_type"), "Unknown", 80)
     source = clean_text(payload.get("source"), "website", 80)
+    landing_path = clean_text(payload.get("landing_path"), max_length=300)
+    referrer = clean_text(payload.get("referrer"), max_length=1000)
+    utm_source = clean_text(payload.get("utm_source"), max_length=120)
+    utm_medium = clean_text(payload.get("utm_medium"), max_length=120)
+    utm_campaign = clean_text(payload.get("utm_campaign"), max_length=160)
 
     if len(name) < 2 or len(phone) < 8 or "@" not in email:
         return JsonResponse({"error": "Name, email and phone are required."}, status=400)
@@ -925,6 +935,11 @@ def create_lead(request: HttpRequest) -> JsonResponse:
         phone=phone,
         business_type=business_type,
         source=source,
+        landing_path=landing_path,
+        referrer=referrer,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
     )
 
     notification_sent = False

@@ -6,10 +6,10 @@ from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig,
 
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
-    list_display = ("name", "email", "phone", "business_type", "source", "notification_sent", "created_at")
+    list_display = ("name", "email", "phone", "business_type", "source", "utm_source", "notification_sent", "created_at")
     readonly_fields = ("public_token", "created_at")
-    search_fields = ("name", "email", "phone", "business_type", "public_token")
-    list_filter = ("business_type", "source", "notification_sent", "created_at")
+    search_fields = ("name", "email", "phone", "business_type", "source", "utm_source", "utm_campaign", "public_token")
+    list_filter = ("business_type", "source", "utm_source", "notification_sent", "created_at")
 
 
 @admin.register(Invoice)

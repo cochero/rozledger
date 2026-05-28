@@ -393,6 +393,58 @@ textarea {
   background: #fff;
 }
 
+.pricing-hero {
+  margin-bottom: 28px;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 1180px;
+  margin: 0 auto clamp(42px, 6vw, 72px);
+}
+
+.price-card {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+}
+
+.price-card span {
+  color: var(--coral);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.price-card h2 {
+  font-size: 28px;
+}
+
+.price {
+  margin-bottom: 0;
+  color: var(--green-dark);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.featured-price {
+  border-color: var(--green);
+  box-shadow: var(--shadow);
+}
+
+.pricing-lead {
+  max-width: 1180px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
 .pro-layout {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.65fr);
@@ -963,6 +1015,7 @@ textarea {
   }
 
   .business-grid,
+  .pricing-grid,
   .offer-list,
   .pro-layout,
   .content-grid,
@@ -997,6 +1050,7 @@ textarea {
   .result-strip,
   .qr-box,
   .business-grid,
+  .pricing-grid,
   .offer-list,
   .pro-layout,
   .content-grid,
