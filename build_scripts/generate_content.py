@@ -113,12 +113,12 @@ def layout(title: str, description: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="en">
   <head>
+    {GOOGLE_TAG}
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="{escape(description)}" />
     <title>{escape(title)} | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
-    {GOOGLE_TAG}
   </head>
   <body class="content-page">
     <header class="topbar">

@@ -26,6 +26,9 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from .models import AffiliateClick, Client, Invoice, Lead, PlanSubscription
 
 
+GET_OR_HEAD = ["GET", "HEAD"]
+
+
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
     if value is None:
         return fallback
@@ -153,11 +156,11 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
     html = f"""<!doctype html>
 <html lang="en">
   <head>
+    {google_tag()}
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{escape(title)} | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
-    {google_tag()}
   </head>
   <body class="account-page">
     <header class="topbar">
@@ -279,12 +282,12 @@ def password_confirm_form(request: HttpRequest, uidb64: str, token: str, error: 
     return page_shell("Choose new password", body, request)
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def index(request: HttpRequest) -> FileResponse:
     return serve_project_file("index.html", "text/html")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def asset(request: HttpRequest, filename: str) -> FileResponse:
     content_types = {
         "app.js": "text/javascript",
@@ -295,27 +298,27 @@ def asset(request: HttpRequest, filename: str) -> FileResponse:
     return serve_project_file(filename, content_types.get(filename))
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def content_index(request: HttpRequest) -> FileResponse:
     return serve_project_file("content.html", "text/html")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def privacy(request: HttpRequest) -> FileResponse:
     return serve_project_file("privacy.html", "text/html")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def terms(request: HttpRequest) -> FileResponse:
     return serve_project_file("terms.html", "text/html")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def contact(request: HttpRequest) -> FileResponse:
     return serve_project_file("contact.html", "text/html")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     safe_slug = slug.strip().lower()
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:
@@ -716,7 +719,7 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
     return redirect("/dashboard/")
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     try:
         invoice = Invoice.objects.get(public_token=token)
@@ -726,11 +729,11 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     html = f"""<!doctype html>
 <html lang="en">
   <head>
+    {google_tag()}
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Invoice | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
-    {google_tag()}
   </head>
   <body class="print-page">
     <main class="print-invoice">
@@ -814,7 +817,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     return response
 
 
-@require_GET
+@require_http_methods(GET_OR_HEAD)
 def lead_thanks(request: HttpRequest, token: str) -> HttpResponse:
     try:
         lead = Lead.objects.get(public_token=token)
@@ -828,11 +831,11 @@ def lead_thanks(request: HttpRequest, token: str) -> HttpResponse:
     html = f"""<!doctype html>
 <html lang="en">
   <head>
+    {google_tag()}
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Early Access Request Received | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
-    {google_tag()}
   </head>
   <body class="content-page">
     <main class="article-shell">
