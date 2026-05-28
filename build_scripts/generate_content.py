@@ -239,14 +239,14 @@ BLOGS = [
     ),
     (
         "how-rozledger-supports-organic-growth",
-        "How RozLedger Supports Organic Business Growth",
-        "RozLedger helps organic growth by giving small businesses useful daily tools, practical templates and shareable payment workflows.",
-        "A useful product earns repeat visits when it solves a daily problem. RozLedger focuses on routine billing, GST calculation, UPI collection and reminders so users have a reason to return.",
+        "How RozLedger Helps Small Businesses Collect Payments Faster",
+        "Learn how RozLedger helps Indian small businesses send clearer invoices, UPI payment links and polite follow-up messages.",
+        "Many small businesses do good work but lose time in payment follow-up. RozLedger helps by making invoice text, GST totals, UPI payment links and WhatsApp reminders easier to prepare and send.",
         [
-            "Free tools attract practical search traffic.",
-            "Templates answer specific invoice and payment questions.",
-            "The dashboard encourages repeat use after account creation.",
-            "Pricing and Pro requests help identify serious users.",
+            "Customers receive clearer billing details before they pay.",
+            "UPI links and QR codes reduce friction in collection.",
+            "Polite reminders make follow-up easier for the business owner.",
+            "Saved invoices help users review pending and completed payments.",
         ],
     ),
     (
@@ -467,8 +467,115 @@ def render_content_index() -> str:
     return layout("Invoice, GST, Receipt and WhatsApp Templates", "RozLedger template library for Indian small businesses.", body)
 
 
+BLOG_SECTIONS = {
+    "why-small-businesses-need-rozledger": {
+        "why": "Small owners often prepare bills, payment notes and reminders while also handling customers. When those steps are scattered across notebooks, calculators and chat apps, mistakes and delays become common.",
+        "fit": "This article is useful for freelancers, tutors, agencies, local shops and service businesses that send simple invoices or payment requests regularly.",
+        "limits": "RozLedger helps with routine billing communication and payment collection workflow. It is not a replacement for a chartered accountant, GST filing software or legal tax advice.",
+        "next": "Try one real invoice in the free tool, then create an account if you want to save invoice history.",
+    },
+    "rozledger-for-freelancers-india": {
+        "why": "Freelancers need invoices that look clear even when billing happens quickly after project delivery or at the end of a monthly retainer.",
+        "fit": "Best for designers, developers, writers, consultants and independent professionals who bill clients by project, milestone or monthly service.",
+        "limits": "RozLedger can draft the invoice message and calculate totals, but the freelancer must provide correct business details, GST status and payment terms.",
+        "next": "Use the invoice tool for your next client bill and save it from the dashboard for future reference.",
+    },
+    "rozledger-for-tutors-and-coaching-centres": {
+        "why": "Fee reminders can become uncomfortable when they are typed differently each time. A clear receipt and polite reminder format keeps parent communication professional.",
+        "fit": "Best for tuition teachers, home tutors, coaching centres and small training providers collecting monthly or course-wise fees.",
+        "limits": "RozLedger does not manage student attendance or academic records. It focuses on fee receipt text, payment links and reminders.",
+        "next": "Create a fee receipt or reminder message, add your UPI details, and send it to the parent or student.",
+    },
+    "rozledger-for-digital-marketing-agencies": {
+        "why": "Agencies often repeat the same billing pattern every month for retainers, ad management, design, content or reporting services.",
+        "fit": "Best for small agencies that need quick GST totals, monthly invoice text and follow-up messages for client payments.",
+        "limits": "RozLedger does not replace full agency accounting or ad spend reconciliation. It helps with client-facing billing workflow.",
+        "next": "Prepare a retainer invoice, save the client, and use payment status to track follow-up.",
+    },
+    "rozledger-requirements-to-start": {
+        "why": "A billing tool is only useful when users know what details to keep ready before they begin.",
+        "fit": "Best for first-time users who want a quick checklist before creating invoice text, receipt text or a UPI payment request.",
+        "limits": "Different businesses may need additional invoice fields depending on GST registration, state, service type and customer requirements.",
+        "next": "Keep business name, customer name, service details, amount, GST rate and UPI ID ready before opening the tool.",
+    },
+    "rozledger-easy-invoice-workflow": {
+        "why": "The fastest billing workflow is one where the amount, tax, payment link and message are prepared together.",
+        "fit": "Best for users who want to move from a rough WhatsApp bill to a cleaner invoice and collection routine.",
+        "limits": "The tool helps prepare billing material, but users should still verify invoice numbering, GST details and statutory requirements for their business.",
+        "next": "Follow the sequence: enter details, check totals, copy text, save invoice, send payment link.",
+    },
+    "gst-calculation-made-simple-with-rozledger": {
+        "why": "Manual GST calculation can lead to avoidable mistakes, especially when bills are prepared quickly during customer conversations.",
+        "fit": "Best for users who need quick totals for common GST rates such as 5%, 12%, 18% and 28%.",
+        "limits": "RozLedger calculates GST amounts from the numbers entered by the user. It does not decide whether GST applies to a transaction.",
+        "next": "Enter the taxable amount and GST percentage, then copy the total into your invoice or payment message.",
+    },
+    "upi-payment-links-with-rozledger": {
+        "why": "A customer is more likely to pay quickly when the amount, payee name and payment note are already clear.",
+        "fit": "Best for Indian small businesses that collect through UPI and want a copy-ready link or QR code.",
+        "limits": "Users must check their UPI ID carefully. RozLedger cannot recover payments sent to an incorrect UPI ID.",
+        "next": "Generate a payment link for a small test amount first, verify it opens correctly, then use it for customer payments.",
+    },
+    "whatsapp-payment-reminders-with-rozledger": {
+        "why": "Payment reminders should be clear without sounding rude. A consistent format helps owners follow up without rewriting messages each time.",
+        "fit": "Best for overdue invoices, same-day payment reminders, fee follow-ups and service payment collection.",
+        "limits": "RozLedger creates message text. It does not send automated WhatsApp messages or guarantee payment recovery.",
+        "next": "Copy the reminder, personalize the customer name if needed, and send it from your WhatsApp account.",
+    },
+    "daily-collection-targets-with-rozledger": {
+        "why": "Many businesses know their monthly target but do not know how much they need to collect today to stay on track.",
+        "fit": "Best for owners who collect daily or weekly payments and want a simple view of the collection gap.",
+        "limits": "The target tool is an estimate. It does not replace accounting reports or cash-flow planning.",
+        "next": "Enter monthly target, working days and collected amount, then use the remaining amount to plan follow-ups.",
+    },
+    "rozledger-dashboard-benefits": {
+        "why": "Saved records become important once a business sends invoices regularly and needs to check what is paid or pending.",
+        "fit": "Best for logged-in users who want invoice history, client records, PDF downloads and payment status tracking.",
+        "limits": "The dashboard is for simple billing records. It is not a full ERP, inventory system or statutory accounting package.",
+        "next": "Create an account, save a test invoice, download the PDF and mark its payment status.",
+    },
+    "rozledger-pro-benefits": {
+        "why": "Some users need more than a free calculator. They need saved clients, repeat invoice history and organized payment follow-up.",
+        "fit": "Best for repeat billing users who send multiple invoices every month and want a cleaner workflow.",
+        "limits": "Online payment checkout will depend on Razorpay approval and configuration. Until then, Pro access can be handled manually by the site owner.",
+        "next": "Review the pricing page and request Pro access if saved billing workflows are useful for your business.",
+    },
+    "rozledger-for-local-shops": {
+        "why": "Local shops and service businesses often collect through cash, UPI and bank transfer, so payment records and receipt messages need to stay clear.",
+        "fit": "Best for repair services, small shops, maintenance providers, home service businesses and local vendors.",
+        "limits": "RozLedger does not manage stock, barcode billing or POS hardware. It helps with simple bills, receipts and reminders.",
+        "next": "Use the receipt template after payment and the payment reminder template when an amount is pending.",
+    },
+    "rozledger-for-consultants": {
+        "why": "Consultants need billing messages that explain the service clearly and keep follow-up professional.",
+        "fit": "Best for independent consultants, advisors, trainers and professionals billing for service work.",
+        "limits": "RozLedger does not draft contracts or decide tax treatment. It helps with invoice totals, payment messages and saved records.",
+        "next": "Create an invoice with service description, GST rate if applicable, due date and payment link.",
+    },
+    "rozledger-vs-manual-billing": {
+        "why": "Manual WhatsApp billing feels fast at first, but repeated typing makes it easy to miss amounts, due dates or payment notes.",
+        "fit": "Best for users who currently type every bill manually and want a cleaner repeatable workflow.",
+        "limits": "RozLedger still depends on the user entering correct information. It improves structure, not the truth of the underlying data.",
+        "next": "Compare your current manual message with the generated RozLedger invoice text and choose the clearer version.",
+    },
+    "how-rozledger-supports-organic-growth": {
+        "why": "Better billing can support business growth because customers receive clear payment instructions and owners spend less time chasing unclear dues.",
+        "fit": "Best for businesses that already get customers through referrals, repeat orders or WhatsApp, and now need more organized payment collection.",
+        "limits": "RozLedger does not guarantee more customers, revenue or search traffic. It supports the billing and collection side after work is done.",
+        "next": "Use RozLedger for invoice text, UPI link and reminder messages on one real customer payment cycle.",
+    },
+    "rozledger-getting-started-guide": {
+        "why": "New users should be able to test the product without learning accounting software first.",
+        "fit": "Best for anyone trying RozLedger for the first time with one invoice, receipt or payment reminder.",
+        "limits": "The first setup still needs correct business details, customer details, GST rate if applicable and UPI ID.",
+        "next": "Open the free tool, create one sample invoice, then register if you want saved invoice history.",
+    },
+}
+
+
 def render_blog(slug: str, title: str, description: str, intro: str, points: list[str]) -> str:
     point_items = "\n".join(f"<li>{escape(point)}</li>" for point in points)
+    sections = BLOG_SECTIONS[slug]
     body = f"""
     <main class="article-shell">
       <article class="article">
@@ -481,23 +588,23 @@ def render_blog(slug: str, title: str, description: str, intro: str, points: lis
         </div>
         <section>
           <h2>Why this matters</h2>
-          <p>Small businesses lose time when invoice text, GST totals, payment links and reminders are prepared separately. RozLedger keeps these daily billing steps in one browser-based workflow.</p>
+          <p>{escape(sections["why"])}</p>
         </section>
         <section>
-          <h2>Key benefits</h2>
+          <h2>How RozLedger helps</h2>
           <ul>{point_items}</ul>
         </section>
         <section>
-          <h2>Requirements</h2>
-          <p>To use RozLedger well, keep your business name, customer name, service details, amount, GST rate if applicable, UPI ID and contact details ready. For tax compliance, verify official invoice requirements with a qualified professional.</p>
+          <h2>Best fit</h2>
+          <p>{escape(sections["fit"])}</p>
         </section>
         <section>
-          <h2>How easy is it?</h2>
-          <p>RozLedger is designed for everyday use. Open the site, enter a few billing details, copy the generated message, save the invoice when needed, and follow up using WhatsApp or the dashboard.</p>
+          <h2>Important note</h2>
+          <p>{escape(sections["limits"])}</p>
         </section>
         <section>
           <h2>Next step</h2>
-          <p>Try the free tool first. If you need saved clients, invoice history, PDF downloads and payment status tracking, request Pro access from the pricing page.</p>
+          <p>{escape(sections["next"])}</p>
         </section>
       </article>
     </main>
