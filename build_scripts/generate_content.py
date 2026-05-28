@@ -11,6 +11,16 @@ VIDEOS_DIR = ROOT / "videos"
 BASE_URL = os.getenv("ROZLEDGER_PUBLIC_URL", "https://rozledger.in").rstrip("/")
 
 
+GOOGLE_TAG = """<!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-KLPE4CG3TK"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-KLPE4CG3TK');
+    </script>"""
+
+
 PAGES = [
     ("gst-invoice-format-for-freelancers-india", "GST Invoice Format for Freelancers in India", "Freelancers", "invoice"),
     ("gst-invoice-format-for-digital-marketing-agency", "GST Invoice Format for Digital Marketing Agency", "Agencies", "invoice"),
@@ -108,6 +118,7 @@ def layout(title: str, description: str, body: str) -> str:
     <meta name="description" content="{escape(description)}" />
     <title>{escape(title)} | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
+    {GOOGLE_TAG}
   </head>
   <body class="content-page">
     <header class="topbar">
