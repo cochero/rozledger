@@ -42,6 +42,7 @@
       <nav aria-label="Primary navigation">
         <a href="#tool">Tool</a>
         <a href="/content/">Templates</a>
+        <a href="/dashboard/">Dashboard</a>
         <a href="#pro">Pro</a>
         <a href="/contact/">Contact</a>
       </nav>
@@ -59,6 +60,7 @@
           </p>
           <div class="hero-actions">
             <a class="button primary" href="#tool-panel">Start using</a>
+            <a class="button secondary" href="/accounts/register/">Create account</a>
             <a class="button secondary" href="/content/">Browse templates</a>
             <a class="button secondary" href="#business">How it helps</a>
           </div>
@@ -76,6 +78,10 @@
               <label>
                 Business name
                 <input id="bizName" value="Sharma Digital Services" />
+              </label>
+              <label>
+                Your email for dashboard
+                <input id="ownerEmail" type="email" placeholder="you@example.com" />
               </label>
               <label>
                 Client name
@@ -125,6 +131,7 @@
               <button class="button ghost" id="printInvoice" type="button">Print</button>
             </div>
             <p class="status-text" id="invoiceStatus" aria-live="polite"></p>
+            <p class="form-hint">Login or use the same email when saving invoices to view them in your dashboard.</p>
           </section>
 
           <section class="tab-panel" data-panel="upi">

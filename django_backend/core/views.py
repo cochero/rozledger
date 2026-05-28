@@ -8,10 +8,15 @@ from typing import Any
 from urllib.parse import quote_plus
 
 from django.conf import settings
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
+from django.middleware.csrf import get_token
+from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from .models import AffiliateClick, Invoice, Lead
 
@@ -104,6 +109,98 @@ def whatsapp_url(message: str) -> str:
     return f"https://wa.me/919516811111?text={quote_plus(message)}"
 
 
+def safe_next_url(value: str | None) -> str:
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return "/dashboard/"
+
+
+def page_shell(title: str, body: str, request: HttpRequest | None = None) -> HttpResponse:
+    user_link = ""
+    if request and request.user.is_authenticated:
+        user_link = '<a href="/accounts/logout/">Logout</a>'
+    else:
+        user_link = '<a href="/accounts/login/">Login</a>'
+
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escape(title)} | RozLedger</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="account-page">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="RozLedger home"><span class="brand-mark">R</span><span>RozLedger</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="/">Tool</a>
+        <a href="/content/">Templates</a>
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/contact/">Contact</a>
+        {user_link}
+      </nav>
+    </header>
+    {body}
+    <a class="whatsapp-float" href="https://wa.me/919516811111" aria-label="Chat with RozLedger on WhatsApp" rel="noopener">
+      <span class="whatsapp-icon" aria-hidden="true">W</span>
+      <span class="whatsapp-text">WhatsApp</span>
+    </a>
+  </body>
+</html>
+"""
+    return HttpResponse(html, content_type="text/html")
+
+
+def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
+    is_register = mode == "register"
+    title = "Create account" if is_register else "Login"
+    action = "/accounts/register/" if is_register else "/accounts/login/"
+    alternate = (
+        'Already have an account? <a href="/accounts/login/">Login</a>'
+        if is_register
+        else 'New to RozLedger? <a href="/accounts/register/">Create an account</a>'
+    )
+    name_field = (
+        """
+        <label>
+          Your name
+          <input name="name" autocomplete="name" placeholder="Business owner name" />
+        </label>
+        """
+        if is_register
+        else ""
+    )
+    next_value = escape(safe_next_url(request.GET.get("next") or request.POST.get("next")))
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell">
+      <section class="account-card">
+        <p class="eyebrow">RozLedger account</p>
+        <h1>{title}</h1>
+        <p class="account-copy">Save invoices and Pro requests to a private dashboard using your email address.</p>
+        {error_html}
+        <form method="post" action="{action}" class="account-form">
+          <input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />
+          <input type="hidden" name="next" value="{next_value}" />
+          {name_field}
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="button primary" type="submit">{title}</button>
+        </form>
+        <p class="account-alt">{alternate}</p>
+      </section>
+    </main>
+    """
+    return page_shell(title, body, request)
+
+
 @require_GET
 def index(request: HttpRequest) -> FileResponse:
     return serve_project_file("index.html", "text/html")
@@ -146,6 +243,148 @@ def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:
         raise Http404("Page not found")
     return serve_project_file(f"pages/{safe_slug}/index.html", "text/html")
+
+
+@require_http_methods(["GET", "POST"])
+def register_view(request: HttpRequest) -> HttpResponse:
+    if request.user.is_authenticated:
+        return redirect("/dashboard/")
+
+    if request.method == "GET":
+        return auth_form(request, "register")
+
+    name = clean_text(request.POST.get("name"), max_length=150)
+    email = clean_text(request.POST.get("email"), max_length=254).lower()
+    password = clean_text(request.POST.get("password"), max_length=256)
+
+    if "@" not in email or len(password) < 8:
+        return auth_form(request, "register", "Enter a valid email and a password with at least 8 characters.")
+    if User.objects.filter(username=email).exists():
+        return auth_form(request, "register", "An account already exists for this email. Please login.")
+
+    user = User.objects.create_user(username=email, email=email, password=password, first_name=name)
+    login(request, user)
+    return redirect(safe_next_url(request.POST.get("next")))
+
+
+@require_http_methods(["GET", "POST"])
+def login_view(request: HttpRequest) -> HttpResponse:
+    if request.user.is_authenticated:
+        return redirect(safe_next_url(request.GET.get("next") or request.POST.get("next")))
+
+    if request.method == "GET":
+        return auth_form(request, "login")
+
+    email = clean_text(request.POST.get("email"), max_length=254).lower()
+    password = clean_text(request.POST.get("password"), max_length=256)
+    user = authenticate(request, username=email, password=password)
+    if user is None:
+        return auth_form(request, "login", "Email or password is incorrect.")
+
+    login(request, user)
+    return redirect(safe_next_url(request.POST.get("next")))
+
+
+@require_GET
+def logout_view(request: HttpRequest) -> HttpResponse:
+    logout(request)
+    return redirect("/")
+
+
+@login_required
+@require_GET
+def dashboard(request: HttpRequest) -> HttpResponse:
+    email = request.user.email or request.user.username
+    invoices = Invoice.objects.filter(owner_email__iexact=email)[:20]
+    leads = Lead.objects.filter(email__iexact=email)[:10]
+
+    invoice_rows = []
+    for invoice in invoices:
+        invoice_rows.append(
+            f"""
+            <article class="dashboard-card">
+              <div>
+                <span>Invoice</span>
+                <h2>{escape(invoice.client_name)}</h2>
+                <p>{escape(invoice.service_name)}<br />{escape(invoice.total_text)} - {invoice.created_at:%d %b %Y}</p>
+              </div>
+              <div class="dashboard-actions">
+                <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
+                <a class="button ghost" href="{escape(whatsapp_url(invoice.invoice_text))}" target="_blank" rel="noopener">WhatsApp</a>
+              </div>
+            </article>
+            """
+        )
+    if not invoice_rows:
+        invoice_rows.append(
+            """
+            <article class="dashboard-card empty-state">
+              <span>Invoice</span>
+              <h2>No saved invoices yet</h2>
+              <p>Create an invoice from the main tool and use this account email to see it here.</p>
+              <a class="button secondary" href="/#tool-panel">Create invoice</a>
+            </article>
+            """
+        )
+
+    lead_rows = []
+    for lead in leads:
+        email_status = "Confirmation email sent" if lead.notification_sent else "Request saved"
+        lead_rows.append(
+            f"""
+            <article class="dashboard-card">
+              <div>
+                <span>Pro request</span>
+                <h2>{escape(lead.business_type)}</h2>
+                <p>{escape(email_status)} - {lead.created_at:%d %b %Y}<br />WhatsApp: {escape(lead.phone)}</p>
+              </div>
+              <div class="dashboard-actions">
+                <a class="button secondary" href="/pro/thanks/{escape(lead.public_token)}/" target="_blank" rel="noopener">View confirmation</a>
+              </div>
+            </article>
+            """
+        )
+    if not lead_rows:
+        lead_rows.append(
+            """
+            <article class="dashboard-card empty-state">
+              <span>Pro request</span>
+              <h2>No Pro request yet</h2>
+              <p>Request early access from the home page if you want us to contact you about Pro.</p>
+              <a class="button secondary" href="/#pro">Request Pro</a>
+            </article>
+            """
+        )
+
+    display_name = request.user.first_name or email
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero">
+        <p class="eyebrow">Private dashboard</p>
+        <h1>Welcome, {escape(display_name)}.</h1>
+        <p>Track invoices and RozLedger Pro requests connected to {escape(email)}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/#tool-panel">Create invoice</a>
+          <a class="button secondary" href="/content/">Browse templates</a>
+        </div>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head">
+          <p class="eyebrow">Saved work</p>
+          <h2>Invoices</h2>
+        </div>
+        <div class="dashboard-grid">{''.join(invoice_rows)}</div>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head">
+          <p class="eyebrow">Early access</p>
+          <h2>Pro requests</h2>
+        </div>
+        <div class="dashboard-grid">{''.join(lead_rows)}</div>
+      </section>
+    </main>
+    """
+    return page_shell("Dashboard", body, request)
 
 
 @require_GET
@@ -321,11 +560,17 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     payload = json_payload(request)
     amount_before_gst = decimal_value(payload.get("amount_before_gst"))
     gst_rate = decimal_value(payload.get("gst_rate"))
+    owner_email = clean_text(payload.get("owner_email"), max_length=254).lower()
+    if request.user.is_authenticated and request.user.email:
+        owner_email = request.user.email.lower()
+    if owner_email and "@" not in owner_email:
+        return JsonResponse({"error": "Enter a valid email to save this invoice."}, status=400)
 
     if amount_before_gst <= 0:
         return JsonResponse({"error": "Invoice amount must be greater than zero."}, status=400)
 
     invoice = Invoice.objects.create(
+        owner_email=owner_email,
         business_name=clean_text(payload.get("business_name"), "Your business", 180),
         client_name=clean_text(payload.get("client_name"), "Client", 180),
         service_name=clean_text(payload.get("service_name"), "Service", 240),
@@ -344,6 +589,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
             "id": invoice.id,
             "print_url": absolute_url(request, print_path),
             "whatsapp_url": whatsapp_url(invoice.invoice_text),
+            "dashboard_url": absolute_url(request, "/dashboard/"),
         },
         status=201,
     )

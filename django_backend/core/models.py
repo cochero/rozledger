@@ -26,6 +26,7 @@ class Lead(models.Model):
 
 class Invoice(models.Model):
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
+    owner_email = models.EmailField(blank=True, db_index=True)
     business_name = models.CharField(max_length=180)
     client_name = models.CharField(max_length=180)
     service_name = models.CharField(max_length=240)

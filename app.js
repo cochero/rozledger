@@ -59,6 +59,7 @@ function showStatusActions(id, message, actions = [], isError = false) {
 function invoicePayload() {
   return {
     business_name: byId("bizName").value.trim(),
+    owner_email: byId("ownerEmail").value.trim(),
     client_name: byId("clientName").value.trim(),
     service_name: byId("serviceName").value.trim(),
     amount_before_gst: Number(byId("amount").value) || 0,
@@ -226,6 +227,7 @@ byId("saveInvoice").addEventListener("click", async () => {
     showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", [
       { label: "Open invoice", href: result.print_url, newTab: true },
       { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
+      { label: "Dashboard", href: result.dashboard_url },
     ]);
   } catch {
     saveFallback("rozledger_invoices", payload);

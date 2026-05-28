@@ -15,6 +15,7 @@ class LeadAdmin(admin.ModelAdmin):
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
         "business_name",
+        "owner_email",
         "client_name",
         "amount_before_gst",
         "gst_rate",
@@ -22,7 +23,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         "created_at",
     )
     readonly_fields = ("public_token", "created_at")
-    search_fields = ("business_name", "client_name", "service_name", "public_token")
+    search_fields = ("business_name", "owner_email", "client_name", "service_name", "public_token")
     list_filter = ("gst_rate", "created_at")
 
 

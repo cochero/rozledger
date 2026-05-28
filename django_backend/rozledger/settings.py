@@ -128,3 +128,6 @@ EMAIL_USE_SSL = os.getenv("DJANGO_EMAIL_USE_SSL", "False").lower() == "true"
 DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "RozLedger <cs@rozledger.in>")
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 ROZLEDGER_NOTIFY_EMAIL = os.getenv("ROZLEDGER_NOTIFY_EMAIL", "cs@rozledger.in")
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/dashboard/"
+LOGOUT_REDIRECT_URL = "/"

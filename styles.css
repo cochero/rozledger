@@ -447,6 +447,13 @@ textarea {
   font-weight: 800;
 }
 
+.form-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .plan {
   background: #17211f;
   color: #fff;
@@ -619,6 +626,125 @@ textarea {
   margin: 24px 0 36px;
 }
 
+.account-page {
+  min-height: 100vh;
+  background:
+    linear-gradient(135deg, rgba(18, 107, 79, 0.1), transparent 38%),
+    linear-gradient(315deg, rgba(40, 92, 159, 0.08), transparent 42%),
+    var(--paper);
+}
+
+.account-shell,
+.dashboard-shell {
+  padding: clamp(34px, 6vw, 82px) clamp(18px, 4vw, 54px);
+}
+
+.account-card {
+  max-width: 520px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: clamp(22px, 4vw, 34px);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.account-card h1,
+.dashboard-hero h1 {
+  margin-bottom: 14px;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1;
+}
+
+.account-copy,
+.account-alt,
+.dashboard-hero p,
+.dashboard-card p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.account-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.account-alt {
+  margin: 18px 0 0;
+  font-size: 14px;
+}
+
+.account-alt a {
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
+.form-error {
+  border: 1px solid rgba(159, 47, 34, 0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #9f2f22;
+  background: #fff4f1;
+  font-weight: 800;
+}
+
+.dashboard-hero,
+.dashboard-section {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.dashboard-section {
+  margin-top: clamp(34px, 5vw, 58px);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-card {
+  display: grid;
+  gap: 18px;
+  align-content: space-between;
+  min-height: 198px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  background: #fff;
+}
+
+.dashboard-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--coral);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dashboard-card h2 {
+  margin-bottom: 8px;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.dashboard-card p {
+  margin-bottom: 0;
+}
+
+.dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.empty-state {
+  background: var(--paper);
+}
+
 .template-box {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -743,6 +869,7 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .dashboard-grid,
   .footer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -770,6 +897,7 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .dashboard-grid,
   .footer-grid {
     grid-template-columns: 1fr;
   }
