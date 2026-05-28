@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AffiliateClick, Invoice, Lead
+from .models import AffiliateClick, Client, Invoice, Lead, PlanSubscription
 
 
 @admin.register(Lead)
@@ -16,6 +16,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
         "business_name",
         "owner_email",
+        "status",
         "client_name",
         "amount_before_gst",
         "gst_rate",
@@ -24,7 +25,21 @@ class InvoiceAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("public_token", "created_at")
     search_fields = ("business_name", "owner_email", "client_name", "service_name", "public_token")
-    list_filter = ("gst_rate", "created_at")
+    list_filter = ("status", "gst_rate", "created_at")
+
+
+@admin.register(Client)
+class ClientAdmin(admin.ModelAdmin):
+    list_display = ("name", "owner_email", "email", "phone", "gstin", "created_at")
+    search_fields = ("name", "owner_email", "email", "phone", "gstin")
+    list_filter = ("created_at",)
+
+
+@admin.register(PlanSubscription)
+class PlanSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("owner_email", "plan", "status", "requested_at", "updated_at")
+    search_fields = ("owner_email",)
+    list_filter = ("plan", "status", "requested_at")
 
 
 @admin.register(AffiliateClick)

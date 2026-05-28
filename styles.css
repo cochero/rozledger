@@ -689,14 +689,67 @@ textarea {
   font-weight: 800;
 }
 
+.form-success {
+  border: 1px solid rgba(18, 107, 79, 0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--green-dark);
+  background: #edf8f2;
+  font-weight: 800;
+}
+
+.wide-form .account-card {
+  max-width: 780px;
+}
+
 .dashboard-hero,
 .dashboard-section {
   max-width: 1180px;
   margin: 0 auto;
 }
 
+.dashboard-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 1180px;
+  margin: 28px auto 0;
+}
+
+.dashboard-summary div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+}
+
+.dashboard-summary span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dashboard-summary strong {
+  font-size: 28px;
+}
+
 .dashboard-section {
   margin-top: clamp(34px, 5vw, 58px);
+}
+
+.dashboard-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.8fr 0.8fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
 }
 
 .dashboard-grid {
@@ -739,6 +792,50 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.inline-form {
+  display: inline-flex;
+}
+
+.inline-form .button,
+.danger-form .button {
+  min-height: 44px;
+}
+
+.danger-form {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.danger-form .button {
+  color: #9f2f22;
+}
+
+.compact-card {
+  min-height: 150px;
+}
+
+.billing-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  background: #fff;
+}
+
+.billing-panel h3 {
+  margin-bottom: 8px;
+}
+
+.billing-panel p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.65;
 }
 
 .empty-state {
@@ -869,9 +966,15 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .dashboard-summary,
+  .dashboard-form,
   .dashboard-grid,
   .footer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-form .button {
+    grid-column: 1 / -1;
   }
 }
 
@@ -897,9 +1000,16 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .dashboard-summary,
+  .dashboard-form,
   .dashboard-grid,
   .footer-grid {
     grid-template-columns: 1fr;
+  }
+
+  .billing-panel {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .footer-bottom {

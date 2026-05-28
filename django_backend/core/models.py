@@ -24,9 +24,34 @@ class Lead(models.Model):
         return f"{self.name} - {self.phone}"
 
 
+class Client(models.Model):
+    owner_email = models.EmailField(db_index=True)
+    name = models.CharField(max_length=180)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    gstin = models.CharField(max_length=20, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ("owner_email", "name")
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Invoice(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("sent", "Sent"),
+        ("paid", "Paid"),
+        ("overdue", "Overdue"),
+    ]
+
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     owner_email = models.EmailField(blank=True, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent", db_index=True)
     business_name = models.CharField(max_length=180)
     client_name = models.CharField(max_length=180)
     service_name = models.CharField(max_length=240)
@@ -37,6 +62,7 @@ class Invoice(models.Model):
     upi_link = models.TextField()
     invoice_text = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -55,3 +81,31 @@ class AffiliateClick(models.Model):
 
     def __str__(self) -> str:
         return self.offer_name
+
+
+class PlanSubscription(models.Model):
+    PLAN_CHOICES = [
+        ("free", "Free"),
+        ("pro", "Pro"),
+        ("business", "Business"),
+    ]
+
+    STATUS_CHOICES = [
+        ("free", "Free"),
+        ("requested", "Requested"),
+        ("active", "Active"),
+        ("paused", "Paused"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    owner_email = models.EmailField(unique=True)
+    plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="free")
+    requested_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["owner_email"]
+
+    def __str__(self) -> str:
+        return f"{self.owner_email} - {self.plan} ({self.status})"
