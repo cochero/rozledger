@@ -23,7 +23,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import AffiliateClick, Client, Invoice, Lead, PlanSubscription
+from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -438,6 +438,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     leads = Lead.objects.filter(email__iexact=email)[:10]
     clients = Client.objects.filter(owner_email__iexact=email)[:20]
     subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
+    payment_gateway = PaymentGatewayConfig.active_razorpay()
+    gateway_message = (
+        f"Razorpay {payment_gateway.get_mode_display()} mode is enabled. Checkout creation is ready for the next integration step."
+        if payment_gateway
+        else "Online payment checkout is disabled until Razorpay credentials are entered and enabled in admin."
+    )
+    billing_button = "Request Pro activation" if not payment_gateway else "Request Pro checkout"
     paid_count = Invoice.objects.filter(owner_email__iexact=email, status="paid").count()
     pending_count = Invoice.objects.filter(owner_email__iexact=email).exclude(status="paid").count()
 
@@ -586,11 +593,11 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <article class="billing-panel">
           <div>
             <h3>Current plan: {escape(subscription.get_plan_display())}</h3>
-            <p>Status: {escape(subscription.get_status_display())}. Online payment checkout will be connected after Razorpay or Stripe credentials are added.</p>
+            <p>Status: {escape(subscription.get_status_display())}. {escape(gateway_message)}</p>
           </div>
           <form method="post" action="/dashboard/billing/request-pro/">
             {csrf_input(request)}
-            <button class="button primary" type="submit">Request Pro activation</button>
+            <button class="button primary" type="submit">{escape(billing_button)}</button>
           </form>
         </article>
       </section>
@@ -704,6 +711,7 @@ def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
 @require_POST
 def request_pro_activation(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
+    payment_gateway = PaymentGatewayConfig.active_razorpay()
     subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
     subscription.plan = "pro"
     subscription.status = "requested"
@@ -711,7 +719,12 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
     subscription.save()
     send_mail(
         "RozLedger Pro activation requested",
-        f"Pro activation requested by {email}.",
+        "\n".join(
+            [
+                f"Pro activation requested by {email}.",
+                f"Payment gateway: {'Razorpay enabled' if payment_gateway else 'disabled'}",
+            ]
+        ),
         settings.DEFAULT_FROM_EMAIL,
         [settings.ROZLEDGER_NOTIFY_EMAIL],
         fail_silently=True,

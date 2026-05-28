@@ -1,10 +1,43 @@
 import secrets
+import base64
+import hashlib
 
+from cryptography.fernet import Fernet, InvalidToken
+from django.conf import settings
 from django.db import models
 
 
 def public_token() -> str:
     return secrets.token_urlsafe(18)
+
+
+def secret_cipher() -> Fernet:
+    digest = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_secret(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    return secret_cipher().encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_secret(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return secret_cipher().decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        return ""
+
+
+def mask_secret(value: str) -> str:
+    if not value:
+        return "Not set"
+    if len(value) <= 8:
+        return "Configured"
+    return f"{value[:4]}...{value[-4:]}"
 
 
 class Lead(models.Model):
@@ -109,3 +142,80 @@ class PlanSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"{self.owner_email} - {self.plan} ({self.status})"
+
+
+class PaymentGatewayConfig(models.Model):
+    GATEWAY_CHOICES = [
+        ("razorpay", "Razorpay"),
+    ]
+
+    MODE_CHOICES = [
+        ("test", "Test"),
+        ("live", "Live"),
+    ]
+
+    gateway = models.CharField(max_length=30, choices=GATEWAY_CHOICES, unique=True, default="razorpay")
+    enabled = models.BooleanField(default=False)
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="test")
+    encrypted_key_id = models.TextField(blank=True)
+    encrypted_key_secret = models.TextField(blank=True)
+    encrypted_webhook_secret = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["gateway"]
+
+    def __str__(self) -> str:
+        status = "enabled" if self.enabled else "disabled"
+        return f"{self.get_gateway_display()} {self.get_mode_display()} ({status})"
+
+    @classmethod
+    def razorpay(cls) -> "PaymentGatewayConfig | None":
+        return cls.objects.filter(gateway="razorpay").first()
+
+    @classmethod
+    def active_razorpay(cls) -> "PaymentGatewayConfig | None":
+        config = cls.razorpay()
+        if config and config.enabled and config.is_configured:
+            return config
+        return None
+
+    @property
+    def key_id(self) -> str:
+        return decrypt_secret(self.encrypted_key_id)
+
+    @key_id.setter
+    def key_id(self, value: str) -> None:
+        self.encrypted_key_id = encrypt_secret(value)
+
+    @property
+    def key_secret(self) -> str:
+        return decrypt_secret(self.encrypted_key_secret)
+
+    @key_secret.setter
+    def key_secret(self, value: str) -> None:
+        self.encrypted_key_secret = encrypt_secret(value)
+
+    @property
+    def webhook_secret(self) -> str:
+        return decrypt_secret(self.encrypted_webhook_secret)
+
+    @webhook_secret.setter
+    def webhook_secret(self, value: str) -> None:
+        self.encrypted_webhook_secret = encrypt_secret(value)
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.key_id and self.key_secret)
+
+    @property
+    def masked_key_id(self) -> str:
+        return mask_secret(self.key_id)
+
+    @property
+    def masked_key_secret(self) -> str:
+        return mask_secret(self.key_secret)
+
+    @property
+    def masked_webhook_secret(self) -> str:
+        return mask_secret(self.webhook_secret)
