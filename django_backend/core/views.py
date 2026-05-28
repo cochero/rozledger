@@ -58,6 +58,17 @@ def csrf_input(request: HttpRequest) -> str:
     return f'<input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />'
 
 
+def google_tag() -> str:
+    return """<!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-KLPE4CG3TK"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-KLPE4CG3TK');
+    </script>"""
+
+
 def notify_lead(lead: Lead) -> bool:
     if not settings.EMAIL_HOST and "smtp" in settings.EMAIL_BACKEND:
         return False
@@ -146,6 +157,7 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{escape(title)} | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
+    {google_tag()}
   </head>
   <body class="account-page">
     <header class="topbar">
@@ -718,6 +730,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Invoice | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
+    {google_tag()}
   </head>
   <body class="print-page">
     <main class="print-invoice">
@@ -819,6 +832,7 @@ def lead_thanks(request: HttpRequest, token: str) -> HttpResponse:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Early Access Request Received | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
+    {google_tag()}
   </head>
   <body class="content-page">
     <main class="article-shell">
