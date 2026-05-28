@@ -942,6 +942,17 @@ textarea {
   line-height: 1.35;
 }
 
+.content-link p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.blog-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .print-page {
   background: #f4f7f5;
 }
@@ -1019,6 +1030,7 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .blog-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,
@@ -1054,6 +1066,7 @@ textarea {
   .offer-list,
   .pro-layout,
   .content-grid,
+  .blog-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,

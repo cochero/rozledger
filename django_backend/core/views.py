@@ -304,6 +304,11 @@ def content_index(request: HttpRequest) -> FileResponse:
 
 
 @require_http_methods(GET_OR_HEAD)
+def blog_index(request: HttpRequest) -> FileResponse:
+    return serve_project_file("blog.html", "text/html")
+
+
+@require_http_methods(GET_OR_HEAD)
 def privacy(request: HttpRequest) -> FileResponse:
     return serve_project_file("privacy.html", "text/html")
 
@@ -329,6 +334,14 @@ def seo_page(request: HttpRequest, slug: str) -> FileResponse:
     if not safe_slug or "/" in safe_slug or ".." in safe_slug:
         raise Http404("Page not found")
     return serve_project_file(f"pages/{safe_slug}/index.html", "text/html")
+
+
+@require_http_methods(GET_OR_HEAD)
+def blog_page(request: HttpRequest, slug: str) -> FileResponse:
+    safe_slug = slug.strip().lower()
+    if not safe_slug or "/" in safe_slug or ".." in safe_slug:
+        raise Http404("Page not found")
+    return serve_project_file(f"blog/{safe_slug}/index.html", "text/html")
 
 
 @require_http_methods(["GET", "POST"])

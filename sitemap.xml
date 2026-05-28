@@ -2,6 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://rozledger.in/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/content/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/pricing/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/privacy/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/terms/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
@@ -36,4 +37,21 @@
   <url><loc>https://rozledger.in/pages/payment-link-message-for-customers-india/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/pages/invoice-template-for-instagram-sellers-india/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://rozledger.in/pages/payment-collection-tracker-for-small-business/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/why-small-businesses-need-rozledger/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-for-freelancers-india/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-for-tutors-and-coaching-centres/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-for-digital-marketing-agencies/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-requirements-to-start/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-easy-invoice-workflow/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/gst-calculation-made-simple-with-rozledger/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/upi-payment-links-with-rozledger/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/whatsapp-payment-reminders-with-rozledger/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/daily-collection-targets-with-rozledger/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-dashboard-benefits/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-pro-benefits/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-for-local-shops/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-for-consultants/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-vs-manual-billing/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/how-rozledger-supports-organic-growth/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://rozledger.in/blog/rozledger-getting-started-guide/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
 </urlset>
