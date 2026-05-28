@@ -354,8 +354,8 @@ def layout(title: str, description: str, body: str) -> str:
           <h2>Support</h2>
           <ul>
             <li><a href="mailto:cs@rozledger.in">cs@rozledger.in</a></li>
-            <li><a href="tel:+919516811111">95168 11111</a></li>
-            <li><a href="https://wa.me/919516811111" rel="noopener">WhatsApp: 9516811111</a></li>
+            <li><a href="tel:+919516022222">+91 95160 22222</a></li>
+            <li><a href="https://wa.me/919516022222" rel="noopener">WhatsApp: +91 95160 22222</a></li>
           </ul>
         </div>
         <div>
@@ -386,7 +386,7 @@ def layout(title: str, description: str, body: str) -> str:
     </footer>
     <a
       class="whatsapp-float"
-      href="https://wa.me/919516811111"
+      href="https://wa.me/919516022222"
       aria-label="Chat with RozLedger on WhatsApp"
       rel="noopener"
     >

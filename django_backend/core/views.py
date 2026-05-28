@@ -101,7 +101,7 @@ def notify_lead(lead: Lead) -> bool:
                         "Thanks for requesting RozLedger Pro early access.",
                         "We have received your details and will contact you if your business is a fit for the next testing batch.",
                         "",
-                        "For urgent help, WhatsApp us at 9516811111.",
+                        "For urgent help, WhatsApp us at +91 95160 22222.",
                         "",
                         "RozLedger",
                         "Klickevents Infosolutions Private Limited",
@@ -137,7 +137,7 @@ def absolute_url(request: HttpRequest, path: str) -> str:
 
 
 def whatsapp_url(message: str) -> str:
-    return f"https://wa.me/919516811111?text={quote_plus(message)}"
+    return f"https://wa.me/919516022222?text={quote_plus(message)}"
 
 
 def safe_next_url(value: str | None) -> str:
@@ -177,7 +177,7 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
       </nav>
     </header>
     {body}
-    <a class="whatsapp-float" href="https://wa.me/919516811111" aria-label="Chat with RozLedger on WhatsApp" rel="noopener">
+    <a class="whatsapp-float" href="https://wa.me/919516022222" aria-label="Chat with RozLedger on WhatsApp" rel="noopener">
       <span class="whatsapp-icon" aria-hidden="true">W</span>
       <span class="whatsapp-text">WhatsApp</span>
     </a>
