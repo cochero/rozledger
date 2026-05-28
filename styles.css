@@ -482,6 +482,17 @@ textarea {
   font-weight: 800;
 }
 
+.dashboard-notice {
+  display: inline-block;
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--green) 42%, var(--line));
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--green) 10%, #fff);
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
 .status-actions {
   display: flex;
   flex-wrap: wrap;
@@ -890,6 +901,88 @@ textarea {
   line-height: 1.65;
 }
 
+.billing-meta {
+  margin-top: 8px !important;
+  font-size: 14px;
+}
+
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.plan-active {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: color-mix(in srgb, var(--green) 12%, #fff);
+  color: var(--green-dark);
+}
+
+.plan-requested {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--line));
+  background: color-mix(in srgb, var(--amber) 14%, #fff);
+  color: var(--ink);
+}
+
+.plan-paused,
+.plan-cancelled,
+.plan-free {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.pro-status-panel,
+.pro-workflow-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: #fff;
+}
+
+.pro-status-panel {
+  margin: 20px 0;
+}
+
+.pro-status-panel h2,
+.pro-workflow-grid h2 {
+  margin-bottom: 8px;
+  font-size: 22px;
+}
+
+.pro-status-panel p,
+.pro-workflow-grid p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.pro-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.pro-workflow-grid span {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 800;
+}
+
+.compact-form {
+  margin: 0;
+}
+
 .empty-state {
   background: var(--paper);
 }
@@ -1031,6 +1124,7 @@ textarea {
   .pro-layout,
   .content-grid,
   .blog-grid,
+  .pro-workflow-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,
@@ -1067,6 +1161,7 @@ textarea {
   .pro-layout,
   .content-grid,
   .blog-grid,
+  .pro-workflow-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,

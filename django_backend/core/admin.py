@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin
+from django.utils import timezone
 
 from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
 
@@ -38,9 +39,36 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(PlanSubscription)
 class PlanSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("owner_email", "plan", "status", "requested_at", "updated_at")
+    list_display = ("owner_email", "plan", "status", "requested_at", "activated_at", "updated_at")
     search_fields = ("owner_email",)
-    list_filter = ("plan", "status", "requested_at")
+    list_filter = ("plan", "status", "requested_at", "activated_at")
+    readonly_fields = ("requested_at", "activated_at", "paused_at", "cancelled_at", "updated_at")
+    fieldsets = (
+        ("Customer", {"fields": ("owner_email",)}),
+        ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "paused_at", "cancelled_at")}),
+        ("Admin note", {"fields": ("admin_note",)}),
+    )
+    actions = ("approve_pro", "mark_requested", "pause_subscription", "cancel_subscription")
+
+    @admin.action(description="Approve selected customers for RozLedger Pro")
+    def approve_pro(self, request, queryset):
+        updated = queryset.update(plan="pro", status="active", activated_at=timezone.now(), paused_at=None, cancelled_at=None)
+        self.message_user(request, f"{updated} Pro subscription(s) approved.")
+
+    @admin.action(description="Mark selected customers as Pro requested")
+    def mark_requested(self, request, queryset):
+        updated = queryset.update(plan="pro", status="requested", requested_at=timezone.now(), paused_at=None, cancelled_at=None)
+        self.message_user(request, f"{updated} subscription(s) marked as requested.")
+
+    @admin.action(description="Pause selected Pro subscriptions")
+    def pause_subscription(self, request, queryset):
+        updated = queryset.update(status="paused", paused_at=timezone.now())
+        self.message_user(request, f"{updated} subscription(s) paused.")
+
+    @admin.action(description="Cancel selected subscriptions")
+    def cancel_subscription(self, request, queryset):
+        updated = queryset.update(status="cancelled", cancelled_at=timezone.now())
+        self.message_user(request, f"{updated} subscription(s) cancelled.")
 
 
 class PaymentGatewayConfigForm(forms.ModelForm):

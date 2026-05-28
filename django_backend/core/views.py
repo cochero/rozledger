@@ -146,6 +146,38 @@ def safe_next_url(value: str | None) -> str:
     return "/dashboard/"
 
 
+def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, str]:
+    if subscription.is_pro_active:
+        return (
+            "Pro active",
+            "Your RozLedger Pro access is active. You can use saved clients, invoice history, PDF downloads and payment status tracking.",
+            "active",
+        )
+    if subscription.status == "requested":
+        return (
+            "Pro requested",
+            "Your Pro activation request is waiting for admin approval. We will contact you before any paid activation or payment collection.",
+            "requested",
+        )
+    if subscription.status == "paused":
+        return (
+            "Pro paused",
+            "Your Pro access is paused. Contact support if you want to resume the plan.",
+            "paused",
+        )
+    if subscription.status == "cancelled":
+        return (
+            "Plan cancelled",
+            "Your previous Pro request or plan is cancelled. You can request activation again when needed.",
+            "cancelled",
+        )
+    return (
+        "Free plan",
+        "You are using the free RozLedger tools. Request Pro when you need saved clients, invoice history and payment tracking.",
+        "free",
+    )
+
+
 def page_shell(title: str, body: str, request: HttpRequest | None = None) -> HttpResponse:
     user_link = ""
     if request and request.user.is_authenticated:
@@ -191,10 +223,11 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
     is_register = mode == "register"
     title = "Create account" if is_register else "Login"
     action = "/accounts/register/" if is_register else "/accounts/login/"
+    next_value = escape(safe_next_url(request.GET.get("next") or request.POST.get("next")))
     alternate = (
-        'Already have an account? <a href="/accounts/login/">Login</a>'
+        f'Already have an account? <a href="/accounts/login/?next={quote_plus(next_value)}">Login</a>'
         if is_register
-        else 'New to RozLedger? <a href="/accounts/register/">Create an account</a>'
+        else f'New to RozLedger? <a href="/accounts/register/?next={quote_plus(next_value)}">Create an account</a>'
     )
     name_field = (
         """
@@ -206,7 +239,6 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
         if is_register
         else ""
     )
-    next_value = escape(safe_next_url(request.GET.get("next") or request.POST.get("next")))
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     body = f"""
     <main class="account-shell">
@@ -460,12 +492,15 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     clients = Client.objects.filter(owner_email__iexact=email)[:20]
     subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
+    subscription_title, subscription_message, subscription_tone = subscription_status_copy(subscription)
     gateway_message = (
-        f"Razorpay {payment_gateway.get_mode_display()} mode is enabled. Checkout creation is ready for the next integration step."
+        f"Razorpay {payment_gateway.get_mode_display()} mode is enabled. Online checkout can be connected to this approval flow."
         if payment_gateway
-        else "Online payment checkout is disabled until Razorpay credentials are entered and enabled in admin."
+        else "Online payment checkout is disabled. Pro activation is currently handled by admin approval."
     )
-    billing_button = "Request Pro activation" if not payment_gateway else "Request Pro checkout"
+    notice = ""
+    if request.GET.get("pro") == "requested":
+        notice = '<p class="dashboard-notice">Your Pro activation request was saved. Admin approval is pending.</p>'
     paid_count = Invoice.objects.filter(owner_email__iexact=email, status="paid").count()
     pending_count = Invoice.objects.filter(owner_email__iexact=email).exclude(status="paid").count()
 
@@ -566,6 +601,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <p class="eyebrow">Private dashboard</p>
         <h1>Welcome, {escape(display_name)}.</h1>
         <p>Track invoices and RozLedger Pro requests connected to {escape(email)}.</p>
+        {notice}
         <div class="hero-actions">
           <a class="button primary" href="/#tool-panel">Create invoice</a>
           <a class="button secondary" href="/content/">Browse templates</a>
@@ -575,7 +611,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
         <div><span>Paid invoices</span><strong>{paid_count}</strong></div>
         <div><span>Saved clients</span><strong>{Client.objects.filter(owner_email__iexact=email).count()}</strong></div>
-        <div><span>Plan</span><strong>{escape(subscription.get_plan_display())}</strong></div>
+        <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
       </section>
       <section class="dashboard-section">
         <div class="section-head">
@@ -613,13 +649,18 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         </div>
         <article class="billing-panel">
           <div>
+            <span class="plan-badge plan-{escape(subscription_tone)}">{escape(subscription_title)}</span>
             <h3>Current plan: {escape(subscription.get_plan_display())}</h3>
-            <p>Status: {escape(subscription.get_status_display())}. {escape(gateway_message)}</p>
+            <p>{escape(subscription_message)} {escape(gateway_message)}</p>
+            <p class="billing-meta">
+              Requested: {subscription.requested_at.strftime('%d %b %Y') if subscription.requested_at else 'Not requested yet'}
+              {f" / Activated: {subscription.activated_at:%d %b %Y}" if subscription.activated_at else ""}
+            </p>
           </div>
-          <form method="post" action="/dashboard/billing/request-pro/">
-            {csrf_input(request)}
-            <button class="button primary" type="submit">{escape(billing_button)}</button>
-          </form>
+          <div class="dashboard-actions">
+            <a class="button secondary" href="/dashboard/billing/pro/">View Pro workflow</a>
+            {'<a class="button ghost" href="https://wa.me/919516022222?text=Hi%20RozLedger%2C%20please%20help%20with%20my%20Pro%20activation." rel="noopener">Contact support</a>' if subscription.status in ('requested', 'paused', 'cancelled') else ''}
+          </div>
         </article>
       </section>
     </main>
@@ -729,6 +770,78 @@ def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def pro_billing(request: HttpRequest) -> HttpResponse:
+    if request.method == "POST":
+        return request_pro_activation(request)
+
+    email = current_account_email(request)
+    subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
+    title, message, tone = subscription_status_copy(subscription)
+    payment_gateway = PaymentGatewayConfig.active_razorpay()
+    gateway_message = (
+        f"Razorpay {payment_gateway.get_mode_display()} mode is configured, but manual admin approval is still kept as a control step."
+        if payment_gateway
+        else "Razorpay checkout is not enabled yet. This request will be reviewed and approved manually from Django admin."
+    )
+    request_button = ""
+    if subscription.is_pro_active:
+        request_button = '<a class="button primary" href="/dashboard/">Go to dashboard</a>'
+    else:
+        button_label = "Request Pro activation again" if subscription.status in {"paused", "cancelled"} else "Request Pro activation"
+        request_button = f"""
+          <form method="post" action="/dashboard/billing/pro/" class="account-form compact-form">
+            {csrf_input(request)}
+            <button class="button primary" type="submit">{escape(button_label)}</button>
+          </form>
+        """
+
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">RozLedger Pro</p>
+        <h1>Pro activation workflow</h1>
+        <p class="account-copy">Request Pro from this page. The RozLedger admin can then approve your account from Django admin. Payment checkout can be attached after Razorpay approval.</p>
+        <div class="pro-status-panel">
+          <span class="plan-badge plan-{escape(tone)}">{escape(title)}</span>
+          <h2>{escape(title)}</h2>
+          <p>{escape(message)}</p>
+          <p>{escape(gateway_message)}</p>
+          <p class="billing-meta">
+            Account: {escape(email)}<br />
+            Requested: {subscription.requested_at.strftime('%d %b %Y') if subscription.requested_at else 'Not requested yet'}
+            {f"<br />Activated: {subscription.activated_at:%d %b %Y}" if subscription.activated_at else ""}
+          </p>
+        </div>
+        <div class="pro-workflow-grid">
+          <article>
+            <span>1</span>
+            <h2>Customer requests Pro</h2>
+            <p>The request is stored against the logged-in email address.</p>
+          </article>
+          <article>
+            <span>2</span>
+            <h2>Admin reviews</h2>
+            <p>Admin checks the customer and approves Pro from Django admin.</p>
+          </article>
+          <article>
+            <span>3</span>
+            <h2>Dashboard updates</h2>
+            <p>The customer dashboard changes from requested to active automatically.</p>
+          </article>
+        </div>
+        <div class="dashboard-actions">
+          {request_button}
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          <a class="button ghost" href="https://wa.me/919516022222?text=Hi%20RozLedger%2C%20I%20need%20help%20with%20Pro%20activation." rel="noopener">WhatsApp support</a>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Pro activation", body, request)
+
+
+@login_required
 @require_POST
 def request_pro_activation(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
@@ -737,7 +850,9 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
     subscription.plan = "pro"
     subscription.status = "requested"
     subscription.requested_at = timezone.now()
-    subscription.save()
+    subscription.paused_at = None
+    subscription.cancelled_at = None
+    subscription.save(update_fields=["plan", "status", "requested_at", "paused_at", "cancelled_at", "updated_at"])
     send_mail(
         "RozLedger Pro activation requested",
         "\n".join(
@@ -750,7 +865,7 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
         [settings.ROZLEDGER_NOTIFY_EMAIL],
         fail_silently=True,
     )
-    return redirect("/dashboard/")
+    return redirect("/dashboard/?pro=requested")
 
 
 @require_http_methods(GET_OR_HEAD)

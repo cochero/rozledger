@@ -140,6 +140,10 @@ class PlanSubscription(models.Model):
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="free")
     requested_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    admin_note = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -147,6 +151,10 @@ class PlanSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"{self.owner_email} - {self.plan} ({self.status})"
+
+    @property
+    def is_pro_active(self) -> bool:
+        return self.plan == "pro" and self.status == "active"
 
 
 class PaymentGatewayConfig(models.Model):

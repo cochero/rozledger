@@ -67,7 +67,7 @@
             <li>Dashboard for repeat billing work</li>
             <li>Priority WhatsApp support during launch</li>
           </ul>
-          <a class="button primary" href="#pricingLead">Request Pro access</a>
+          <a class="button primary" href="/dashboard/billing/pro/">Request Pro access</a>
         </article>
 
         <article class="price-card">
@@ -88,21 +88,25 @@
       <section class="pro pricing-lead" id="pricingLead">
         <div class="section-head">
           <p class="eyebrow">Become an early customer</p>
-          <h2>Request Pro activation</h2>
+          <h2>Request Pro with an account</h2>
         </div>
         <div class="pro-layout">
           <div>
             <p>
-              Payment checkout will be switched on after Razorpay approval. Until then, this form
-              captures serious leads so we can contact the right users first when paid activation opens.
+              Payment checkout will be switched on after Razorpay approval. Until then, create an
+              account and request Pro activation so the admin can review and approve access manually.
             </p>
             <ul class="feature-list">
               <li>No charge is taken from this page.</li>
               <li>We will contact you before any paid plan starts.</li>
               <li>Useful for freelancers, tutors, agencies, consultants and local service businesses.</li>
             </ul>
+            <div class="hero-actions">
+              <a class="button primary" href="/dashboard/billing/pro/">Request with account</a>
+              <a class="button secondary" href="/accounts/register/?next=/dashboard/billing/pro/">Create account</a>
+            </div>
           </div>
-          <form class="lead-form" id="leadForm" data-source="pricing_pro_waitlist">
+          <form class="lead-form" id="leadForm" data-source="pricing_pro_enquiry">
             <label>
               Your name
               <input id="leadName" name="name" placeholder="Business owner name" required />
@@ -125,7 +129,7 @@
                 <option>Consultant</option>
               </select>
             </label>
-            <button class="button primary" type="submit">Request Pro activation</button>
+            <button class="button primary" type="submit">Send Pro enquiry</button>
             <p class="status-text" id="leadStatus" aria-live="polite"></p>
           </form>
         </div>

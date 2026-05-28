@@ -31,6 +31,7 @@ urlpatterns = [
     path("dashboard/invoices/<int:invoice_id>/edit/", views.invoice_edit, name="invoice_edit"),
     path("dashboard/invoices/<int:invoice_id>/status/", views.invoice_status, name="invoice_status"),
     path("dashboard/invoices/<int:invoice_id>/delete/", views.invoice_delete, name="invoice_delete"),
+    path("dashboard/billing/pro/", views.pro_billing, name="pro_billing"),
     path("dashboard/billing/request-pro/", views.request_pro_activation, name="request_pro_activation"),
     path("admin/", admin.site.urls),
     path("api/health", views.health, name="health"),
