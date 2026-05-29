@@ -93,7 +93,14 @@ async function postJson(path, payload) {
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
+    const error = new Error(`Request failed with ${response.status}`);
+    error.status = response.status;
+    try {
+      error.payload = await response.json();
+    } catch {
+      error.payload = {};
+    }
+    throw error;
   }
 
   return response.json();
@@ -292,9 +299,14 @@ if (leadForm) {
         { label: "WhatsApp RozLedger", href: result.whatsapp_url, newTab: true },
       ]);
       event.currentTarget.reset();
-    } catch {
-      saveFallback("rozledger_leads", payload);
-      showStatus("leadStatus", "Saved in this browser. Please try again later if you want us to contact you.");
+    } catch (error) {
+      if (error.status === 400) {
+        const message = error.payload?.error || "Please check your name, email and phone number.";
+        showStatus("leadStatus", message, true);
+        return;
+      }
+      showStatus("leadStatus", "Opening secure fallback submit...");
+      event.currentTarget.submit();
     }
   });
 }

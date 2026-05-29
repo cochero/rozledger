@@ -1047,10 +1047,7 @@ def options(request: HttpRequest) -> JsonResponse:
     )
 
 
-@csrf_exempt
-@require_POST
-def create_lead(request: HttpRequest) -> JsonResponse:
-    payload = json_payload(request)
+def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, str]]:
     name = clean_text(payload.get("name"), max_length=160)
     email = clean_text(payload.get("email"), max_length=254)
     phone = clean_text(payload.get("phone"), max_length=40)
@@ -1062,8 +1059,15 @@ def create_lead(request: HttpRequest) -> JsonResponse:
     utm_medium = clean_text(payload.get("utm_medium"), max_length=120)
     utm_campaign = clean_text(payload.get("utm_campaign"), max_length=160)
 
-    if len(name) < 2 or len(phone) < 8 or "@" not in email:
-        return JsonResponse({"error": "Name, email and phone are required."}, status=400)
+    errors = {}
+    if len(name) < 2:
+        errors["name"] = "Name is required."
+    if "@" not in email:
+        errors["email"] = "A valid email is required."
+    if len(phone) < 8:
+        errors["phone"] = "A valid phone or WhatsApp number is required."
+    if errors:
+        return None, errors
 
     lead = Lead.objects.create(
         name=name,
@@ -1078,7 +1082,6 @@ def create_lead(request: HttpRequest) -> JsonResponse:
         utm_campaign=utm_campaign,
     )
 
-    notification_sent = False
     try:
         notification_sent = notify_lead(lead)
     except Exception:
@@ -1087,6 +1090,16 @@ def create_lead(request: HttpRequest) -> JsonResponse:
     if notification_sent:
         lead.notification_sent = True
         lead.save(update_fields=["notification_sent"])
+
+    return lead, {}
+
+
+@csrf_exempt
+@require_POST
+def create_lead(request: HttpRequest) -> JsonResponse:
+    lead, errors = lead_from_payload(json_payload(request))
+    if lead is None:
+        return JsonResponse({"error": "Name, email and phone are required.", "fields": errors}, status=400)
 
     thanks_path = f"/pro/thanks/{lead.public_token}/"
     follow_up = (
@@ -1097,12 +1110,37 @@ def create_lead(request: HttpRequest) -> JsonResponse:
         {
             "ok": True,
             "id": lead.id,
-            "notification_sent": notification_sent,
+            "notification_sent": lead.notification_sent,
             "thanks_url": absolute_url(request, thanks_path),
             "whatsapp_url": whatsapp_url(follow_up),
         },
         status=201,
     )
+
+
+@csrf_exempt
+@require_POST
+def create_lead_form(request: HttpRequest) -> HttpResponse:
+    payload = {key: value for key, value in request.POST.items()}
+    payload.setdefault("source", "website_form")
+    payload.setdefault("landing_path", request.META.get("HTTP_REFERER", ""))
+    lead, errors = lead_from_payload(payload)
+    if lead is None:
+        body = f"""
+        <main class="article-shell">
+          <article class="article">
+            <p class="eyebrow">Request not saved</p>
+            <h1>Please check your details.</h1>
+            <p class="article-lead">{escape(' '.join(errors.values()))}</p>
+            <div class="article-actions">
+              <a class="button primary" href="/#pro">Back to Pro request</a>
+              <a class="button secondary" href="https://wa.me/919516022222" rel="noopener">WhatsApp support</a>
+            </div>
+          </article>
+        </main>
+        """
+        return page_shell("Request not saved", body, request)
+    return redirect(f"/pro/thanks/{lead.public_token}/")
 
 
 @csrf_exempt

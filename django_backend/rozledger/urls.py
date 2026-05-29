@@ -22,6 +22,7 @@ urlpatterns = [
     path("invoice/<str:token>/", views.invoice_print, name="invoice_print"),
     path("invoice/<str:token>/download.pdf", views.invoice_pdf, name="invoice_pdf"),
     path("pro/thanks/<str:token>/", views.lead_thanks, name="lead_thanks"),
+    path("pro/request/", views.create_lead_form, name="lead_request_form"),
     path("accounts/register/", views.register_view, name="register"),
     path("accounts/login/", views.login_view, name="login"),
     path("accounts/logout/", views.logout_view, name="logout"),

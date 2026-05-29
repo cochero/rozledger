@@ -259,7 +259,8 @@
               <li>No online checkout is active yet. Pro is planned at Rs 299/month after Razorpay approval.</li>
             </ul>
           </div>
-          <form class="lead-form" id="leadForm" data-source="home_pro_waitlist">
+          <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="home_pro_waitlist">
+            <input type="hidden" name="source" value="home_pro_waitlist" />
             <label>
               Your name
               <input id="leadName" name="name" placeholder="Business owner name" required />

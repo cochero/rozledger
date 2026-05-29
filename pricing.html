@@ -106,7 +106,8 @@
               <a class="button secondary" href="/accounts/register/?next=/dashboard/billing/pro/">Create account</a>
             </div>
           </div>
-          <form class="lead-form" id="leadForm" data-source="pricing_pro_enquiry">
+          <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="pricing_pro_enquiry">
+            <input type="hidden" name="source" value="pricing_pro_enquiry" />
             <label>
               Your name
               <input id="leadName" name="name" placeholder="Business owner name" required />
