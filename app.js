@@ -276,41 +276,6 @@ if (hasTool) {
   });
 }
 
-const leadForm = byId("leadForm");
-if (leadForm) {
-  leadForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const source = event.currentTarget.dataset.source || "pro_waitlist";
-    const payload = {
-      name: byId("leadName").value.trim(),
-      email: byId("leadEmail").value.trim(),
-      phone: byId("leadPhone").value.trim(),
-      business_type: byId("leadBusiness").value,
-      ...attributionPayload(source),
-    };
-
-    try {
-      const result = await postJson("/api/leads", payload);
-      const message = result.notification_sent
-        ? "Thanks. We emailed your confirmation and received your early-access request."
-        : "Thanks. We received your request. Email confirmation is being enabled; for urgent help, WhatsApp us.";
-      showStatusActions("leadStatus", message, [
-        { label: "View confirmation", href: result.thanks_url, newTab: true },
-        { label: "WhatsApp RozLedger", href: result.whatsapp_url, newTab: true },
-      ]);
-      event.currentTarget.reset();
-    } catch (error) {
-      if (error.status === 400) {
-        const message = error.payload?.error || "Please check your name, email and phone number.";
-        showStatus("leadStatus", message, true);
-        return;
-      }
-      showStatus("leadStatus", "Opening secure fallback submit...");
-      event.currentTarget.submit();
-    }
-  });
-}
-
 if (hasTool) {
   updateInvoice();
 }
