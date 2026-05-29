@@ -10,6 +10,7 @@ PAGES_DIR = ROOT / "pages"
 BLOG_DIR = ROOT / "blog"
 VIDEOS_DIR = ROOT / "videos"
 BASE_URL = os.getenv("ROZLEDGER_PUBLIC_URL", "https://rozledger.in").rstrip("/")
+BRAND_HTML = '<a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>'
 
 
 GOOGLE_TAG = """<!-- Google tag (gtag.js) -->
@@ -331,7 +332,7 @@ def layout(title: str, description: str, body: str) -> str:
   </head>
   <body class="content-page">
     <header class="topbar">
-      <a class="brand" href="/"><span class="brand-mark">R</span><span>RozLedger</span></a>
+      {BRAND_HTML}
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
         <a href="/content/">Templates</a>
@@ -346,7 +347,7 @@ def layout(title: str, description: str, body: str) -> str:
     <footer class="site-footer">
       <div class="footer-grid">
         <div class="footer-brand">
-          <a class="brand" href="/"><span class="brand-mark">R</span><span>RozLedger</span></a>
+          {BRAND_HTML}
           <p>Practical invoice, GST, UPI and payment reminder helpers for Indian small businesses.</p>
           <p class="footer-note">Verify tax and legal details with a qualified professional.</p>
         </div>

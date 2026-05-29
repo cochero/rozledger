@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("app.js", views.asset, {"filename": "app.js"}, name="app_js"),
     path("styles.css", views.asset, {"filename": "styles.css"}, name="styles_css"),
+    path("rozledger-logo.png", views.asset, {"filename": "rozledger-logo.png"}, name="logo_png"),
     path("robots.txt", views.asset, {"filename": "robots.txt"}, name="robots_txt"),
     path("sitemap.xml", views.asset, {"filename": "sitemap.xml"}, name="sitemap_xml"),
     path("content/", views.content_index, name="content_index"),

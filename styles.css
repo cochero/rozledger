@@ -57,18 +57,16 @@ a {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 800;
+  flex: 0 0 auto;
+  line-height: 1;
 }
 
-.brand-mark {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 8px;
-  color: #fff;
-  background: var(--green);
+.brand-logo {
+  display: block;
+  width: clamp(154px, 16vw, 218px);
+  height: auto;
+  max-height: 52px;
+  object-fit: contain;
 }
 
 nav {
@@ -571,6 +569,11 @@ textarea {
 
 .footer-brand .brand {
   margin-bottom: 14px;
+}
+
+.footer-brand .brand-logo {
+  width: 210px;
+  max-height: 58px;
 }
 
 .footer-note {

@@ -146,6 +146,10 @@ def safe_next_url(value: str | None) -> str:
     return "/dashboard/"
 
 
+def brand_html() -> str:
+    return '<a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>'
+
+
 def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, str]:
     if subscription.is_pro_active:
         return (
@@ -197,7 +201,7 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
   </head>
   <body class="account-page">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="RozLedger home"><span class="brand-mark">R</span><span>RozLedger</span></a>
+      {brand_html()}
       <nav aria-label="Primary navigation">
         <a href="/">Tool</a>
         <a href="/content/">Templates</a>
@@ -327,6 +331,7 @@ def asset(request: HttpRequest, filename: str) -> FileResponse:
     content_types = {
         "app.js": "text/javascript",
         "styles.css": "text/css",
+        "rozledger-logo.png": "image/png",
         "robots.txt": "text/plain",
         "sitemap.xml": "application/xml",
     }
