@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends default-libmysqlclient-dev build-essential pkg-config \
+    && apt-get install -y --no-install-recommends default-libmysqlclient-dev build-essential pkg-config fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY django_backend/requirements.txt /app/django_backend/requirements.txt

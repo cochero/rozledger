@@ -90,7 +90,7 @@ class AccountWorkflowTests(TestCase):
                     "amount_before_gst": "1000",
                     "gst_rate": "18",
                     "due_days": 7,
-                    "total_text": "Rs 1180",
+                    "total_text": "₹ 1180",
                     "upi_link": "upi://pay?pa=test@upi",
                     "bank_details": "Bank: Test Bank\nIFSC: TEST0001",
                     "thank_you_note": "Thank you for choosing us.",
@@ -155,7 +155,7 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.owner_email, "form-owner@example.com")
         self.assertEqual(invoice.template, "modern")
         self.assertEqual(invoice.accent_color, "#7c3aed")
-        self.assertEqual(invoice.total_text, "Rs 2360.00")
+        self.assertEqual(invoice.total_text, "₹ 2360.00")
         self.assertTrue(invoice.include_gst)
         self.assertEqual(invoice.client_address, "Client Address")
         self.assertEqual(invoice.thank_you_note, "Thanks from form.")
@@ -193,7 +193,7 @@ class AccountWorkflowTests(TestCase):
         invoice = Invoice.objects.get(owner=user)
         self.assertFalse(invoice.include_gst)
         self.assertEqual(invoice.gst_rate, 0)
-        self.assertEqual(invoice.total_text, "Rs 1500.00")
+        self.assertEqual(invoice.total_text, "₹ 1500.00")
         self.assertIn("GST: Not charged", invoice.invoice_text)
 
     def test_invoice_owner_isolation_returns_404_for_other_customer(self):
@@ -207,7 +207,7 @@ class AccountWorkflowTests(TestCase):
             service_name="Private Service",
             amount_before_gst="500.00",
             gst_rate="18.00",
-            total_text="Rs 590",
+            total_text="₹ 590",
             upi_link="",
             invoice_text="Private invoice",
         )

@@ -39,6 +39,7 @@ SPAM_TEXT_RE = re.compile(
 )
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+RUPEE_SYMBOL = "₹"
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -128,7 +129,7 @@ def digits_only(value: str) -> str:
 
 def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal, include_gst: bool = True) -> str:
     total = amount_before_gst + (amount_before_gst * gst_rate / Decimal("100")) if include_gst else amount_before_gst
-    return f"Rs {total.quantize(Decimal('0.01'))}"
+    return f"{RUPEE_SYMBOL} {total.quantize(Decimal('0.01'))}"
 
 
 def build_invoice_text(invoice: Invoice) -> str:
@@ -140,7 +141,7 @@ def build_invoice_text(invoice: Invoice) -> str:
             invoice.client_address,
             f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin else "",
             f"Service: {invoice.service_name}",
-            f"Amount: Rs {invoice.amount_before_gst}",
+            f"Amount: {RUPEE_SYMBOL} {invoice.amount_before_gst}",
             f"GST: {invoice.gst_rate}%" if invoice.include_gst else "GST: Not charged",
             f"Total: {invoice.total_text}",
             f"UPI/payment link: {invoice.upi_link}" if invoice.upi_link else "",
@@ -182,7 +183,7 @@ def invoice_gst_amount(invoice: Invoice) -> Decimal:
 
 
 def money(value: Decimal) -> str:
-    return f"Rs {value.quantize(Decimal('0.01'))}"
+    return f"{RUPEE_SYMBOL} {value.quantize(Decimal('0.01'))}"
 
 
 def clean_accent_color(value: Any) -> str:
@@ -1340,6 +1341,8 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     from reportlab.lib.enums import TA_RIGHT
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     gst_amount = invoice_gst_amount(invoice)
@@ -1348,27 +1351,43 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
     styles = getSampleStyleSheet()
-    body_style = ParagraphStyle("InvoiceBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9.5, leading=13)
+    regular_font = "Helvetica"
+    bold_font = "Helvetica-Bold"
+    font_candidates = [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+    ]
+    for regular_path, bold_path in font_candidates:
+        if Path(regular_path).exists() and Path(bold_path).exists():
+            pdfmetrics.registerFont(TTFont("RozLedgerSans", regular_path))
+            pdfmetrics.registerFont(TTFont("RozLedgerSans-Bold", bold_path))
+            regular_font = "RozLedgerSans"
+            bold_font = "RozLedgerSans-Bold"
+            break
+
+    body_style = ParagraphStyle("InvoiceBody", parent=styles["BodyText"], fontName=regular_font, fontSize=9.5, leading=13)
     small_style = ParagraphStyle("InvoiceSmall", parent=body_style, fontSize=8.5, leading=11, textColor=colors.HexColor("#5b6964"))
-    label_style = ParagraphStyle("InvoiceLabel", parent=small_style, fontName="Helvetica-Bold", textColor=colors.white)
-    heading_style = ParagraphStyle("InvoiceHeading", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, leading=22, spaceAfter=4)
+    label_style = ParagraphStyle("InvoiceLabel", parent=small_style, fontName=bold_font, textColor=colors.white)
+    heading_style = ParagraphStyle("InvoiceHeading", parent=styles["Heading1"], fontName=bold_font, fontSize=18, leading=22, spaceAfter=4)
     title_style = ParagraphStyle(
         "InvoiceTitle",
         parent=small_style,
-        fontName="Helvetica-Bold",
+        fontName=bold_font,
         fontSize=9,
         leading=11,
         textColor=accent,
     )
     right_style = ParagraphStyle("InvoiceRight", parent=body_style, alignment=TA_RIGHT)
-    right_bold_style = ParagraphStyle("InvoiceRightBold", parent=right_style, fontName="Helvetica-Bold")
+    right_bold_style = ParagraphStyle("InvoiceRightBold", parent=right_style, fontName=bold_font)
 
     def para(value: str, style=body_style) -> Paragraph:
         return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
 
     def total_display() -> str:
         text = (invoice.total_text or "").strip()
-        if text.lower().startswith("rs") or text.startswith("₹"):
+        if text.lower().startswith("rs"):
+            return f"{RUPEE_SYMBOL} {text[2:].strip()}"
+        if text.startswith(RUPEE_SYMBOL):
             return text
         try:
             return money(Decimal(text))
