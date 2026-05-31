@@ -1242,6 +1242,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.utils import ImageReader
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     buffer = BytesIO()
@@ -1255,9 +1256,13 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     if invoice.business_address:
         header_items.append(Paragraph(escape(invoice.business_address).replace("\n", "<br />"), styles["BodyText"]))
     if invoice.business_logo:
-        logo = Image(invoice.business_logo.path)
-        logo._restrictSize(110, 70)
-        story.append(Table([[header_items, logo]], colWidths=[340, 130]))
+        try:
+            ImageReader(invoice.business_logo.path).getRGBData()
+            logo = Image(invoice.business_logo.path)
+            logo._restrictSize(110, 70)
+            story.append(Table([[header_items, logo]], colWidths=[340, 130]))
+        except Exception:
+            story.extend(header_items)
     else:
         story.extend(header_items)
     story.extend(

@@ -157,6 +157,9 @@ class AccountWorkflowTests(TestCase):
         logo_response = self.client.get(reverse("invoice_logo", args=[invoice.public_token]))
         self.assertEqual(logo_response.status_code, 200)
         self.assertEqual(logo_response["Content-Type"], "image/png")
+        pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
 
     def test_dashboard_invoice_form_creates_without_gst(self):
         user = User.objects.create_user("nogst@example.com", "nogst@example.com", "strong-password-123")
