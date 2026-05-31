@@ -1337,7 +1337,8 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
 
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.utils import ImageReader
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -1345,59 +1346,83 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     due_date = invoice_due_date(invoice)
     accent = colors.HexColor(clean_accent_color(invoice.accent_color))
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=42, bottomMargin=36)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
     styles = getSampleStyleSheet()
+    body_style = ParagraphStyle("InvoiceBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9.5, leading=13)
+    small_style = ParagraphStyle("InvoiceSmall", parent=body_style, fontSize=8.5, leading=11, textColor=colors.HexColor("#5b6964"))
+    label_style = ParagraphStyle("InvoiceLabel", parent=small_style, fontName="Helvetica-Bold", textColor=colors.white)
+    heading_style = ParagraphStyle("InvoiceHeading", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, leading=22, spaceAfter=4)
+    title_style = ParagraphStyle(
+        "InvoiceTitle",
+        parent=small_style,
+        fontName="Helvetica-Bold",
+        fontSize=9,
+        leading=11,
+        textColor=accent,
+    )
+    right_style = ParagraphStyle("InvoiceRight", parent=body_style, alignment=TA_RIGHT)
+    right_bold_style = ParagraphStyle("InvoiceRightBold", parent=right_style, fontName="Helvetica-Bold")
+
+    def para(value: str, style=body_style) -> Paragraph:
+        return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
+
     story = [
-        Paragraph("Tax Invoice", styles["Title"]),
-        Spacer(1, 16),
+        Table([[""]], colWidths=[480], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
+        Spacer(1, 18),
     ]
-    header_items = [Paragraph(escape(invoice.business_name), styles["Heading1"])]
+    header_items = [Paragraph("TAX INVOICE", title_style), Paragraph(escape(invoice.business_name), heading_style)]
     if invoice.business_address:
-        header_items.append(Paragraph(escape(invoice.business_address).replace("\n", "<br />"), styles["BodyText"]))
+        header_items.append(para(invoice.business_address, small_style))
+    meta_table = Table(
+        [
+            [para("Invoice no.", small_style), para(invoice_number(invoice), right_bold_style)],
+            [para("Invoice date", small_style), para(f"{invoice.created_at:%d %b %Y}", right_bold_style)],
+            [para("Due date", small_style), para(f"{due_date:%d %b %Y}", right_bold_style)],
+            [para("Status", small_style), para(invoice.get_status_display(), right_bold_style)],
+        ],
+        colWidths=[72, 98],
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f7f5")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                ("PADDING", (0, 0), (-1, -1), 7),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        ),
+    )
     if invoice.business_logo:
         try:
             ImageReader(invoice.business_logo.path).getRGBData()
             logo = Image(invoice.business_logo.path)
-            logo._restrictSize(110, 70)
-            story.append(Table([[header_items, logo]], colWidths=[340, 130]))
+            logo._restrictSize(90, 58)
+            header_items.insert(0, logo)
         except Exception:
-            story.extend(header_items)
-    else:
-        story.extend(header_items)
-    story.extend(
-        [
-            Spacer(1, 12),
-            Table(
-            [
-                ["Invoice no.", invoice_number(invoice)],
-                ["Invoice date", f"{invoice.created_at:%d %b %Y}"],
-                ["Due date", f"{due_date:%d %b %Y}"],
-                ["Status", invoice.get_status_display()],
-            ],
-            colWidths=[110, 360],
+            pass
+    story.append(
+        Table(
+            [[header_items, meta_table]],
+            colWidths=[290, 190],
             style=TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f4f7f5")),
-                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
-                    ("PADDING", (0, 0), (-1, -1), 8),
-                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("PADDING", (0, 0), (-1, -1), 0),
+                    ("LEFTPADDING", (1, 0), (1, 0), 18),
                 ]
             ),
-            ),
-            Spacer(1, 18),
-        ]
+        )
     )
+    story.append(Spacer(1, 22))
     story.append(
         Table(
             [
-                ["Bill to", "Seller"],
+                [Paragraph("Bill to", label_style), Paragraph("Seller", label_style)],
                 [
-                    f"{invoice.client_name}\n{invoice.client_address}\n{('GSTIN: ' + invoice.client_gstin) if invoice.client_gstin else ''}",
-                    f"{invoice.business_name}\n{invoice.business_address}",
+                    para("\n".join(part for part in [invoice.client_name, invoice.client_address, f"GSTIN: {invoice.client_gstin}" if invoice.client_gstin else ""] if part)),
+                    para("\n".join(part for part in [invoice.business_name, invoice.business_address] if part)),
                 ],
             ],
-            colWidths=[235, 235],
+            colWidths=[240, 240],
             style=TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), accent),
@@ -1413,18 +1438,15 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(
         Table(
             [
-                ["Description", "Amount", "GST", "Total"],
+                [Paragraph("Description", label_style), Paragraph("Amount", label_style), Paragraph("GST", label_style), Paragraph("Total", label_style)],
                 [
-                    invoice.service_name,
-                    money(invoice.amount_before_gst),
-                    money(gst_amount) if invoice.include_gst else "Not charged",
-                    invoice.total_text,
+                    para(f"{invoice.service_name}\n{invoice.client_name}"),
+                    para(money(invoice.amount_before_gst), right_style),
+                    para(money(gst_amount) if invoice.include_gst else "Not charged", right_style),
+                    para(invoice.total_text, right_bold_style),
                 ],
-                ["", "Subtotal", money(invoice.amount_before_gst), ""],
-                ["", f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", money(gst_amount) if invoice.include_gst else "Not charged", ""],
-                ["", "Amount payable", "", invoice.total_text],
             ],
-            colWidths=[220, 85, 80, 85],
+            colWidths=[250, 80, 70, 80],
             style=TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), accent),
@@ -1432,20 +1454,36 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
                     ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
                     ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
                     ("PADDING", (0, 0), (-1, -1), 8),
-                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-                    ("FONTNAME", (1, -1), (-1, -1), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            ),
+        )
+    )
+    story.append(Spacer(1, 10))
+    story.append(
+        Table(
+            [
+                [para("Subtotal", right_style), para(money(invoice.amount_before_gst), right_bold_style)],
+                [para(f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", right_style), para(money(gst_amount) if invoice.include_gst else "Not charged", right_bold_style)],
+                [para("Amount payable", right_bold_style), para(invoice.total_text, right_bold_style)],
+            ],
+            colWidths=[330, 150],
+            style=TableStyle(
+                [
+                    ("LINEABOVE", (0, -1), (-1, -1), 1.2, accent),
+                    ("PADDING", (0, 0), (-1, -1), 6),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ]
             ),
         )
     )
     if invoice.bank_details:
         story.append(Spacer(1, 12))
-        story.append(Paragraph("Bank information", styles["Heading2"]))
-        for line in invoice.bank_details.splitlines():
-            story.append(Paragraph(escape(line) or "&nbsp;", styles["BodyText"]))
+        story.append(Paragraph("Bank information", heading_style))
+        story.append(para(invoice.bank_details))
     if invoice.thank_you_note:
         story.append(Spacer(1, 12))
-        story.append(Paragraph(escape(invoice.thank_you_note), styles["BodyText"]))
+        story.append(para(invoice.thank_you_note))
     story.append(Spacer(1, 16))
     story.append(Paragraph("Verify tax and legal details with a qualified professional.", styles["Italic"]))
     doc.build(story)
