@@ -166,6 +166,24 @@ def valid_logo_upload(upload) -> str:
     return ""
 
 
+def invoice_number(invoice: Invoice) -> str:
+    return f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}"
+
+
+def invoice_due_date(invoice: Invoice):
+    return invoice.created_at + timedelta(days=invoice.due_days)
+
+
+def invoice_gst_amount(invoice: Invoice) -> Decimal:
+    if not invoice.include_gst:
+        return Decimal("0")
+    return (invoice.amount_before_gst * invoice.gst_rate / Decimal("100")).quantize(Decimal("0.01"))
+
+
+def money(value: Decimal) -> str:
+    return f"Rs {value.quantize(Decimal('0.01'))}"
+
+
 def csrf_input(request: HttpRequest) -> str:
     return f'<input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />'
 
@@ -1157,6 +1175,8 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     except Invoice.DoesNotExist as exc:
         raise Http404("Invoice not found") from exc
 
+    gst_amount = invoice_gst_amount(invoice)
+    due_date = invoice_due_date(invoice)
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1168,23 +1188,28 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
   </head>
   <body class="print-page">
     <main class="print-invoice">
-      <header class="print-header">
-        <div>
-          <p class="eyebrow">RozLedger invoice</p>
-          <h1>{escape(invoice.business_name)}</h1>
+      <header class="invoice-document-header">
+        <div class="invoice-brand-block">
+          {invoice_logo_html(invoice)}
+          <div>
+            <p class="invoice-kicker">Tax invoice</p>
+            <h1>{escape(invoice.business_name)}</h1>
+            <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
+          </div>
         </div>
-        {invoice_logo_html(invoice)}
-        <button class="button primary no-print" type="button" onclick="window.print()">Print / Save PDF</button>
+        <aside class="invoice-number-card">
+          <strong>{escape(invoice_number(invoice))}</strong>
+          <span>Invoice date</span>
+          <p>{invoice.created_at:%d %b %Y}</p>
+          <span>Due date</span>
+          <p>{due_date:%d %b %Y}</p>
+          <span>Status</span>
+          <p>{escape(invoice.get_status_display())}</p>
+        </aside>
       </header>
-      <section class="print-meta">
-        <div><span>Client</span><strong>{escape(invoice.client_name)}</strong></div>
-        <div><span>Service</span><strong>{escape(invoice.service_name)}</strong></div>
-        <div><span>GST</span><strong>{escape(str(invoice.gst_rate)) + '%' if invoice.include_gst else 'Not charged'}</strong></div>
-        <div><span>Total</span><strong>{escape(invoice.total_text)}</strong></div>
-      </section>
       <section class="invoice-address-grid">
         <article>
-          <span>From</span>
+          <span>Seller</span>
           <strong>{escape(invoice.business_name)}</strong>
           <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
         </article>
@@ -1195,16 +1220,54 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           {f'<p>GSTIN: {escape(invoice.client_gstin)}</p>' if invoice.client_gstin else ''}
         </article>
       </section>
-      <pre class="template-box">{escape(invoice.invoice_text)}</pre>
-      {f'<section class="template-box"><strong>Bank information</strong><br />{escape(invoice.bank_details).replace(chr(10), "<br />")}</section>' if invoice.bank_details else ''}
+      <table class="invoice-line-table">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Amount</th>
+            <th>GST</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <strong>{escape(invoice.service_name)}</strong>
+              <span>{escape(invoice.client_name)}</span>
+            </td>
+            <td>{escape(money(invoice.amount_before_gst))}</td>
+            <td>{escape(money(gst_amount)) if invoice.include_gst else 'Not charged'}</td>
+            <td>{escape(invoice.total_text)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <section class="invoice-total-panel">
+        <div>
+          <span>Subtotal</span>
+          <strong>{escape(money(invoice.amount_before_gst))}</strong>
+        </div>
+        <div>
+          <span>{f'GST @ {invoice.gst_rate}%' if invoice.include_gst else 'GST'}</span>
+          <strong>{escape(money(gst_amount)) if invoice.include_gst else 'Not charged'}</strong>
+        </div>
+        <div class="grand-total">
+          <span>Amount payable</span>
+          <strong>{escape(invoice.total_text)}</strong>
+        </div>
+      </section>
+      <section class="invoice-payment-grid">
+        {f'<article><span>Bank information</span><p>{escape(invoice.bank_details).replace(chr(10), "<br />")}</p></article>' if invoice.bank_details else ''}
+        {f'<article><span>UPI / payment link</span><p>{escape(invoice.upi_link)}</p></article>' if invoice.upi_link else ''}
+      </section>
       {f'<p class="thank-you-note">{escape(invoice.thank_you_note)}</p>' if invoice.thank_you_note else ''}
       <section class="print-actions no-print">
+        <button class="button primary" type="button" onclick="window.print()">Print / Save PDF</button>
         {f'<a class="button secondary" href="{escape(invoice.upi_link)}">Open UPI link</a>' if invoice.upi_link else ''}
         <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/download.pdf">Download PDF</a>
         <a class="button secondary" href="{escape(whatsapp_url(invoice.invoice_text))}" rel="noopener">Send on WhatsApp</a>
-        <a class="button ghost" href="/">Create another invoice</a>
+        <a class="button ghost" href="/dashboard/">Dashboard</a>
       </section>
-      <p class="print-disclaimer">This is a practical invoice helper. Verify tax and legal details with a qualified professional.</p>
+      <p class="print-disclaimer">Generated by RozLedger. Verify tax and legal details with a qualified professional.</p>
     </main>
   </body>
 </html>
@@ -1245,11 +1308,13 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     from reportlab.lib.utils import ImageReader
     from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+    gst_amount = invoice_gst_amount(invoice)
+    due_date = invoice_due_date(invoice)
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=42, bottomMargin=36)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("RozLedger Invoice", styles["Title"]),
+        Paragraph("Tax Invoice", styles["Title"]),
         Spacer(1, 16),
     ]
     header_items = [Paragraph(escape(invoice.business_name), styles["Heading1"])]
@@ -1270,12 +1335,9 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             Spacer(1, 12),
             Table(
             [
-                ["Client", invoice.client_name],
-                ["Client address", invoice.client_address],
-                ["Client GSTIN", invoice.client_gstin or "-"],
-                ["Service", invoice.service_name],
-                ["GST", f"{invoice.gst_rate}%" if invoice.include_gst else "Not charged"],
-                ["Total", invoice.total_text],
+                ["Invoice no.", invoice_number(invoice)],
+                ["Invoice date", f"{invoice.created_at:%d %b %Y}"],
+                ["Due date", f"{due_date:%d %b %Y}"],
                 ["Status", invoice.get_status_display()],
             ],
             colWidths=[110, 360],
@@ -1292,9 +1354,56 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             Spacer(1, 18),
         ]
     )
-    for line in invoice.invoice_text.splitlines():
-        story.append(Paragraph(escape(line) or "&nbsp;", styles["BodyText"]))
-        story.append(Spacer(1, 4))
+    story.append(
+        Table(
+            [
+                ["Bill to", "Seller"],
+                [
+                    f"{invoice.client_name}\n{invoice.client_address}\n{('GSTIN: ' + invoice.client_gstin) if invoice.client_gstin else ''}",
+                    f"{invoice.business_name}\n{invoice.business_address}",
+                ],
+            ],
+            colWidths=[235, 235],
+            style=TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17211f")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                ]
+            ),
+        )
+    )
+    story.append(Spacer(1, 18))
+    story.append(
+        Table(
+            [
+                ["Description", "Amount", "GST", "Total"],
+                [
+                    invoice.service_name,
+                    money(invoice.amount_before_gst),
+                    money(gst_amount) if invoice.include_gst else "Not charged",
+                    invoice.total_text,
+                ],
+                ["", "Subtotal", money(invoice.amount_before_gst), ""],
+                ["", f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", money(gst_amount) if invoice.include_gst else "Not charged", ""],
+                ["", "Amount payable", "", invoice.total_text],
+            ],
+            colWidths=[220, 85, 80, 85],
+            style=TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17211f")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("FONTNAME", (1, -1), (-1, -1), "Helvetica-Bold"),
+                ]
+            ),
+        )
+    )
     if invoice.bank_details:
         story.append(Spacer(1, 12))
         story.append(Paragraph("Bank information", styles["Heading2"]))
