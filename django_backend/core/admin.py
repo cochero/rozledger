@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django import forms
 from django.contrib import admin
 from django.utils import timezone
@@ -61,35 +63,90 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(PlanSubscription)
 class PlanSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("owner", "owner_email", "plan", "status", "requested_at", "activated_at", "updated_at")
+    list_display = ("owner", "owner_email", "plan", "status", "requested_at", "activated_at", "expires_at", "updated_at")
     search_fields = ("owner__username", "owner__email", "owner_email")
-    list_filter = ("plan", "status", "requested_at", "activated_at")
-    readonly_fields = ("requested_at", "activated_at", "paused_at", "cancelled_at", "updated_at")
+    list_filter = ("plan", "status", "requested_at", "activated_at", "expires_at")
+    readonly_fields = ("requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at", "updated_at")
     fieldsets = (
         ("Customer", {"fields": ("owner", "owner_email")}),
-        ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "paused_at", "cancelled_at")}),
+        ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at")}),
         ("Admin note", {"fields": ("admin_note",)}),
     )
-    actions = ("approve_pro", "mark_requested", "pause_subscription", "cancel_subscription")
+    actions = ("activate_15_day_trial", "approve_pro", "mark_requested", "pause_subscription", "cancel_subscription")
+
+    def save_model(self, request, obj, form, change):
+        if obj.plan == "pro" and obj.status == "active" and obj.activated_at is None:
+            obj.activated_at = timezone.now()
+        super().save_model(request, obj, form, change)
+
+    def notify_pro_active(self, subscription):
+        recipient = subscription.owner.email if subscription.owner and subscription.owner.email else subscription.owner_email
+        if not recipient:
+            return
+        expiry_line = f"Your Pro trial is active until {subscription.expires_at:%d %b %Y}." if subscription.expires_at else "Your Pro access is active."
+        from django.conf import settings
+        from django.core.mail import send_mail
+
+        send_mail(
+            "Your RozLedger Pro access is active",
+            "\n".join(
+                [
+                    "Hello,",
+                    "",
+                    "Your RozLedger Pro access has been activated.",
+                    expiry_line,
+                    "",
+                    "Login here: https://rozledger.in/dashboard/",
+                    "",
+                    "RozLedger",
+                ]
+            ),
+            settings.DEFAULT_FROM_EMAIL,
+            [recipient],
+            fail_silently=True,
+        )
 
     @admin.action(description="Approve selected customers for RozLedger Pro")
     def approve_pro(self, request, queryset):
-        updated = queryset.update(plan="pro", status="active", activated_at=timezone.now(), paused_at=None, cancelled_at=None)
+        now = timezone.now()
+        updated = queryset.update(plan="pro", status="active", activated_at=now, expires_at=None, paused_at=None, cancelled_at=None)
+        for subscription in queryset:
+            subscription.activated_at = now
+            subscription.expires_at = None
+            self.notify_pro_active(subscription)
         self.message_user(request, f"{updated} Pro subscription(s) approved.")
+
+    @admin.action(description="Activate selected customers for 15-day Pro trial")
+    def activate_15_day_trial(self, request, queryset):
+        now = timezone.now()
+        expires_at = now + timedelta(days=15)
+        updated = queryset.update(
+            plan="pro",
+            status="active",
+            activated_at=now,
+            expires_at=expires_at,
+            paused_at=None,
+            cancelled_at=None,
+        )
+        for subscription in queryset:
+            subscription.activated_at = now
+            subscription.expires_at = expires_at
+            self.notify_pro_active(subscription)
+        self.message_user(request, f"{updated} Pro subscription(s) activated for 15 days.")
 
     @admin.action(description="Mark selected customers as Pro requested")
     def mark_requested(self, request, queryset):
-        updated = queryset.update(plan="pro", status="requested", requested_at=timezone.now(), paused_at=None, cancelled_at=None)
+        updated = queryset.update(plan="pro", status="requested", requested_at=timezone.now(), expires_at=None, paused_at=None, cancelled_at=None)
         self.message_user(request, f"{updated} subscription(s) marked as requested.")
 
     @admin.action(description="Pause selected Pro subscriptions")
     def pause_subscription(self, request, queryset):
-        updated = queryset.update(status="paused", paused_at=timezone.now())
+        updated = queryset.update(status="paused", paused_at=timezone.now(), expires_at=None)
         self.message_user(request, f"{updated} subscription(s) paused.")
 
     @admin.action(description="Cancel selected subscriptions")
     def cancel_subscription(self, request, queryset):
-        updated = queryset.update(status="cancelled", cancelled_at=timezone.now())
+        updated = queryset.update(status="cancelled", cancelled_at=timezone.now(), expires_at=None)
         self.message_user(request, f"{updated} subscription(s) cancelled.")
 
 

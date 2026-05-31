@@ -240,10 +240,17 @@ def brand_html() -> str:
 
 def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, str]:
     if subscription.is_pro_active:
+        expiry_copy = f" Trial expires on {subscription.expires_at:%d %b %Y}." if subscription.expires_at else ""
         return (
             "Pro active",
-            "Your RozLedger Pro access is active. You can use saved clients, invoice history, PDF downloads and payment status tracking.",
+            f"Your RozLedger Pro access is active. You can use saved clients, invoice history, PDF downloads and payment status tracking.{expiry_copy}",
             "active",
+        )
+    if subscription.plan == "pro" and subscription.status == "active" and subscription.expires_at and subscription.expires_at <= timezone.now():
+        return (
+            "Pro expired",
+            "Your Pro trial has expired. Contact RozLedger support if you want to continue Pro access.",
+            "cancelled",
         )
     if subscription.status == "requested":
         return (
@@ -305,6 +312,18 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
       <span class="whatsapp-icon" aria-hidden="true">W</span>
       <span class="whatsapp-text">WhatsApp</span>
     </a>
+    <script>
+      document.querySelectorAll('[data-password-toggle]').forEach((button) => {{
+        button.addEventListener('click', () => {{
+          const input = document.getElementById(button.getAttribute('data-password-toggle'));
+          if (!input) return;
+          const isPassword = input.type === 'password';
+          input.type = isPassword ? 'text' : 'password';
+          button.textContent = isPassword ? 'Hide' : 'Show';
+          button.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+        }});
+      }});
+    </script>
   </body>
 </html>
 """
@@ -331,6 +350,7 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
         if is_register
         else ""
     )
+    password_id = f"{mode}-password"
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     body = f"""
     <main class="account-shell">
@@ -349,7 +369,10 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
           </label>
           <label>
             Password
-            <input name="password" type="password" autocomplete="current-password" required />
+            <span class="password-field">
+              <input id="{password_id}" name="password" type="password" autocomplete="{'new-password' if is_register else 'current-password'}" required />
+              <button class="password-toggle" type="button" data-password-toggle="{password_id}" aria-label="Show password">Show</button>
+            </span>
           </label>
           <button class="button primary" type="submit">{title}</button>
         </form>
@@ -399,7 +422,10 @@ def password_confirm_form(request: HttpRequest, uidb64: str, token: str, error: 
           {csrf_input(request)}
           <label>
             New password
-            <input name="password" type="password" autocomplete="new-password" required />
+            <span class="password-field">
+              <input id="reset-password" name="password" type="password" autocomplete="new-password" required />
+              <button class="password-toggle" type="button" data-password-toggle="reset-password" aria-label="Show password">Show</button>
+            </span>
           </label>
           <button class="button primary" type="submit">Update password</button>
         </form>
@@ -753,6 +779,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             <p class="billing-meta">
               Requested: {subscription.requested_at.strftime('%d %b %Y') if subscription.requested_at else 'Not requested yet'}
               {f" / Activated: {subscription.activated_at:%d %b %Y}" if subscription.activated_at else ""}
+              {f" / Expires: {subscription.expires_at:%d %b %Y}" if subscription.expires_at else ""}
             </p>
           </div>
           <div class="dashboard-actions">
@@ -991,6 +1018,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
             Account: {escape(email)}<br />
             Requested: {subscription.requested_at.strftime('%d %b %Y') if subscription.requested_at else 'Not requested yet'}
             {f"<br />Activated: {subscription.activated_at:%d %b %Y}" if subscription.activated_at else ""}
+            {f"<br />Expires: {subscription.expires_at:%d %b %Y}" if subscription.expires_at else ""}
           </p>
         </div>
         <div class="pro-workflow-grid">

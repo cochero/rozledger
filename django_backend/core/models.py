@@ -5,6 +5,7 @@ import hashlib
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 def public_token() -> str:
@@ -165,6 +166,7 @@ class PlanSubscription(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="free")
     requested_at = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
     paused_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
     admin_note = models.TextField(blank=True)
@@ -178,7 +180,9 @@ class PlanSubscription(models.Model):
 
     @property
     def is_pro_active(self) -> bool:
-        return self.plan == "pro" and self.status == "active"
+        if self.plan != "pro" or self.status != "active":
+            return False
+        return self.expires_at is None or self.expires_at > timezone.now()
 
 
 class PaymentGatewayConfig(models.Model):

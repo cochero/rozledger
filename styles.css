@@ -744,6 +744,28 @@ textarea {
   margin-top: 22px;
 }
 
+.password-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.password-field input {
+  min-width: 0;
+}
+
+.password-toggle {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--green-dark);
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .account-alt {
   margin: 18px 0 0;
   font-size: 14px;

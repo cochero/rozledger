@@ -1,10 +1,14 @@
 import json
+from datetime import timedelta
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.contrib import admin
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
+from .admin import PlanSubscriptionAdmin
 from .models import Client as SavedClient
 from .models import Invoice, Lead, PlanSubscription
 
@@ -52,6 +56,13 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Dashboard")
         self.assertTrue(User.objects.filter(username="customer@example.com").exists())
+
+    def test_login_form_has_password_show_toggle(self):
+        response = self.client.get(reverse("login"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-password-toggle="login-password"')
+        self.assertContains(response, ">Show</button>")
 
     def test_invoice_api_sets_logged_in_owner_and_creates_pdf(self):
         user = User.objects.create_user(
@@ -153,6 +164,21 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(subscription.plan, "pro")
         self.assertEqual(subscription.status, "requested")
         self.assertContains(response, "Admin approval is pending")
+
+    def test_admin_can_activate_15_day_pro_trial(self):
+        user = User.objects.create_user("trial@example.com", "trial@example.com", "password-123456")
+        subscription = PlanSubscription.objects.create(owner=user, owner_email=user.email, plan="pro", status="requested")
+        admin_model = PlanSubscriptionAdmin(PlanSubscription, admin.site)
+        admin_model.message_user = lambda *args, **kwargs: None
+
+        admin_model.activate_15_day_trial(request=None, queryset=PlanSubscription.objects.filter(id=subscription.id))
+
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.status, "active")
+        self.assertEqual(subscription.plan, "pro")
+        self.assertIsNotNone(subscription.activated_at)
+        self.assertIsNotNone(subscription.expires_at)
+        self.assertGreater(subscription.expires_at, timezone.now() + timedelta(days=14))
 
 
 @override_settings(**TEST_SETTINGS)
