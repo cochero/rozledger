@@ -30,6 +30,7 @@ backup_file="$BACKUP_DIR/${MYSQL_DATABASE}_${timestamp}.sql.gz"
 docker compose exec -T mysql mysqldump \
   --single-transaction \
   --quick \
+  --no-tablespaces \
   --default-character-set=utf8mb4 \
   -u"$MYSQL_USER" \
   -p"$MYSQL_PASSWORD" \
