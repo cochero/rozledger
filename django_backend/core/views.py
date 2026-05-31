@@ -13,7 +13,9 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.mail import send_mail
+from django.db.models import Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect
@@ -53,8 +55,48 @@ def current_account_email(request: HttpRequest) -> str:
     return (request.user.email or request.user.username).lower()
 
 
+def account_q(request: HttpRequest) -> Q:
+    email = current_account_email(request)
+    return Q(owner=request.user) | Q(owner_email__iexact=email)
+
+
+def get_subscription(request: HttpRequest) -> PlanSubscription:
+    email = current_account_email(request)
+    subscription = PlanSubscription.objects.filter(Q(owner=request.user) | Q(owner_email__iexact=email)).first()
+    if subscription is None:
+        subscription = PlanSubscription.objects.create(owner=request.user, owner_email=email)
+    elif subscription.owner_id is None:
+        subscription.owner = request.user
+        subscription.save(update_fields=["owner", "updated_at"])
+    return subscription
+
+
 def is_valid_email(value: str) -> bool:
     return "@" in value and "." in value.rsplit("@", 1)[-1]
+
+
+def client_ip(request: HttpRequest) -> str:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
+def is_rate_limited(request: HttpRequest, scope: str, limit: int, window_seconds: int = 300) -> bool:
+    key = f"rl:{scope}:{client_ip(request)}"
+    added = cache.add(key, 1, timeout=window_seconds)
+    if added:
+        return False
+    try:
+        count = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=window_seconds)
+        return False
+    return count > limit
+
+
+def rate_limit_response() -> JsonResponse:
+    return JsonResponse({"error": "Too many requests. Please try again in a few minutes."}, status=429)
 
 
 def csrf_input(request: HttpRequest) -> str:
@@ -492,10 +534,10 @@ def password_reset_confirm_view(request: HttpRequest, uidb64: str, token: str) -
 @require_GET
 def dashboard(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
-    invoices = Invoice.objects.filter(owner_email__iexact=email)[:20]
+    invoices = Invoice.objects.filter(account_q(request))[:20]
     leads = Lead.objects.filter(email__iexact=email)[:10]
-    clients = Client.objects.filter(owner_email__iexact=email)[:20]
-    subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
+    clients = Client.objects.filter(account_q(request))[:20]
+    subscription = get_subscription(request)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
     subscription_title, subscription_message, subscription_tone = subscription_status_copy(subscription)
     gateway_message = (
@@ -506,8 +548,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     notice = ""
     if request.GET.get("pro") == "requested":
         notice = '<p class="dashboard-notice">Your Pro activation request was saved. Admin approval is pending.</p>'
-    paid_count = Invoice.objects.filter(owner_email__iexact=email, status="paid").count()
-    pending_count = Invoice.objects.filter(owner_email__iexact=email).exclude(status="paid").count()
+    paid_count = Invoice.objects.filter(account_q(request), status="paid").count()
+    pending_count = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
 
     invoice_rows = []
     for invoice in invoices:
@@ -615,7 +657,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
         <div><span>Paid invoices</span><strong>{paid_count}</strong></div>
-        <div><span>Saved clients</span><strong>{Client.objects.filter(owner_email__iexact=email).count()}</strong></div>
+        <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
       </section>
       <section class="dashboard-section">
@@ -682,9 +724,10 @@ def create_client(request: HttpRequest) -> HttpResponse:
         return redirect("/dashboard/")
 
     Client.objects.update_or_create(
-        owner_email=email,
+        owner=request.user,
         name=name,
         defaults={
+            "owner_email": email,
             "email": clean_text(request.POST.get("email"), max_length=254),
             "phone": clean_text(request.POST.get("phone"), max_length=40),
             "gstin": clean_text(request.POST.get("gstin"), max_length=20).upper(),
@@ -695,7 +738,7 @@ def create_client(request: HttpRequest) -> HttpResponse:
 
 def owned_invoice(request: HttpRequest, invoice_id: int) -> Invoice:
     try:
-        return Invoice.objects.get(id=invoice_id, owner_email__iexact=current_account_email(request))
+        return Invoice.objects.get(Q(id=invoice_id) & account_q(request))
     except Invoice.DoesNotExist as exc:
         raise Http404("Invoice not found") from exc
 
@@ -718,7 +761,11 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.total_text = clean_text(request.POST.get("total_text"), invoice.total_text, 80)
             invoice.invoice_text = clean_text(request.POST.get("invoice_text"), invoice.invoice_text)
             invoice.save()
-            Client.objects.update_or_create(owner_email=current_account_email(request), name=invoice.client_name)
+            Client.objects.update_or_create(
+                owner=request.user,
+                name=invoice.client_name,
+                defaults={"owner_email": current_account_email(request)},
+            )
         return redirect("/dashboard/")
 
     status_options = "".join(
@@ -781,7 +828,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
         return request_pro_activation(request)
 
     email = current_account_email(request)
-    subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
+    subscription = get_subscription(request)
     title, message, tone = subscription_status_copy(subscription)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
     gateway_message = (
@@ -851,7 +898,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
 def request_pro_activation(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
-    subscription, _ = PlanSubscription.objects.get_or_create(owner_email=email)
+    subscription = get_subscription(request)
     subscription.plan = "pro"
     subscription.status = "requested"
     subscription.requested_at = timezone.now()
@@ -1097,6 +1144,8 @@ def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, s
 @csrf_exempt
 @require_POST
 def create_lead(request: HttpRequest) -> JsonResponse:
+    if is_rate_limited(request, "lead", limit=8):
+        return rate_limit_response()
     lead, errors = lead_from_payload(json_payload(request))
     if lead is None:
         return JsonResponse({"error": "Name, email and phone are required.", "fields": errors}, status=400)
@@ -1121,6 +1170,21 @@ def create_lead(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_POST
 def create_lead_form(request: HttpRequest) -> HttpResponse:
+    if is_rate_limited(request, "lead_form", limit=8):
+        body = """
+        <main class="article-shell">
+          <article class="article">
+            <p class="eyebrow">Please wait</p>
+            <h1>Too many requests.</h1>
+            <p class="article-lead">Please try again in a few minutes, or contact us on WhatsApp if this is urgent.</p>
+            <div class="article-actions">
+              <a class="button primary" href="/#pro">Back to Pro request</a>
+              <a class="button secondary" href="https://wa.me/919516022222" rel="noopener">WhatsApp support</a>
+            </div>
+          </article>
+        </main>
+        """
+        return page_shell("Too many requests", body, request)
     payload = {key: value for key, value in request.POST.items()}
     payload.setdefault("source", "website_form")
     payload.setdefault("landing_path", request.META.get("HTTP_REFERER", ""))
@@ -1146,6 +1210,8 @@ def create_lead_form(request: HttpRequest) -> HttpResponse:
 @csrf_exempt
 @require_POST
 def create_invoice(request: HttpRequest) -> JsonResponse:
+    if is_rate_limited(request, "invoice", limit=20):
+        return rate_limit_response()
     payload = json_payload(request)
     amount_before_gst = decimal_value(payload.get("amount_before_gst"))
     gst_rate = decimal_value(payload.get("gst_rate"))
@@ -1159,6 +1225,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Invoice amount must be greater than zero."}, status=400)
 
     invoice = Invoice.objects.create(
+        owner=request.user if request.user.is_authenticated else None,
         owner_email=owner_email,
         business_name=clean_text(payload.get("business_name"), "Your business", 180),
         client_name=clean_text(payload.get("client_name"), "Client", 180),
@@ -1171,7 +1238,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         invoice_text=clean_text(payload.get("invoice_text")),
     )
     if owner_email and invoice.client_name:
-        Client.objects.get_or_create(owner_email=owner_email, name=invoice.client_name)
+        client_defaults = {"owner": request.user} if request.user.is_authenticated else {}
+        Client.objects.get_or_create(owner_email=owner_email, name=invoice.client_name, defaults=client_defaults)
 
     print_path = f"/invoice/{invoice.public_token}/"
     return JsonResponse(
@@ -1189,6 +1257,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_POST
 def affiliate_click(request: HttpRequest) -> JsonResponse:
+    if is_rate_limited(request, "affiliate", limit=30):
+        return rate_limit_response()
     payload = json_payload(request)
     click = AffiliateClick.objects.create(
         offer_name=clean_text(payload.get("offer_name"), "unknown", 160),

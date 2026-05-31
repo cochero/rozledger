@@ -17,6 +17,7 @@ class LeadAdmin(admin.ModelAdmin):
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
         "business_name",
+        "owner",
         "owner_email",
         "status",
         "client_name",
@@ -26,25 +27,25 @@ class InvoiceAdmin(admin.ModelAdmin):
         "created_at",
     )
     readonly_fields = ("public_token", "created_at")
-    search_fields = ("business_name", "owner_email", "client_name", "service_name", "public_token")
+    search_fields = ("business_name", "owner__username", "owner__email", "owner_email", "client_name", "service_name", "public_token")
     list_filter = ("status", "gst_rate", "created_at")
 
 
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
-    list_display = ("name", "owner_email", "email", "phone", "gstin", "created_at")
-    search_fields = ("name", "owner_email", "email", "phone", "gstin")
+    list_display = ("name", "owner", "owner_email", "email", "phone", "gstin", "created_at")
+    search_fields = ("name", "owner__username", "owner__email", "owner_email", "email", "phone", "gstin")
     list_filter = ("created_at",)
 
 
 @admin.register(PlanSubscription)
 class PlanSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("owner_email", "plan", "status", "requested_at", "activated_at", "updated_at")
-    search_fields = ("owner_email",)
+    list_display = ("owner", "owner_email", "plan", "status", "requested_at", "activated_at", "updated_at")
+    search_fields = ("owner__username", "owner__email", "owner_email")
     list_filter = ("plan", "status", "requested_at", "activated_at")
     readonly_fields = ("requested_at", "activated_at", "paused_at", "cancelled_at", "updated_at")
     fieldsets = (
-        ("Customer", {"fields": ("owner_email",)}),
+        ("Customer", {"fields": ("owner", "owner_email")}),
         ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "paused_at", "cancelled_at")}),
         ("Admin note", {"fields": ("admin_note",)}),
     )

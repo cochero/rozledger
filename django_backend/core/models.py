@@ -63,6 +63,13 @@ class Lead(models.Model):
 
 
 class Client(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="clients",
+    )
     owner_email = models.EmailField(db_index=True)
     name = models.CharField(max_length=180)
     email = models.EmailField(blank=True)
@@ -88,6 +95,13 @@ class Invoice(models.Model):
     ]
 
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="invoices",
+    )
     owner_email = models.EmailField(blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent", db_index=True)
     business_name = models.CharField(max_length=180)
@@ -136,6 +150,13 @@ class PlanSubscription(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
+    owner = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="subscription",
+    )
     owner_email = models.EmailField(unique=True)
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="free")
