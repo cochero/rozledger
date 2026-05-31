@@ -33,7 +33,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()\"",
+          "python -c \"import urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/api/health', headers={'X-Forwarded-Proto':'https'}); urllib.request.urlopen(req, timeout=5).read()\"",
         ]
       interval: 30s
       timeout: 10s
