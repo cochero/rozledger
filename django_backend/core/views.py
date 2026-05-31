@@ -1379,6 +1379,9 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     )
     right_style = ParagraphStyle("InvoiceRight", parent=body_style, alignment=TA_RIGHT)
     right_bold_style = ParagraphStyle("InvoiceRightBold", parent=right_style, fontName=bold_font)
+    meta_value_style = ParagraphStyle("InvoiceMetaValue", parent=right_bold_style, fontSize=8.6, leading=11)
+    amount_style = ParagraphStyle("InvoiceAmount", parent=right_style, fontSize=8.8, leading=11)
+    amount_bold_style = ParagraphStyle("InvoiceAmountBold", parent=right_bold_style, fontSize=8.8, leading=11)
 
     def para(value: str, style=body_style) -> Paragraph:
         return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
@@ -1403,12 +1406,12 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         header_items.append(para(invoice.business_address, small_style))
     meta_table = Table(
         [
-            [para("Invoice no.", small_style), para(invoice_number(invoice), right_bold_style)],
-            [para("Invoice date", small_style), para(f"{invoice.created_at:%d %b %Y}", right_bold_style)],
-            [para("Due date", small_style), para(f"{due_date:%d %b %Y}", right_bold_style)],
-            [para("Status", small_style), para(invoice.get_status_display(), right_bold_style)],
+            [para("Invoice no.", small_style), para(invoice_number(invoice), meta_value_style)],
+            [para("Invoice date", small_style), para(f"{invoice.created_at:%d %b %Y}", meta_value_style)],
+            [para("Due date", small_style), para(f"{due_date:%d %b %Y}", meta_value_style)],
+            [para("Status", small_style), para(invoice.get_status_display(), meta_value_style)],
         ],
-        colWidths=[72, 98],
+        colWidths=[66, 104],
         style=TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f7f5")),
@@ -1469,12 +1472,12 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
                 [Paragraph("Description", label_style), Paragraph("Amount", label_style), Paragraph("GST", label_style), Paragraph("Total", label_style)],
                 [
                     para(f"{invoice.service_name}\n{invoice.client_name}"),
-                    para(money(invoice.amount_before_gst), right_style),
-                    para(money(gst_amount) if invoice.include_gst else "Not charged", right_style),
-                    para(total_display(), right_bold_style),
+                    para(money(invoice.amount_before_gst), amount_style),
+                    para(money(gst_amount) if invoice.include_gst else "Not charged", amount_style),
+                    para(total_display(), amount_bold_style),
                 ],
             ],
-            colWidths=[250, 80, 70, 80],
+            colWidths=[235, 88, 72, 85],
             style=TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), accent),
@@ -1491,9 +1494,9 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(
         Table(
             [
-                [para("Subtotal", right_style), para(money(invoice.amount_before_gst), right_bold_style)],
-                [para(f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", right_style), para(money(gst_amount) if invoice.include_gst else "Not charged", right_bold_style)],
-                [para("Amount payable", right_bold_style), para(total_display(), right_bold_style)],
+                [para("Subtotal", right_style), para(money(invoice.amount_before_gst), amount_bold_style)],
+                [para(f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", right_style), para(money(gst_amount) if invoice.include_gst else "Not charged", amount_bold_style)],
+                [para("Amount payable", right_bold_style), para(total_display(), amount_bold_style)],
             ],
             colWidths=[330, 150],
             style=TableStyle(
