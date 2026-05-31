@@ -141,6 +141,8 @@ class LeadWorkflowTests(TestCase):
                 "phone": "9516022222",
                 "business_type": "Freelancer",
             },
+            HTTP_HOST="testserver",
+            HTTP_REFERER="http://testserver/#pro",
         )
 
         self.assertEqual(response.status_code, 302)
@@ -152,22 +154,65 @@ class LeadWorkflowTests(TestCase):
             reverse("create_lead"),
             data=json.dumps({"name": "A", "email": "bad", "phone": "1"}),
             content_type="application/json",
+            HTTP_HOST="testserver",
+            HTTP_REFERER="http://testserver/#pro",
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("fields", response.json())
 
     def test_lead_api_rate_limit_blocks_repeated_posts(self):
-        payload = {
-            "name": "Rate Limit Customer",
-            "email": "rate@example.com",
-            "phone": "9516022222",
-            "business_type": "Shop",
-        }
         statuses = []
-        for _ in range(9):
-            response = self.client.post(reverse("create_lead"), data=json.dumps(payload), content_type="application/json")
+        for index in range(5):
+            payload = {
+                "name": f"Rate Limit Customer {index}",
+                "email": f"rate-{index}@example.com",
+                "phone": f"95160222{index:02d}",
+                "business_type": "Shop or local service",
+            }
+            response = self.client.post(
+                reverse("create_lead"),
+                data=json.dumps(payload),
+                content_type="application/json",
+                HTTP_HOST="testserver",
+                HTTP_REFERER="http://testserver/#pro",
+            )
             statuses.append(response.status_code)
 
-        self.assertEqual(statuses[:8], [201] * 8)
-        self.assertEqual(statuses[8], 429)
+        self.assertEqual(statuses[:4], [201] * 4)
+        self.assertEqual(statuses[4], 429)
+
+    def test_lead_honeypot_blocks_bot_submission(self):
+        response = self.client.post(
+            reverse("lead_request_form"),
+            {
+                "name": "Bot Lead",
+                "email": "bot@example.com",
+                "phone": "9516022222",
+                "business_type": "Freelancer",
+                "website": "https://spam.example",
+            },
+            HTTP_HOST="testserver",
+            HTTP_REFERER="http://testserver/#pro",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Lead.objects.filter(email="bot@example.com").exists())
+
+    def test_lead_requires_same_origin_referrer(self):
+        response = self.client.post(
+            reverse("create_lead"),
+            data=json.dumps(
+                {
+                    "name": "No Referrer",
+                    "email": "noreferrer@example.com",
+                    "phone": "9516022222",
+                    "business_type": "Freelancer",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="testserver",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Lead.objects.filter(email="noreferrer@example.com").exists())

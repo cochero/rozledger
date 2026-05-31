@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import timedelta
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -29,6 +31,13 @@ from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig,
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
+LEAD_ALLOWED_BUSINESS_TYPES = {"Freelancer", "Tutor or coaching", "Agency", "Shop or local service", "Consultant"}
+HONEYPOT_FIELDS = ("website", "url", "homepage", "company_website")
+SPAM_TEXT_RE = re.compile(
+    r"(https?://|www\.|<a\s|</a>|casino|crypto|viagra|loan|backlink|telegram|escort|porn|forex|betting)",
+    re.IGNORECASE,
+)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -82,8 +91,9 @@ def client_ip(request: HttpRequest) -> str:
     return request.META.get("REMOTE_ADDR", "unknown")
 
 
-def is_rate_limited(request: HttpRequest, scope: str, limit: int, window_seconds: int = 300) -> bool:
-    key = f"rl:{scope}:{client_ip(request)}"
+def is_rate_limited(request: HttpRequest, scope: str, limit: int, window_seconds: int = 300, identity: str | None = None) -> bool:
+    key_identity = identity or client_ip(request)
+    key = f"rl:{scope}:{key_identity}"
     added = cache.add(key, 1, timeout=window_seconds)
     if added:
         return False
@@ -97,6 +107,22 @@ def is_rate_limited(request: HttpRequest, scope: str, limit: int, window_seconds
 
 def rate_limit_response() -> JsonResponse:
     return JsonResponse({"error": "Too many requests. Please try again in a few minutes."}, status=429)
+
+
+def same_origin_request(request: HttpRequest) -> bool:
+    host = request.get_host().split(":", 1)[0].lower()
+    for header in ("HTTP_ORIGIN", "HTTP_REFERER"):
+        value = request.META.get(header, "")
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.hostname and parsed.hostname.lower() == host:
+            return True
+    return False
+
+
+def digits_only(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
 
 
 def csrf_input(request: HttpRequest) -> str:
@@ -1094,10 +1120,11 @@ def options(request: HttpRequest) -> JsonResponse:
     )
 
 
-def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, str]]:
+def lead_from_payload(payload: dict[str, Any], request: HttpRequest) -> tuple[Lead | None, dict[str, str]]:
     name = clean_text(payload.get("name"), max_length=160)
-    email = clean_text(payload.get("email"), max_length=254)
+    email = clean_text(payload.get("email"), max_length=254).lower()
     phone = clean_text(payload.get("phone"), max_length=40)
+    phone_digits = digits_only(phone)
     business_type = clean_text(payload.get("business_type"), "Unknown", 80)
     source = clean_text(payload.get("source"), "website", 80)
     landing_path = clean_text(payload.get("landing_path"), max_length=300)
@@ -1107,12 +1134,24 @@ def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, s
     utm_campaign = clean_text(payload.get("utm_campaign"), max_length=160)
 
     errors = {}
+    if any(clean_text(payload.get(field), max_length=300) for field in HONEYPOT_FIELDS):
+        errors["request"] = "Request could not be saved."
+    if not same_origin_request(request):
+        errors["request"] = "Please submit the form from rozledger.in."
     if len(name) < 2:
         errors["name"] = "Name is required."
-    if "@" not in email:
+    if not EMAIL_RE.match(email):
         errors["email"] = "A valid email is required."
-    if len(phone) < 8:
+    if len(phone_digits) < 10 or len(phone_digits) > 15:
         errors["phone"] = "A valid phone or WhatsApp number is required."
+    if business_type not in LEAD_ALLOWED_BUSINESS_TYPES:
+        errors["business_type"] = "Choose a valid business type."
+    if SPAM_TEXT_RE.search(" ".join([name, phone, business_type, source, utm_source, utm_medium, utm_campaign])):
+        errors["request"] = "Request could not be saved."
+    if email and Lead.objects.filter(email__iexact=email, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
+        errors["email"] = "A request for this email is already saved."
+    if phone_digits and Lead.objects.filter(phone_digits=phone_digits, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
+        errors["phone"] = "A request for this phone number is already saved."
     if errors:
         return None, errors
 
@@ -1120,6 +1159,7 @@ def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, s
         name=name,
         email=email,
         phone=phone,
+        phone_digits=phone_digits,
         business_type=business_type,
         source=source,
         landing_path=landing_path,
@@ -1127,6 +1167,8 @@ def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, s
         utm_source=utm_source,
         utm_medium=utm_medium,
         utm_campaign=utm_campaign,
+        ip_address=client_ip(request) if client_ip(request) != "unknown" else None,
+        user_agent=clean_text(request.META.get("HTTP_USER_AGENT"), max_length=300),
     )
 
     try:
@@ -1144,9 +1186,16 @@ def lead_from_payload(payload: dict[str, Any]) -> tuple[Lead | None, dict[str, s
 @csrf_exempt
 @require_POST
 def create_lead(request: HttpRequest) -> JsonResponse:
-    if is_rate_limited(request, "lead", limit=8):
+    if is_rate_limited(request, "lead", limit=4):
         return rate_limit_response()
-    lead, errors = lead_from_payload(json_payload(request))
+    payload = json_payload(request)
+    email_identity = clean_text(payload.get("email"), max_length=254).lower()
+    phone_identity = digits_only(clean_text(payload.get("phone"), max_length=40))
+    if email_identity and is_rate_limited(request, "lead_email", limit=2, window_seconds=86400, identity=email_identity):
+        return JsonResponse({"error": "Duplicate lead request.", "fields": {"email": "A request for this email is already saved."}}, status=400)
+    if phone_identity and is_rate_limited(request, "lead_phone", limit=2, window_seconds=86400, identity=phone_identity):
+        return JsonResponse({"error": "Duplicate lead request.", "fields": {"phone": "A request for this phone number is already saved."}}, status=400)
+    lead, errors = lead_from_payload(payload, request)
     if lead is None:
         return JsonResponse({"error": "Name, email and phone are required.", "fields": errors}, status=400)
 
@@ -1170,7 +1219,7 @@ def create_lead(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_POST
 def create_lead_form(request: HttpRequest) -> HttpResponse:
-    if is_rate_limited(request, "lead_form", limit=8):
+    if is_rate_limited(request, "lead_form", limit=4):
         body = """
         <main class="article-shell">
           <article class="article">
@@ -1188,7 +1237,16 @@ def create_lead_form(request: HttpRequest) -> HttpResponse:
     payload = {key: value for key, value in request.POST.items()}
     payload.setdefault("source", "website_form")
     payload.setdefault("landing_path", request.META.get("HTTP_REFERER", ""))
-    lead, errors = lead_from_payload(payload)
+    email_identity = clean_text(payload.get("email"), max_length=254).lower()
+    phone_identity = digits_only(clean_text(payload.get("phone"), max_length=40))
+    if email_identity and is_rate_limited(request, "lead_email", limit=2, window_seconds=86400, identity=email_identity):
+        errors = {"email": "A request for this email is already saved."}
+        lead = None
+    elif phone_identity and is_rate_limited(request, "lead_phone", limit=2, window_seconds=86400, identity=phone_identity):
+        errors = {"phone": "A request for this phone number is already saved."}
+        lead = None
+    else:
+        lead, errors = lead_from_payload(payload, request)
     if lead is None:
         body = f"""
         <main class="article-shell">

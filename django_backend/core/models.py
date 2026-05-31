@@ -45,6 +45,7 @@ class Lead(models.Model):
     name = models.CharField(max_length=160)
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40)
+    phone_digits = models.CharField(max_length=20, blank=True, db_index=True)
     business_type = models.CharField(max_length=80)
     source = models.CharField(max_length=80, default="website")
     landing_path = models.CharField(max_length=300, blank=True)
@@ -52,6 +53,8 @@ class Lead(models.Model):
     utm_source = models.CharField(max_length=120, blank=True)
     utm_medium = models.CharField(max_length=120, blank=True)
     utm_campaign = models.CharField(max_length=160, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True)
     notification_sent = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
