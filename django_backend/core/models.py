@@ -109,6 +109,7 @@ class Invoice(models.Model):
     owner_email = models.EmailField(blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent", db_index=True)
     business_name = models.CharField(max_length=180)
+    business_logo = models.FileField(upload_to="invoice_logos/%Y/%m/", blank=True)
     business_address = models.TextField(blank=True)
     client_name = models.CharField(max_length=180)
     client_address = models.TextField(blank=True)

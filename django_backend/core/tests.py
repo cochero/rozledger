@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.contrib import admin
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -134,6 +135,11 @@ class AccountWorkflowTests(TestCase):
                 "upi_link": "upi://pay?pa=form@upi",
                 "bank_details": "Form Bank",
                 "thank_you_note": "Thanks from form.",
+                "business_logo": SimpleUploadedFile(
+                    "logo.png",
+                    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\xe2p\xb8\x00\x00\x00\x00IEND\xaeB`\x82",
+                    content_type="image/png",
+                ),
             },
         )
 
@@ -146,6 +152,11 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.client_address, "Client Address")
         self.assertEqual(invoice.thank_you_note, "Thanks from form.")
         self.assertIn("Form Service", invoice.invoice_text)
+        self.assertTrue(invoice.business_logo.name)
+
+        logo_response = self.client.get(reverse("invoice_logo", args=[invoice.public_token]))
+        self.assertEqual(logo_response.status_code, 200)
+        self.assertEqual(logo_response["Content-Type"], "image/png")
 
     def test_dashboard_invoice_form_creates_without_gst(self):
         user = User.objects.create_user("nogst@example.com", "nogst@example.com", "strong-password-123")

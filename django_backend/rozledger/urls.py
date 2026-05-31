@@ -20,6 +20,7 @@ urlpatterns = [
     path("pages/<slug:slug>/", views.seo_page, name="seo_page"),
     path("blog/<slug:slug>/", views.blog_page, name="blog_page"),
     path("invoice/<str:token>/", views.invoice_print, name="invoice_print"),
+    path("invoice/<str:token>/logo/", views.invoice_logo, name="invoice_logo"),
     path("invoice/<str:token>/download.pdf", views.invoice_pdf, name="invoice_pdf"),
     path("pro/thanks/<str:token>/", views.lead_thanks, name="lead_thanks"),
     path("pro/request/", views.create_lead_form, name="lead_request_form"),

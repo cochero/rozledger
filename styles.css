@@ -1126,6 +1126,16 @@ textarea {
   padding-bottom: 20px;
 }
 
+.invoice-logo {
+  max-width: 150px;
+  max-height: 86px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
 .print-header h1 {
   margin-bottom: 0;
   font-size: clamp(30px, 4vw, 48px);

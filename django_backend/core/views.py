@@ -149,6 +149,23 @@ def build_invoice_text(invoice: Invoice) -> str:
     ).strip()
 
 
+def invoice_logo_html(invoice: Invoice) -> str:
+    if not invoice.business_logo:
+        return ""
+    return f'<img class="invoice-logo" src="/invoice/{escape(invoice.public_token)}/logo/" alt="{escape(invoice.business_name)} logo" />'
+
+
+def valid_logo_upload(upload) -> str:
+    if not upload:
+        return ""
+    allowed_types = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+    if getattr(upload, "content_type", "") not in allowed_types:
+        return "Upload a PNG, JPG, WebP or GIF logo."
+    if getattr(upload, "size", 0) > 2 * 1024 * 1024:
+        return "Logo file must be 2 MB or smaller."
+    return ""
+
+
 def csrf_input(request: HttpRequest) -> str:
     return f'<input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />'
 
@@ -846,11 +863,15 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         gst_rate = decimal_value(values["gst_rate"]) if include_gst else Decimal("0")
         due_days_raw = digits_only(values["due_days"])
         due_days = int(due_days_raw or 0)
+        logo_upload = request.FILES.get("business_logo")
+        logo_error = valid_logo_upload(logo_upload)
 
         if not values["business_name"] or not values["client_name"] or not values["service_name"]:
             error = "Business name, client name and service are required."
         elif amount_before_gst <= 0:
             error = "Invoice amount must be greater than zero."
+        elif logo_error:
+            error = logo_error
         else:
             invoice = Invoice.objects.create(
                 owner=request.user,
@@ -871,8 +892,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 thank_you_note=values["thank_you_note"],
                 invoice_text="",
             )
+            if logo_upload:
+                invoice.business_logo = logo_upload
             invoice.invoice_text = build_invoice_text(invoice)
-            invoice.save(update_fields=["invoice_text", "updated_at"])
+            invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
             Client.objects.get_or_create(
                 owner_email=invoice.owner_email,
                 name=invoice.client_name,
@@ -888,9 +911,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         <h1>Create invoice</h1>
         <p class="account-copy">Use this dashboard form when you want the invoice saved directly to your account.</p>
         {error_html}
-        <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form">
+        <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form" enctype="multipart/form-data">
           {csrf_input(request)}
           <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required /></label>
+          <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
           <label>Business full address<textarea name="business_address" rows="3">{escape(values['business_address'])}</textarea></label>
           <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(values['client_address'])}</textarea></label>
@@ -929,6 +953,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         amount_before_gst = decimal_value(request.POST.get("amount_before_gst"))
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(request.POST.get("gst_rate")) if include_gst else Decimal("0")
+        logo_upload = request.FILES.get("business_logo")
+        logo_error = valid_logo_upload(logo_upload)
+        if logo_error:
+            return page_shell("Edit invoice", f'<main class="account-shell"><section class="account-card"><p class="form-error">{escape(logo_error)}</p><a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Back to edit invoice</a></section></main>', request)
         if amount_before_gst > 0:
             invoice.business_name = clean_text(request.POST.get("business_name"), invoice.business_name, 180)
             invoice.business_address = clean_text(request.POST.get("business_address"))
@@ -947,6 +975,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.upi_link = clean_text(request.POST.get("upi_link"))
             invoice.bank_details = clean_text(request.POST.get("bank_details"))
             invoice.thank_you_note = clean_text(request.POST.get("thank_you_note"))
+            if logo_upload:
+                invoice.business_logo = logo_upload
             invoice.invoice_text = clean_text(request.POST.get("invoice_text"), invoice.invoice_text)
             if not invoice.invoice_text:
                 invoice.invoice_text = build_invoice_text(invoice)
@@ -967,9 +997,11 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
       <section class="account-card">
         <p class="eyebrow">Invoice</p>
         <h1>Edit invoice</h1>
-        <form method="post" class="account-form">
+        <form method="post" class="account-form" enctype="multipart/form-data">
           {csrf_input(request)}
           <label>Business name<input name="business_name" value="{escape(invoice.business_name)}" /></label>
+          <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+          {f'<p class="form-hint">Current logo is attached. Upload a new file to replace it.</p>' if invoice.business_logo else ''}
           <label>Business full address<textarea name="business_address" rows="3">{escape(invoice.business_address)}</textarea></label>
           <label>Client name<input name="client_name" value="{escape(invoice.client_name)}" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(invoice.client_address)}</textarea></label>
@@ -1141,6 +1173,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           <p class="eyebrow">RozLedger invoice</p>
           <h1>{escape(invoice.business_name)}</h1>
         </div>
+        {invoice_logo_html(invoice)}
         <button class="button primary no-print" type="button" onclick="window.print()">Print / Save PDF</button>
       </header>
       <section class="print-meta">
@@ -1180,6 +1213,26 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
 
 
 @require_GET
+def invoice_logo(request: HttpRequest, token: str) -> HttpResponse:
+    try:
+        invoice = Invoice.objects.get(public_token=token)
+    except Invoice.DoesNotExist as exc:
+        raise Http404("Invoice not found") from exc
+    if not invoice.business_logo:
+        raise Http404("Logo not found")
+    response = FileResponse(invoice.business_logo.open("rb"))
+    content_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(Path(invoice.business_logo.name).suffix.lower(), "application/octet-stream")
+    response["Content-Type"] = content_type
+    return response
+
+
+@require_GET
 def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     try:
         invoice = Invoice.objects.get(public_token=token)
@@ -1189,7 +1242,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=42, bottomMargin=36)
@@ -1197,10 +1250,20 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story = [
         Paragraph("RozLedger Invoice", styles["Title"]),
         Spacer(1, 16),
-        Paragraph(escape(invoice.business_name), styles["Heading1"]),
-        Paragraph(escape(invoice.business_address).replace("\n", "<br />"), styles["BodyText"]),
-        Spacer(1, 12),
-        Table(
+    ]
+    header_items = [Paragraph(escape(invoice.business_name), styles["Heading1"])]
+    if invoice.business_address:
+        header_items.append(Paragraph(escape(invoice.business_address).replace("\n", "<br />"), styles["BodyText"]))
+    if invoice.business_logo:
+        logo = Image(invoice.business_logo.path)
+        logo._restrictSize(110, 70)
+        story.append(Table([[header_items, logo]], colWidths=[340, 130]))
+    else:
+        story.extend(header_items)
+    story.extend(
+        [
+            Spacer(1, 12),
+            Table(
             [
                 ["Client", invoice.client_name],
                 ["Client address", invoice.client_address],
@@ -1220,9 +1283,10 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
                     ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                 ]
             ),
-        ),
-        Spacer(1, 18),
-    ]
+            ),
+            Spacer(1, 18),
+        ]
+    )
     for line in invoice.invoice_text.splitlines():
         story.append(Paragraph(escape(line) or "&nbsp;", styles["BodyText"]))
         story.append(Spacer(1, 4))
