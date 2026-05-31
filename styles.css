@@ -861,6 +861,18 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  font-weight: 800;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1146,6 +1158,35 @@ textarea {
   line-height: 1.35;
 }
 
+.invoice-address-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.invoice-address-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.invoice-address-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.invoice-address-grid p,
+.thank-you-note {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .print-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1247,6 +1288,10 @@ textarea {
   }
 
   .print-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-address-grid {
     grid-template-columns: 1fr;
   }
 }

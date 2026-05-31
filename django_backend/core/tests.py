@@ -78,13 +78,19 @@ class AccountWorkflowTests(TestCase):
                 {
                     "owner_email": "different@example.com",
                     "business_name": "Owner Business",
+                    "business_address": "Owner Street\nKochi",
                     "client_name": "Alpha Client",
+                    "client_address": "Client Road\nMumbai",
+                    "client_gstin": "32ABCDE1234F1Z5",
                     "service_name": "Monthly service",
+                    "include_gst": True,
                     "amount_before_gst": "1000",
                     "gst_rate": "18",
                     "due_days": 7,
                     "total_text": "Rs 1180",
                     "upi_link": "upi://pay?pa=test@upi",
+                    "bank_details": "Bank: Test Bank\nIFSC: TEST0001",
+                    "thank_you_note": "Thank you for choosing us.",
                     "invoice_text": "Invoice text",
                 }
             ),
@@ -95,6 +101,9 @@ class AccountWorkflowTests(TestCase):
         invoice = Invoice.objects.get()
         self.assertEqual(invoice.owner, user)
         self.assertEqual(invoice.owner_email, "owner@example.com")
+        self.assertEqual(invoice.business_address, "Owner Street\nKochi")
+        self.assertEqual(invoice.client_gstin, "32ABCDE1234F1Z5")
+        self.assertEqual(invoice.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
         self.assertTrue(SavedClient.objects.filter(owner=user, owner_email="owner@example.com").exists())
 
         pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
@@ -113,12 +122,18 @@ class AccountWorkflowTests(TestCase):
             reverse("invoice_new"),
             {
                 "business_name": "Form Business",
+                "business_address": "Form Address",
                 "client_name": "Form Client",
+                "client_address": "Client Address",
+                "client_gstin": "32ABCDE1234F1Z5",
                 "service_name": "Form Service",
+                "include_gst": "on",
                 "amount_before_gst": "2000",
                 "gst_rate": "18",
                 "due_days": "5",
                 "upi_link": "upi://pay?pa=form@upi",
+                "bank_details": "Form Bank",
+                "thank_you_note": "Thanks from form.",
             },
         )
 
@@ -127,7 +142,34 @@ class AccountWorkflowTests(TestCase):
         invoice = Invoice.objects.get(owner=user)
         self.assertEqual(invoice.owner_email, "form-owner@example.com")
         self.assertEqual(invoice.total_text, "Rs 2360.00")
+        self.assertTrue(invoice.include_gst)
+        self.assertEqual(invoice.client_address, "Client Address")
+        self.assertEqual(invoice.thank_you_note, "Thanks from form.")
         self.assertIn("Form Service", invoice.invoice_text)
+
+    def test_dashboard_invoice_form_creates_without_gst(self):
+        user = User.objects.create_user("nogst@example.com", "nogst@example.com", "strong-password-123")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "No GST Business",
+                "client_name": "No GST Client",
+                "service_name": "No GST Service",
+                "amount_before_gst": "1500",
+                "gst_rate": "18",
+                "due_days": "5",
+                "bank_details": "Bank account details",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user)
+        self.assertFalse(invoice.include_gst)
+        self.assertEqual(invoice.gst_rate, 0)
+        self.assertEqual(invoice.total_text, "Rs 1500.00")
+        self.assertIn("GST: Not charged", invoice.invoice_text)
 
     def test_invoice_owner_isolation_returns_404_for_other_customer(self):
         owner = User.objects.create_user("owner@example.com", "owner@example.com", "password-123456")
