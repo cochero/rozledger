@@ -27,7 +27,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import AffiliateClick, BusinessProfile, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -80,6 +80,42 @@ def get_subscription(request: HttpRequest) -> PlanSubscription:
         subscription.owner = request.user
         subscription.save(update_fields=["owner", "updated_at"])
     return subscription
+
+
+def get_business_profile(request: HttpRequest) -> BusinessProfile | None:
+    return BusinessProfile.objects.filter(account_q(request)).first()
+
+
+def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
+    if not invoice.owner_email:
+        return
+    defaults = {
+        "owner": owner or invoice.owner,
+        "business_name": invoice.business_name,
+        "business_address": invoice.business_address,
+        "upi_link": invoice.upi_link,
+        "bank_details": invoice.bank_details,
+        "thank_you_note": invoice.thank_you_note,
+        "template": invoice.template,
+        "accent_color": invoice.accent_color,
+    }
+    if invoice.business_logo:
+        defaults["business_logo"] = invoice.business_logo
+    BusinessProfile.objects.update_or_create(owner_email=invoice.owner_email, defaults=defaults)
+
+
+def save_client_from_invoice(invoice: Invoice, owner=None) -> None:
+    if not invoice.owner_email or not invoice.client_name:
+        return
+    Client.objects.update_or_create(
+        owner_email=invoice.owner_email,
+        name=invoice.client_name,
+        defaults={
+            "owner": owner or invoice.owner,
+            "address": invoice.client_address,
+            "gstin": invoice.client_gstin,
+        },
+    )
 
 
 def is_valid_email(value: str) -> bool:
@@ -668,6 +704,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     invoices = Invoice.objects.filter(account_q(request))[:20]
     leads = Lead.objects.filter(email__iexact=email)[:10]
     clients = Client.objects.filter(account_q(request))[:20]
+    business_profile = get_business_profile(request)
     subscription = get_subscription(request)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
     subscription_title, subscription_message, subscription_tone = subscription_status_copy(subscription)
@@ -749,6 +786,26 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             """
         )
 
+    if business_profile:
+        business_profile_html = f"""
+        <article class="dashboard-card compact-card">
+          <div>
+            <span>Business profile</span>
+            <h2>{escape(business_profile.business_name)}</h2>
+            <p>{escape(business_profile.business_address or 'No address saved yet').replace(chr(10), '<br />')}</p>
+            {f'<p>{escape(business_profile.bank_details).replace(chr(10), "<br />")}</p>' if business_profile.bank_details else ''}
+          </div>
+        </article>
+        """
+    else:
+        business_profile_html = """
+        <article class="dashboard-card empty-state compact-card">
+          <span>Business profile</span>
+          <h2>No business profile yet</h2>
+          <p>Create an invoice once and RozLedger will save your company details for the next invoice.</p>
+        </article>
+        """
+
     client_rows = []
     for client in clients:
         details = " / ".join(part for part in [client.email, client.phone, client.gstin] if part)
@@ -759,6 +816,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 <span>Client</span>
                 <h2>{escape(client.name)}</h2>
                 <p>{escape(details or 'No contact details saved yet')}</p>
+                {f'<p>{escape(client.address).replace(chr(10), "<br />")}</p>' if client.address else ''}
               </div>
             </article>
             """
@@ -793,6 +851,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
       </section>
+      <section class="dashboard-section">
+        <div class="section-head">
+          <p class="eyebrow">Company</p>
+          <h2>Saved business profile</h2>
+        </div>
+        <div class="dashboard-grid">{business_profile_html}</div>
+      </section>
       <section class="dashboard-section" id="invoices">
         <div class="section-head">
           <p class="eyebrow">Clients</p>
@@ -803,6 +868,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <label>Name<input name="name" placeholder="Client or company name" required /></label>
           <label>Email<input name="email" type="email" placeholder="client@example.com" /></label>
           <label>Phone<input name="phone" placeholder="Mobile or WhatsApp" /></label>
+          <label>Address<textarea name="address" rows="2" placeholder="Client billing address"></textarea></label>
           <label>GSTIN<input name="gstin" placeholder="Optional GSTIN" /></label>
           <button class="button primary" type="submit">Save client</button>
         </form>
@@ -862,12 +928,13 @@ def create_client(request: HttpRequest) -> HttpResponse:
         return redirect("/dashboard/")
 
     Client.objects.update_or_create(
-        owner=request.user,
+        owner_email=email,
         name=name,
         defaults={
-            "owner_email": email,
+            "owner": request.user,
             "email": clean_text(request.POST.get("email"), max_length=254),
             "phone": clean_text(request.POST.get("phone"), max_length=40),
+            "address": clean_text(request.POST.get("address")),
             "gstin": clean_text(request.POST.get("gstin"), max_length=20).upper(),
         },
     )
@@ -878,11 +945,12 @@ def create_client(request: HttpRequest) -> HttpResponse:
 @require_http_methods(["GET", "POST"])
 def invoice_new(request: HttpRequest) -> HttpResponse:
     error = ""
+    profile = get_business_profile(request)
     values = {
-        "template": "classic",
-        "accent_color": "#126b4f",
-        "business_name": request.user.first_name or "Your business",
-        "business_address": "",
+        "template": profile.template if profile else "classic",
+        "accent_color": profile.accent_color if profile else "#126b4f",
+        "business_name": profile.business_name if profile else request.user.first_name or "Your business",
+        "business_address": profile.business_address if profile else "",
         "client_name": "",
         "client_address": "",
         "client_gstin": "",
@@ -891,9 +959,9 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         "amount_before_gst": "",
         "gst_rate": "18",
         "due_days": "7",
-        "upi_link": "",
-        "bank_details": "",
-        "thank_you_note": "Thank you for your business.",
+        "upi_link": profile.upi_link if profile else "",
+        "bank_details": profile.bank_details if profile else "",
+        "thank_you_note": profile.thank_you_note if profile and profile.thank_you_note else "Thank you for your business.",
     }
 
     if request.method == "POST":
@@ -938,13 +1006,12 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             )
             if logo_upload:
                 invoice.business_logo = logo_upload
+            elif profile and profile.business_logo:
+                invoice.business_logo = profile.business_logo
             invoice.invoice_text = build_invoice_text(invoice)
             invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
-            Client.objects.get_or_create(
-                owner_email=invoice.owner_email,
-                name=invoice.client_name,
-                defaults={"owner": request.user},
-            )
+            save_business_profile_from_invoice(invoice, request.user)
+            save_client_from_invoice(invoice, request.user)
             return redirect(f"/dashboard/?invoice=created#invoices")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
@@ -1029,11 +1096,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             if not invoice.invoice_text:
                 invoice.invoice_text = build_invoice_text(invoice)
             invoice.save()
-            Client.objects.update_or_create(
-                owner=request.user,
-                name=invoice.client_name,
-                defaults={"owner_email": current_account_email(request)},
-            )
+            save_business_profile_from_invoice(invoice, request.user)
+            save_client_from_invoice(invoice, request.user)
         return redirect("/dashboard/")
 
     status_options = "".join(
@@ -1789,9 +1853,9 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     if not invoice.invoice_text:
         invoice.invoice_text = build_invoice_text(invoice)
         invoice.save(update_fields=["invoice_text", "updated_at"])
-    if owner_email and invoice.client_name:
-        client_defaults = {"owner": request.user} if request.user.is_authenticated else {}
-        Client.objects.get_or_create(owner_email=owner_email, name=invoice.client_name, defaults=client_defaults)
+    if owner_email:
+        save_business_profile_from_invoice(invoice, request.user if request.user.is_authenticated else None)
+        save_client_from_invoice(invoice, request.user if request.user.is_authenticated else None)
 
     print_path = f"/invoice/{invoice.public_token}/"
     return JsonResponse(

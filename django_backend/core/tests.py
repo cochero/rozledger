@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
-from .models import Client as SavedClient
+from .models import BusinessProfile, Client as SavedClient
 from .models import Invoice, Lead, PlanSubscription
 
 
@@ -109,7 +109,13 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.business_address, "Owner Street\nKochi")
         self.assertEqual(invoice.client_gstin, "32ABCDE1234F1Z5")
         self.assertEqual(invoice.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
-        self.assertTrue(SavedClient.objects.filter(owner=user, owner_email="owner@example.com").exists())
+        saved_client = SavedClient.objects.get(owner=user, owner_email="owner@example.com")
+        self.assertEqual(saved_client.address, "Client Road\nMumbai")
+        self.assertEqual(saved_client.gstin, "32ABCDE1234F1Z5")
+        business_profile = BusinessProfile.objects.get(owner=user, owner_email="owner@example.com")
+        self.assertEqual(business_profile.business_name, "Owner Business")
+        self.assertEqual(business_profile.business_address, "Owner Street\nKochi")
+        self.assertEqual(business_profile.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
 
         pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
         self.assertEqual(pdf_response.status_code, 200)
@@ -161,6 +167,14 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.thank_you_note, "Thanks from form.")
         self.assertIn("Form Service", invoice.invoice_text)
         self.assertTrue(invoice.business_logo.name)
+        saved_client = SavedClient.objects.get(owner=user, owner_email="form-owner@example.com")
+        self.assertEqual(saved_client.address, "Client Address")
+        self.assertEqual(saved_client.gstin, "32ABCDE1234F1Z5")
+        business_profile = BusinessProfile.objects.get(owner=user, owner_email="form-owner@example.com")
+        self.assertEqual(business_profile.business_name, "Form Business")
+        self.assertEqual(business_profile.business_address, "Form Address")
+        self.assertEqual(business_profile.bank_details, "Form Bank")
+        self.assertTrue(business_profile.business_logo.name)
 
         logo_response = self.client.get(reverse("invoice_logo", args=[invoice.public_token]))
         self.assertEqual(logo_response.status_code, 200)

@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import AffiliateClick, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import AffiliateClick, BusinessProfile, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
 
 
 @admin.register(Lead)
@@ -57,8 +57,15 @@ class InvoiceAdmin(admin.ModelAdmin):
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "owner_email", "email", "phone", "gstin", "created_at")
-    search_fields = ("name", "owner__username", "owner__email", "owner_email", "email", "phone", "gstin")
+    search_fields = ("name", "owner__username", "owner__email", "owner_email", "email", "phone", "address", "gstin")
     list_filter = ("created_at",)
+
+
+@admin.register(BusinessProfile)
+class BusinessProfileAdmin(admin.ModelAdmin):
+    list_display = ("business_name", "owner", "owner_email", "gstin", "updated_at")
+    search_fields = ("business_name", "owner__username", "owner__email", "owner_email", "business_address", "gstin")
+    list_filter = ("updated_at", "created_at")
 
 
 @admin.register(PlanSubscription)

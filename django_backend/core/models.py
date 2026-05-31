@@ -41,6 +41,22 @@ def mask_secret(value: str) -> str:
     return f"{value[:4]}...{value[-4:]}"
 
 
+INVOICE_TEMPLATE_CHOICES = [
+    ("classic", "Classic Ledger"),
+    ("executive", "Executive Black"),
+    ("modern", "Modern Accent"),
+    ("minimal", "Minimal Clean"),
+    ("service", "Service Pro"),
+]
+
+INVOICE_STATUS_CHOICES = [
+    ("draft", "Draft"),
+    ("sent", "Sent"),
+    ("paid", "Paid"),
+    ("overdue", "Overdue"),
+]
+
+
 class Lead(models.Model):
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     name = models.CharField(max_length=160)
@@ -78,6 +94,7 @@ class Client(models.Model):
     name = models.CharField(max_length=180)
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
+    address = models.TextField(blank=True)
     gstin = models.CharField(max_length=20, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -90,21 +107,37 @@ class Client(models.Model):
         return self.name
 
 
-class Invoice(models.Model):
-    TEMPLATE_CHOICES = [
-        ("classic", "Classic Ledger"),
-        ("executive", "Executive Black"),
-        ("modern", "Modern Accent"),
-        ("minimal", "Minimal Clean"),
-        ("service", "Service Pro"),
-    ]
+class BusinessProfile(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="business_profiles",
+    )
+    owner_email = models.EmailField(unique=True)
+    business_name = models.CharField(max_length=180)
+    business_logo = models.FileField(upload_to="business_logos/%Y/%m/", blank=True)
+    business_address = models.TextField(blank=True)
+    gstin = models.CharField(max_length=20, blank=True)
+    upi_link = models.TextField(blank=True)
+    bank_details = models.TextField(blank=True)
+    thank_you_note = models.TextField(blank=True)
+    template = models.CharField(max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default="classic")
+    accent_color = models.CharField(max_length=7, default="#126b4f")
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
-    STATUS_CHOICES = [
-        ("draft", "Draft"),
-        ("sent", "Sent"),
-        ("paid", "Paid"),
-        ("overdue", "Overdue"),
-    ]
+    class Meta:
+        ordering = ["business_name"]
+
+    def __str__(self) -> str:
+        return self.business_name
+
+
+class Invoice(models.Model):
+    TEMPLATE_CHOICES = INVOICE_TEMPLATE_CHOICES
+    STATUS_CHOICES = INVOICE_STATUS_CHOICES
 
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     owner = models.ForeignKey(
