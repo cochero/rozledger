@@ -7,12 +7,17 @@ RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
 cd "$APP_DIR"
 
-if [ -f "django_backend/.env.docker" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "django_backend/.env.docker"
-  set +a
-fi
+read_env_var() {
+  local name="$1"
+  local file="django_backend/.env.docker"
+  if [ -f "$file" ]; then
+    grep -E "^${name}=" "$file" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+  fi
+}
+
+MYSQL_DATABASE="${MYSQL_DATABASE:-$(read_env_var MYSQL_DATABASE)}"
+MYSQL_USER="${MYSQL_USER:-$(read_env_var MYSQL_USER)}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(read_env_var MYSQL_PASSWORD)}"
 
 : "${MYSQL_DATABASE:?MYSQL_DATABASE is required}"
 : "${MYSQL_USER:?MYSQL_USER is required}"
