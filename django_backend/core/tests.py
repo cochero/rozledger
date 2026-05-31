@@ -149,6 +149,21 @@ class LeadWorkflowTests(TestCase):
         lead = Lead.objects.get()
         self.assertIn(f"/pro/thanks/{lead.public_token}/", response["Location"])
 
+    def test_public_lead_form_allows_privacy_browser_without_referrer(self):
+        response = self.client.post(
+            reverse("lead_request_form"),
+            {
+                "name": "Privacy Customer",
+                "email": "privacy@example.com",
+                "phone": "9516022223",
+                "business_type": "Consultant",
+            },
+            HTTP_HOST="testserver",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Lead.objects.filter(email="privacy@example.com").exists())
+
     def test_invalid_lead_api_returns_validation_errors(self):
         response = self.client.post(
             reverse("create_lead"),

@@ -86,6 +86,7 @@ function invoicePayload() {
 async function postJson(path, payload) {
   const response = await fetch(path, {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
     },
@@ -93,13 +94,15 @@ async function postJson(path, payload) {
   });
 
   if (!response.ok) {
-    const error = new Error(`Request failed with ${response.status}`);
-    error.status = response.status;
+    let payload = {};
     try {
-      error.payload = await response.json();
+      payload = await response.json();
     } catch {
-      error.payload = {};
     }
+    const message = payload.error || Object.values(payload.fields || {}).join(" ") || `Request failed with ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
     throw error;
   }
 
@@ -251,9 +254,9 @@ if (hasTool) {
         { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
         { label: "Dashboard", href: result.dashboard_url },
       ]);
-    } catch {
+    } catch (error) {
       saveFallback("rozledger_invoices", payload);
-      showStatus("invoiceStatus", "Saved in this browser. Run the backend to save centrally.");
+      showStatus("invoiceStatus", `${error.message} Saved in this browser only. Please try again or contact support.`);
     }
   });
 

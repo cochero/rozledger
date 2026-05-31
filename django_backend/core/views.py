@@ -731,6 +731,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             </p>
           </div>
           <div class="dashboard-actions">
+            {f'<form method="post" action="/dashboard/billing/request-pro/" class="inline-form">{csrf_input(request)}<button class="button primary" type="submit">Request Pro activation</button></form>' if subscription.status in ("free", "paused", "cancelled") else ''}
             <a class="button secondary" href="/dashboard/billing/pro/">View Pro workflow</a>
             {'<a class="button ghost" href="https://wa.me/919516022222?text=Hi%20RozLedger%2C%20please%20help%20with%20my%20Pro%20activation." rel="noopener">Contact support</a>' if subscription.status in ('requested', 'paused', 'cancelled') else ''}
           </div>
@@ -1120,7 +1121,7 @@ def options(request: HttpRequest) -> JsonResponse:
     )
 
 
-def lead_from_payload(payload: dict[str, Any], request: HttpRequest) -> tuple[Lead | None, dict[str, str]]:
+def lead_from_payload(payload: dict[str, Any], request: HttpRequest, require_same_origin: bool = True) -> tuple[Lead | None, dict[str, str]]:
     name = clean_text(payload.get("name"), max_length=160)
     email = clean_text(payload.get("email"), max_length=254).lower()
     phone = clean_text(payload.get("phone"), max_length=40)
@@ -1136,7 +1137,7 @@ def lead_from_payload(payload: dict[str, Any], request: HttpRequest) -> tuple[Le
     errors = {}
     if any(clean_text(payload.get(field), max_length=300) for field in HONEYPOT_FIELDS):
         errors["request"] = "Request could not be saved."
-    if not same_origin_request(request):
+    if require_same_origin and not same_origin_request(request):
         errors["request"] = "Please submit the form from rozledger.in."
     if len(name) < 2:
         errors["name"] = "Name is required."
@@ -1246,7 +1247,7 @@ def create_lead_form(request: HttpRequest) -> HttpResponse:
         errors = {"phone": "A request for this phone number is already saved."}
         lead = None
     else:
-        lead, errors = lead_from_payload(payload, request)
+        lead, errors = lead_from_payload(payload, request, require_same_origin=False)
     if lead is None:
         body = f"""
         <main class="article-shell">
@@ -1268,7 +1269,8 @@ def create_lead_form(request: HttpRequest) -> HttpResponse:
 @csrf_exempt
 @require_POST
 def create_invoice(request: HttpRequest) -> JsonResponse:
-    if is_rate_limited(request, "invoice", limit=20):
+    invoice_identity = f"user:{request.user.id}" if request.user.is_authenticated else None
+    if is_rate_limited(request, "invoice", limit=60 if request.user.is_authenticated else 20, identity=invoice_identity):
         return rate_limit_response()
     payload = json_payload(request)
     amount_before_gst = decimal_value(payload.get("amount_before_gst"))
