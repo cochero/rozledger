@@ -1366,6 +1366,15 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     def para(value: str, style=body_style) -> Paragraph:
         return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
 
+    def total_display() -> str:
+        text = (invoice.total_text or "").strip()
+        if text.lower().startswith("rs") or text.startswith("₹"):
+            return text
+        try:
+            return money(Decimal(text))
+        except (InvalidOperation, ValueError):
+            return text
+
     story = [
         Table([[""]], colWidths=[480], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
         Spacer(1, 18),
@@ -1443,7 +1452,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
                     para(f"{invoice.service_name}\n{invoice.client_name}"),
                     para(money(invoice.amount_before_gst), right_style),
                     para(money(gst_amount) if invoice.include_gst else "Not charged", right_style),
-                    para(invoice.total_text, right_bold_style),
+                    para(total_display(), right_bold_style),
                 ],
             ],
             colWidths=[250, 80, 70, 80],
@@ -1465,7 +1474,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             [
                 [para("Subtotal", right_style), para(money(invoice.amount_before_gst), right_bold_style)],
                 [para(f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", right_style), para(money(gst_amount) if invoice.include_gst else "Not charged", right_bold_style)],
-                [para("Amount payable", right_bold_style), para(invoice.total_text, right_bold_style)],
+                [para("Amount payable", right_bold_style), para(total_display(), right_bold_style)],
             ],
             colWidths=[330, 150],
             style=TableStyle(
