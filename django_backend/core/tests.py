@@ -78,6 +78,8 @@ class AccountWorkflowTests(TestCase):
             data=json.dumps(
                 {
                     "owner_email": "different@example.com",
+                    "template": "executive",
+                    "accent_color": "#334155",
                     "business_name": "Owner Business",
                     "business_address": "Owner Street\nKochi",
                     "client_name": "Alpha Client",
@@ -102,6 +104,8 @@ class AccountWorkflowTests(TestCase):
         invoice = Invoice.objects.get()
         self.assertEqual(invoice.owner, user)
         self.assertEqual(invoice.owner_email, "owner@example.com")
+        self.assertEqual(invoice.template, "executive")
+        self.assertEqual(invoice.accent_color, "#334155")
         self.assertEqual(invoice.business_address, "Owner Street\nKochi")
         self.assertEqual(invoice.client_gstin, "32ABCDE1234F1Z5")
         self.assertEqual(invoice.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
@@ -123,6 +127,8 @@ class AccountWorkflowTests(TestCase):
             reverse("invoice_new"),
             {
                 "business_name": "Form Business",
+                "template": "modern",
+                "accent_color": "#7c3aed",
                 "business_address": "Form Address",
                 "client_name": "Form Client",
                 "client_address": "Client Address",
@@ -147,6 +153,8 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response["Location"], "/dashboard/?invoice=created#invoices")
         invoice = Invoice.objects.get(owner=user)
         self.assertEqual(invoice.owner_email, "form-owner@example.com")
+        self.assertEqual(invoice.template, "modern")
+        self.assertEqual(invoice.accent_color, "#7c3aed")
         self.assertEqual(invoice.total_text, "Rs 2360.00")
         self.assertTrue(invoice.include_gst)
         self.assertEqual(invoice.client_address, "Client Address")
@@ -160,6 +168,9 @@ class AccountWorkflowTests(TestCase):
         pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
         self.assertEqual(pdf_response.status_code, 200)
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+        print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
+        self.assertContains(print_response, "invoice-template-modern")
+        self.assertContains(print_response, "--invoice-accent: #7c3aed")
 
     def test_dashboard_invoice_form_creates_without_gst(self):
         user = User.objects.create_user("nogst@example.com", "nogst@example.com", "strong-password-123")

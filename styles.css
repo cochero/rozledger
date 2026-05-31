@@ -1109,6 +1109,7 @@ textarea {
 }
 
 .print-invoice {
+  --invoice-accent: #126b4f;
   max-width: 940px;
   margin: 36px auto;
   border: 1px solid var(--line);
@@ -1122,7 +1123,7 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 240px;
   gap: 28px;
-  border-bottom: 2px solid #17211f;
+  border-bottom: 2px solid var(--invoice-accent);
   padding-bottom: 24px;
 }
 
@@ -1159,6 +1160,10 @@ textarea {
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.invoice-kicker {
+  color: var(--invoice-accent);
 }
 
 .invoice-number-card {
@@ -1207,7 +1212,7 @@ textarea {
 
 .invoice-line-table th {
   padding: 12px;
-  background: #17211f;
+  background: var(--invoice-accent);
   color: #fff;
   text-align: left;
   font-size: 13px;
@@ -1254,7 +1259,7 @@ textarea {
 }
 
 .invoice-total-panel .grand-total {
-  border-top: 2px solid #17211f;
+  border-top: 2px solid var(--invoice-accent);
   padding-top: 10px;
   font-size: 20px;
 }
@@ -1271,6 +1276,46 @@ textarea {
   border-radius: 8px;
   padding: 16px;
   background: #f8faf8;
+}
+
+.invoice-template-executive {
+  --invoice-accent: #111827;
+  border-top: 8px solid var(--invoice-accent);
+}
+
+.invoice-template-executive .invoice-number-card,
+.invoice-template-executive .invoice-payment-grid article {
+  background: #f3f4f6;
+}
+
+.invoice-template-modern {
+  border-top: 8px solid var(--invoice-accent);
+}
+
+.invoice-template-modern .invoice-document-header {
+  border-bottom: 0;
+  border-left: 5px solid var(--invoice-accent);
+  padding-left: 20px;
+}
+
+.invoice-template-minimal {
+  border: 0;
+  box-shadow: none;
+}
+
+.invoice-template-minimal .invoice-line-table th {
+  background: #fff;
+  border-bottom: 2px solid var(--invoice-accent);
+  color: #17211f;
+}
+
+.invoice-template-service .invoice-number-card {
+  background: color-mix(in srgb, var(--invoice-accent) 10%, #fff);
+  border-color: color-mix(in srgb, var(--invoice-accent) 28%, var(--line));
+}
+
+.invoice-template-service .invoice-address-grid article {
+  border-top: 4px solid var(--invoice-accent);
 }
 
 .print-actions {

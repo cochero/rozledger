@@ -38,6 +38,7 @@ SPAM_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -182,6 +183,24 @@ def invoice_gst_amount(invoice: Invoice) -> Decimal:
 
 def money(value: Decimal) -> str:
     return f"Rs {value.quantize(Decimal('0.01'))}"
+
+
+def clean_accent_color(value: Any) -> str:
+    color = clean_text(value, "#126b4f", 7)
+    return color if HEX_COLOR_RE.match(color) else "#126b4f"
+
+
+def clean_invoice_template(value: Any) -> str:
+    template = clean_text(value, "classic", 20)
+    allowed = {choice[0] for choice in Invoice.TEMPLATE_CHOICES}
+    return template if template in allowed else "classic"
+
+
+def invoice_template_options(selected: str) -> str:
+    return "".join(
+        f'<option value="{escape(value)}" {"selected" if selected == value else ""}>{escape(label)}</option>'
+        for value, label in Invoice.TEMPLATE_CHOICES
+    )
 
 
 def csrf_input(request: HttpRequest) -> str:
@@ -859,6 +878,8 @@ def create_client(request: HttpRequest) -> HttpResponse:
 def invoice_new(request: HttpRequest) -> HttpResponse:
     error = ""
     values = {
+        "template": "classic",
+        "accent_color": "#126b4f",
         "business_name": request.user.first_name or "Your business",
         "business_address": "",
         "client_name": "",
@@ -876,6 +897,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
 
     if request.method == "POST":
         values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        values["template"] = clean_invoice_template(request.POST.get("template"))
+        values["accent_color"] = clean_accent_color(request.POST.get("accent_color"))
         amount_before_gst = decimal_value(values["amount_before_gst"])
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(values["gst_rate"]) if include_gst else Decimal("0")
@@ -894,6 +917,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             invoice = Invoice.objects.create(
                 owner=request.user,
                 owner_email=current_account_email(request),
+                template=values["template"],
+                accent_color=values["accent_color"],
                 business_name=values["business_name"],
                 business_address=values["business_address"],
                 client_name=values["client_name"],
@@ -931,6 +956,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         {error_html}
         <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form" enctype="multipart/form-data">
           {csrf_input(request)}
+          <label>Professional template<select name="template">{invoice_template_options(values['template'])}</select></label>
+          <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" /></label>
           <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required /></label>
           <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
           <label>Business full address<textarea name="business_address" rows="3">{escape(values['business_address'])}</textarea></label>
@@ -976,6 +1003,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         if logo_error:
             return page_shell("Edit invoice", f'<main class="account-shell"><section class="account-card"><p class="form-error">{escape(logo_error)}</p><a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Back to edit invoice</a></section></main>', request)
         if amount_before_gst > 0:
+            invoice.template = clean_invoice_template(request.POST.get("template"))
+            invoice.accent_color = clean_accent_color(request.POST.get("accent_color"))
             invoice.business_name = clean_text(request.POST.get("business_name"), invoice.business_name, 180)
             invoice.business_address = clean_text(request.POST.get("business_address"))
             invoice.client_name = clean_text(request.POST.get("client_name"), invoice.client_name, 180)
@@ -1017,6 +1046,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         <h1>Edit invoice</h1>
         <form method="post" class="account-form" enctype="multipart/form-data">
           {csrf_input(request)}
+          <label>Professional template<select name="template">{invoice_template_options(invoice.template)}</select></label>
+          <label>Brand/accent color<input name="accent_color" type="color" value="{escape(invoice.accent_color)}" /></label>
           <label>Business name<input name="business_name" value="{escape(invoice.business_name)}" /></label>
           <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
           {f'<p class="form-hint">Current logo is attached. Upload a new file to replace it.</p>' if invoice.business_logo else ''}
@@ -1177,6 +1208,8 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
 
     gst_amount = invoice_gst_amount(invoice)
     due_date = invoice_due_date(invoice)
+    template_class = f"invoice-template-{clean_invoice_template(invoice.template)}"
+    accent_color = clean_accent_color(invoice.accent_color)
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1187,7 +1220,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="print-page">
-    <main class="print-invoice">
+    <main class="print-invoice {template_class}" style="--invoice-accent: {escape(accent_color)};">
       <header class="invoice-document-header">
         <div class="invoice-brand-block">
           {invoice_logo_html(invoice)}
@@ -1310,6 +1343,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
 
     gst_amount = invoice_gst_amount(invoice)
     due_date = invoice_due_date(invoice)
+    accent = colors.HexColor(clean_accent_color(invoice.accent_color))
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=42, bottomMargin=36)
     styles = getSampleStyleSheet()
@@ -1366,7 +1400,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             colWidths=[235, 235],
             style=TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17211f")),
+                    ("BACKGROUND", (0, 0), (-1, 0), accent),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
                     ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
@@ -1393,7 +1427,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             colWidths=[220, 85, 80, 85],
             style=TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17211f")),
+                    ("BACKGROUND", (0, 0), (-1, 0), accent),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
                     ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
@@ -1663,6 +1697,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     invoice = Invoice.objects.create(
         owner=request.user if request.user.is_authenticated else None,
         owner_email=owner_email,
+        template=clean_invoice_template(payload.get("template")),
+        accent_color=clean_accent_color(payload.get("accent_color")),
         business_name=clean_text(payload.get("business_name"), "Your business", 180),
         business_address=clean_text(payload.get("business_address")),
         client_name=clean_text(payload.get("client_name"), "Client", 180),

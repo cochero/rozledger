@@ -91,6 +91,14 @@ class Client(models.Model):
 
 
 class Invoice(models.Model):
+    TEMPLATE_CHOICES = [
+        ("classic", "Classic Ledger"),
+        ("executive", "Executive Black"),
+        ("modern", "Modern Accent"),
+        ("minimal", "Minimal Clean"),
+        ("service", "Service Pro"),
+    ]
+
     STATUS_CHOICES = [
         ("draft", "Draft"),
         ("sent", "Sent"),
@@ -108,6 +116,8 @@ class Invoice(models.Model):
     )
     owner_email = models.EmailField(blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent", db_index=True)
+    template = models.CharField(max_length=20, choices=TEMPLATE_CHOICES, default="classic")
+    accent_color = models.CharField(max_length=7, default="#126b4f")
     business_name = models.CharField(max_length=180)
     business_logo = models.FileField(upload_to="invoice_logos/%Y/%m/", blank=True)
     business_address = models.TextField(blank=True)
