@@ -814,6 +814,10 @@ textarea {
   margin-top: clamp(34px, 5vw, 58px);
 }
 
+.section-actions {
+  margin-bottom: 14px;
+}
+
 .dashboard-form {
   display: grid;
   grid-template-columns: 1fr 1fr 0.8fr 0.8fr auto;
@@ -824,6 +828,15 @@ textarea {
   border-radius: 8px;
   padding: 16px;
   background: #fff;
+}
+
+.invoice-server-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.invoice-server-form .full-row,
+.invoice-server-form .dashboard-actions {
+  grid-column: 1 / -1;
 }
 
 .dashboard-grid {

@@ -30,6 +30,7 @@ urlpatterns = [
     path("accounts/reset/<str:uidb64>/<str:token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("dashboard/clients/", views.create_client, name="create_client"),
+    path("dashboard/invoices/new/", views.invoice_new, name="invoice_new"),
     path("dashboard/invoices/<int:invoice_id>/edit/", views.invoice_edit, name="invoice_edit"),
     path("dashboard/invoices/<int:invoice_id>/status/", views.invoice_status, name="invoice_status"),
     path("dashboard/invoices/<int:invoice_id>/delete/", views.invoice_delete, name="invoice_delete"),

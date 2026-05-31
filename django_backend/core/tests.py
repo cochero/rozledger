@@ -90,6 +90,34 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(pdf_response.status_code, 200)
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
 
+    def test_dashboard_invoice_form_creates_saved_invoice_without_javascript(self):
+        user = User.objects.create_user(
+            username="form-owner@example.com",
+            email="form-owner@example.com",
+            password="strong-password-123",
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Form Business",
+                "client_name": "Form Client",
+                "service_name": "Form Service",
+                "amount_before_gst": "2000",
+                "gst_rate": "18",
+                "due_days": "5",
+                "upi_link": "upi://pay?pa=form@upi",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/dashboard/?invoice=created#invoices")
+        invoice = Invoice.objects.get(owner=user)
+        self.assertEqual(invoice.owner_email, "form-owner@example.com")
+        self.assertEqual(invoice.total_text, "Rs 2360.00")
+        self.assertIn("Form Service", invoice.invoice_text)
+
     def test_invoice_owner_isolation_returns_404_for_other_customer(self):
         owner = User.objects.create_user("owner@example.com", "owner@example.com", "password-123456")
         other = User.objects.create_user("other@example.com", "other@example.com", "password-123456")

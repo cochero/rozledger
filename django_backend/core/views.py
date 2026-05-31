@@ -125,6 +125,26 @@ def digits_only(value: str) -> str:
     return re.sub(r"\D", "", value or "")
 
 
+def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal) -> str:
+    total = amount_before_gst + (amount_before_gst * gst_rate / Decimal("100"))
+    return f"Rs {total.quantize(Decimal('0.01'))}"
+
+
+def build_invoice_text(invoice: Invoice) -> str:
+    return "\n".join(
+        [
+            f"Invoice from {invoice.business_name}",
+            f"Client: {invoice.client_name}",
+            f"Service: {invoice.service_name}",
+            f"Amount before GST: Rs {invoice.amount_before_gst}",
+            f"GST: {invoice.gst_rate}%",
+            f"Total: {invoice.total_text}",
+            f"UPI/payment link: {invoice.upi_link}" if invoice.upi_link else "",
+            "Please confirm once payment is completed.",
+        ]
+    ).strip()
+
+
 def csrf_input(request: HttpRequest) -> str:
     return f'<input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />'
 
@@ -574,6 +594,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     notice = ""
     if request.GET.get("pro") == "requested":
         notice = '<p class="dashboard-notice">Your Pro activation request was saved. Admin approval is pending.</p>'
+    if request.GET.get("invoice") == "created":
+        notice += '<p class="dashboard-notice">Invoice saved. It is now available in your dashboard.</p>'
     paid_count = Invoice.objects.filter(account_q(request), status="paid").count()
     pending_count = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
 
@@ -607,8 +629,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             <article class="dashboard-card empty-state">
               <span>Invoice</span>
               <h2>No saved invoices yet</h2>
-              <p>Create an invoice from the main tool and use this account email to see it here.</p>
-              <a class="button secondary" href="/#tool-panel">Create invoice</a>
+              <p>Create your first invoice directly inside the dashboard.</p>
+              <a class="button secondary" href="/dashboard/invoices/new/">Create invoice</a>
             </article>
             """
         )
@@ -676,7 +698,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <p>Track invoices and RozLedger Pro requests connected to {escape(email)}.</p>
         {notice}
         <div class="hero-actions">
-          <a class="button primary" href="/#tool-panel">Create invoice</a>
+          <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
           <a class="button secondary" href="/content/">Browse templates</a>
         </div>
       </section>
@@ -686,7 +708,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
       </section>
-      <section class="dashboard-section">
+      <section class="dashboard-section" id="invoices">
         <div class="section-head">
           <p class="eyebrow">Clients</p>
           <h2>Client records</h2>
@@ -705,6 +727,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div class="section-head">
           <p class="eyebrow">Saved work</p>
           <h2>Invoices</h2>
+        </div>
+        <div class="dashboard-actions section-actions">
+          <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
         </div>
         <div class="dashboard-grid">{''.join(invoice_rows)}</div>
       </section>
@@ -761,6 +786,82 @@ def create_client(request: HttpRequest) -> HttpResponse:
         },
     )
     return redirect("/dashboard/")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def invoice_new(request: HttpRequest) -> HttpResponse:
+    error = ""
+    values = {
+        "business_name": request.user.first_name or "Your business",
+        "client_name": "",
+        "service_name": "",
+        "amount_before_gst": "",
+        "gst_rate": "18",
+        "due_days": "7",
+        "upi_link": "",
+    }
+
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        amount_before_gst = decimal_value(values["amount_before_gst"])
+        gst_rate = decimal_value(values["gst_rate"])
+        due_days_raw = digits_only(values["due_days"])
+        due_days = int(due_days_raw or 0)
+
+        if not values["business_name"] or not values["client_name"] or not values["service_name"]:
+            error = "Business name, client name and service are required."
+        elif amount_before_gst <= 0:
+            error = "Invoice amount must be greater than zero."
+        else:
+            invoice = Invoice.objects.create(
+                owner=request.user,
+                owner_email=current_account_email(request),
+                business_name=values["business_name"],
+                client_name=values["client_name"],
+                service_name=values["service_name"],
+                amount_before_gst=amount_before_gst,
+                gst_rate=gst_rate,
+                due_days=due_days,
+                total_text=invoice_total_text(amount_before_gst, gst_rate),
+                upi_link=values["upi_link"],
+                invoice_text="",
+            )
+            invoice.invoice_text = build_invoice_text(invoice)
+            invoice.save(update_fields=["invoice_text", "updated_at"])
+            Client.objects.get_or_create(
+                owner_email=invoice.owner_email,
+                name=invoice.client_name,
+                defaults={"owner": request.user},
+            )
+            return redirect(f"/dashboard/?invoice=created#invoices")
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">Invoice</p>
+        <h1>Create invoice</h1>
+        <p class="account-copy">Use this dashboard form when you want the invoice saved directly to your account.</p>
+        {error_html}
+        <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required /></label>
+          <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required /></label>
+          <label>Service<input name="service_name" value="{escape(values['service_name'])}" required /></label>
+          <label>Amount before GST<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required /></label>
+          <label>GST rate %<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required /></label>
+          <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" /></label>
+          <label class="full-row">UPI/payment link<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="Optional UPI link or payment note" /></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Save invoice</button>
+            <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Create invoice", body, request)
 
 
 def owned_invoice(request: HttpRequest, invoice_id: int) -> Invoice:
