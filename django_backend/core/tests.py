@@ -706,6 +706,13 @@ class AccountWorkflowTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
+        payment_form = self.client.get(f"{reverse('payment_new')}?invoice={invoice.id}", HTTP_HOST="rozledger.com")
+        invoice_ref = f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}"
+        self.assertContains(payment_form, invoice_ref)
+        self.assertContains(payment_form, "Invoice / reference")
+        self.assertContains(payment_form, "Receipt Client")
+        self.assertContains(payment_form, 'value="100.00"')
+
         receipt = PaymentReceipt.objects.get(owner=user, market="US")
         self.assertEqual(receipt.amount, Decimal("100.00"))
         self.assertEqual(receipt.invoice_id, invoice.id)
@@ -716,6 +723,9 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(entry.total_debit, entry.total_credit)
         self.assertTrue(entry.lines.filter(account__code="1010", debit=Decimal("100.00")).exists())
         self.assertTrue(entry.lines.filter(account__code="4000", credit=Decimal("100.00")).exists())
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.assertContains(dashboard_response, invoice_ref)
+        self.assertContains(dashboard_response, "Direct receipt", count=0)
 
     def test_customer_can_record_unpaid_vendor_bill_as_accounts_payable(self):
         user = User.objects.create_user("payable@example.com", "payable@example.com", "password-123456")

@@ -172,6 +172,29 @@ def account_options(accounts, selected_id: str = "") -> str:
     )
 
 
+def invoice_options(invoices, selected_id: str = "") -> str:
+    options = ['<option value="">Select open invoice or leave blank for direct receipt</option>']
+    for invoice in invoices:
+        number = invoice_number(invoice)
+        total = invoice_total_display(invoice)
+        label = f"{number} - {invoice.client_name} - {total} - {invoice.created_at:%d %b %Y}"
+        options.append(
+            f'<option value="{invoice.id}" data-client="{escape(invoice.client_name)}" data-amount="{invoice_total_amount(invoice)}" {"selected" if selected_id and str(invoice.id) == str(selected_id) else ""}>{escape(label)}</option>'
+        )
+    return "".join(options)
+
+
+def client_name_options(clients, selected_name: str = "") -> str:
+    options = ['<option value="">Select customer</option>']
+    seen = set()
+    for client in clients:
+        if client.name in seen:
+            continue
+        seen.add(client.name)
+        options.append(f'<option value="{escape(client.name)}" {"selected" if selected_name == client.name else ""}>{escape(client.name)}</option>')
+    return "".join(options)
+
+
 def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
     entries = JournalEntry.objects.filter(account_q(request), is_posted=True)
     return {
@@ -978,13 +1001,14 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 
     invoice_rows = []
     for invoice in invoices:
+        inv_number = invoice_number(invoice)
         invoice_rows.append(
             f"""
-            <article class="dashboard-card">
+            <article class="dashboard-card invoice-card">
               <div>
-                <span>Invoice</span>
-                <h2>{escape(invoice.client_name)}</h2>
-                <p>{escape(invoice.service_name)}<br />{escape(invoice.total_text)} - {invoice.created_at:%d %b %Y}</p>
+                <div class="card-meta-row"><span>Invoice</span><strong class="status-pill status-{escape(invoice.status)}">{escape(invoice.get_status_display())}</strong></div>
+                <h2>{escape(inv_number)}</h2>
+                <p><strong>{escape(invoice.client_name)}</strong><br />{escape(invoice.service_name)}<br />{escape(invoice.total_text)} - {invoice.created_at:%d %b %Y}</p>
               </div>
               <div class="dashboard-actions">
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
@@ -1129,13 +1153,14 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 
     payment_rows = []
     for receipt in payment_receipts:
+        receipt_invoice = f"{invoice_number(receipt.invoice)} - {receipt.invoice.client_name}" if receipt.invoice else "Direct receipt"
         payment_rows.append(
             f"""
-            <article class="dashboard-card compact-card">
+            <article class="dashboard-card compact-card finance-record">
               <div>
                 <span>{receipt.payment_date:%d %b %Y}</span>
                 <h2>{escape(receipt.payer_name)}</h2>
-                <p>{escape(money(receipt.amount, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} via {escape(receipt.get_method_display())}</p>
+                <p>{escape(receipt_invoice)}<br />{escape(money(receipt.amount, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} via {escape(receipt.get_method_display())}</p>
               </div>
             </article>
             """
@@ -1180,14 +1205,21 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero">
-        <p class="eyebrow">Private dashboard</p>
+        <p class="eyebrow">Finance command center</p>
         <h1>Welcome, {escape(display_name)}.</h1>
-        <p>Track invoices and RozLedger Pro requests connected to {escape(email)}.</p>
+        <p>Run daily billing, collections, expenses and simple accounts from one clean workspace connected to {escape(email)}.</p>
         {notice}
         <div class="hero-actions">
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
-          <a class="button secondary" href="/content/">Browse templates</a>
+          <a class="button secondary" href="/dashboard/payments/new/">Record payment</a>
+          <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
         </div>
+      </section>
+      <section class="dashboard-module-grid" aria-label="Daily workflow">
+        <a class="module-tile" href="/dashboard/invoices/new/"><span>01</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
+        <a class="module-tile" href="/dashboard/payments/new/"><span>02</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
+        <a class="module-tile" href="/dashboard/expenses/new/"><span>03</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
+        <a class="module-tile" href="/dashboard/#accounting"><span>04</span><strong>Review accounts</strong><p>See chart, journals, receivables and payables.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -1260,7 +1292,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
       <section class="dashboard-section" id="receipts">
         <div class="section-head">
           <p class="eyebrow">Accounts receivable</p>
-          <h2>Payment received</h2>
+          <h2>Customer payments</h2>
+          <p>Select the customer invoice before posting payment so the receipt carries invoice number, client and amount reference.</p>
         </div>
         <div class="dashboard-actions section-actions">
           <a class="button primary" href="/dashboard/payments/new/">Record payment received</a>
@@ -1466,6 +1499,8 @@ def payment_method_options(selected: str = "bank") -> str:
 @require_http_methods(["GET", "POST"])
 def payment_new(request: HttpRequest) -> HttpResponse:
     ensure_default_chart(request)
+    clients = list(Client.objects.filter(account_q(request)).order_by("name"))
+    open_invoices = list(Invoice.objects.filter(account_q(request)).exclude(status="paid").order_by("-created_at"))
     invoice = None
     invoice_id = clean_text(request.GET.get("invoice") or request.POST.get("invoice_id"), max_length=20)
     if invoice_id:
@@ -1475,6 +1510,7 @@ def payment_new(request: HttpRequest) -> HttpResponse:
             invoice = None
     values = {
         "payment_date": f"{timezone.localdate():%Y-%m-%d}",
+        "client_name": invoice.client_name if invoice else "",
         "payer_name": invoice.client_name if invoice else "",
         "amount": f"{invoice_total_amount(invoice)}" if invoice else "",
         "method": "bank",
@@ -1484,6 +1520,10 @@ def payment_new(request: HttpRequest) -> HttpResponse:
     error = ""
     if request.method == "POST":
         values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        if invoice:
+            values["client_name"] = values["client_name"] or invoice.client_name
+            values["payer_name"] = values["payer_name"] or invoice.client_name
+            values["amount"] = values["amount"] or f"{invoice_total_amount(invoice)}"
         amount = decimal_value(values["amount"])
         if not values["payer_name"]:
             error = "Payer name is required."
@@ -1521,17 +1561,27 @@ def payment_new(request: HttpRequest) -> HttpResponse:
             return redirect("/dashboard/#receipts")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
-    invoice_hidden = f'<input type="hidden" name="invoice_id" value="{invoice.id}" />' if invoice else ""
+    linked_invoice_html = ""
+    if invoice:
+        linked_invoice_html = f"""
+        <div class="selected-invoice-panel">
+          <span>Selected invoice</span>
+          <strong>{escape(invoice_number(invoice))}</strong>
+          <p>{escape(invoice.client_name)} - {escape(invoice_total_display(invoice))} - {invoice.created_at:%d %b %Y}</p>
+        </div>
+        """
     body = f"""
     <main class="account-shell wide-form">
-      <section class="account-card">
+      <section class="account-card finance-form-card">
         <p class="eyebrow">Accounts receivable</p>
-        <h1>Record payment received</h1>
-        <p class="account-copy">Use this when a customer pays an invoice or sends money for completed service work. RozLedger posts a balanced income entry and marks the linked invoice paid.</p>
+        <h1>Record customer payment</h1>
+        <p class="account-copy">Select the customer and invoice first. RozLedger uses the invoice number and amount as the payment reference, posts a balanced receipt entry and marks the invoice paid.</p>
         {error_html}
+        {linked_invoice_html}
         <form method="post" class="account-form invoice-server-form">
           {csrf_input(request)}
-          {invoice_hidden}
+          <label>Customer<select name="client_name" id="payment-client">{client_name_options(clients, values['client_name'])}</select></label>
+          <label>Invoice / reference<select name="invoice_id" id="payment-invoice">{invoice_options(open_invoices, invoice_id)}</select></label>
           <label>Date<input name="payment_date" type="date" value="{escape(values['payment_date'])}" required /></label>
           <label>Payer name<input name="payer_name" value="{escape(values['payer_name'])}" placeholder="Client or customer name" required /></label>
           <label>Amount<input name="amount" type="number" min="0.01" step="0.01" value="{escape(values['amount'])}" required /></label>
@@ -1543,6 +1593,36 @@ def payment_new(request: HttpRequest) -> HttpResponse:
             <a class="button secondary" href="/dashboard/#receipts">Back to dashboard</a>
           </div>
         </form>
+        <script>
+          (() => {{
+            const client = document.getElementById('payment-client');
+            const invoice = document.getElementById('payment-invoice');
+            const payer = document.querySelector('[name="payer_name"]');
+            const amount = document.querySelector('[name="amount"]');
+            if (!client || !invoice || !payer || !amount) return;
+            const syncFromInvoice = () => {{
+              const selected = invoice.options[invoice.selectedIndex];
+              if (!selected || !selected.value) return;
+              const selectedClient = selected.dataset.client || '';
+              const selectedAmount = selected.dataset.amount || '';
+              if (selectedClient) {{
+                client.value = selectedClient;
+                payer.value = selectedClient;
+              }}
+              if (selectedAmount) amount.value = selectedAmount;
+            }};
+            client.addEventListener('change', () => {{
+              const wanted = client.value;
+              Array.from(invoice.options).forEach((option) => {{
+                option.hidden = Boolean(wanted && option.dataset.client && option.dataset.client !== wanted);
+              }});
+              if (invoice.selectedOptions[0]?.hidden) invoice.value = '';
+              if (!payer.value) payer.value = wanted;
+            }});
+            invoice.addEventListener('change', syncFromInvoice);
+            syncFromInvoice();
+          }})();
+        </script>
       </section>
     </main>
     """
