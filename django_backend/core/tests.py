@@ -53,6 +53,24 @@ class PublicPagesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Built for India", content)
 
+    def test_dot_com_content_uses_us_invoice_templates(self):
+        response = self.client.get("/content/", HTTP_HOST="rozledger.com")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("24 quick invoice templates", content)
+        self.assertIn("Handyman repair invoice", content)
+        self.assertIn("Equipment rental invoice", content)
+        self.assertNotIn("GST Invoice Format", content)
+
+    def test_dot_in_content_keeps_india_template_library(self):
+        response = self.client.get("/content/", HTTP_HOST="rozledger.in")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Invoice, GST", content)
+        self.assertIn("GST Invoice Format", content)
+
 
 @override_settings(**TEST_SETTINGS)
 class AccountWorkflowTests(TestCase):

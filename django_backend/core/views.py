@@ -650,6 +650,9 @@ def asset(request: HttpRequest, filename: str) -> FileResponse:
 
 @require_http_methods(GET_OR_HEAD)
 def content_index(request: HttpRequest) -> FileResponse:
+    host = request.get_host().split(":", 1)[0].lower()
+    if host in {"rozledger.com", "www.rozledger.com"}:
+        return serve_project_file("content-us.html", "text/html")
     return serve_project_file("content.html", "text/html")
 
 
