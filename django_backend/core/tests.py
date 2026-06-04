@@ -601,6 +601,9 @@ class AccountWorkflowTests(TestCase):
 
         self.assertEqual(india_response.status_code, 200)
         self.assertEqual(us_response.status_code, 200)
+        self.assertContains(us_response, "app-sidebar")
+        self.assertContains(us_response, "View reports")
+        self.assertContains(us_response, "Payments received")
         self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1100", name="Accounts receivable").exists())
         self.assertTrue(Account.objects.filter(owner=user, market="US", code="1100", name="Accounts receivable").exists())
 

@@ -605,6 +605,39 @@ def brand_html() -> str:
     return '<a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>'
 
 
+def app_sidebar(request: HttpRequest | None = None) -> str:
+    if not request or not request.user.is_authenticated:
+        return ""
+    links = [
+        ("/dashboard/", "D", "Dashboard"),
+        ("/dashboard/invoices/new/", "I", "Create invoice"),
+        ("/dashboard/payments/new/", "R", "Payments received"),
+        ("/dashboard/expenses/new/", "E", "Expenses & bills"),
+        ("/dashboard/reports/", "P", "Reports"),
+        ("/dashboard/#invoices", "C", "Customers"),
+        ("/dashboard/#accounting", "A", "Chart of accounts"),
+        ("/dashboard/billing/pro/", "B", "Billing"),
+    ]
+    current_path = request.path
+    items = []
+    for href, icon, label in links:
+        base_href = href.split("#", 1)[0]
+        is_active = current_path == base_href or (base_href != "/dashboard/" and current_path.startswith(base_href.rstrip("/") + "/"))
+        items.append(
+            f'<a class="app-nav-link {"active" if is_active else ""}" href="{href}"><span aria-hidden="true">{escape(icon)}</span><strong>{escape(label)}</strong></a>'
+        )
+    return f"""
+    <aside class="app-sidebar" aria-label="Dashboard navigation">
+      <div class="app-sidebar-brand">{brand_html()}</div>
+      <nav class="app-nav">{''.join(items)}</nav>
+      <div class="app-sidebar-footer">
+        <span>Signed in</span>
+        <strong>{escape(current_account_email(request))}</strong>
+      </div>
+    </aside>
+    """
+
+
 def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, str]:
     if subscription.is_pro_active:
         expiry_copy = f" Trial expires on {subscription.expires_at:%d %b %Y}." if subscription.expires_at else ""
@@ -651,6 +684,10 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
     else:
         user_link = '<a href="/accounts/login/">Login</a>'
     dashboard_link = '<a href="/dashboard/">Dashboard</a>' if request and request.user.is_authenticated else ""
+    is_app = bool(request and request.user.is_authenticated)
+    body_class = "account-page app-page" if is_app else "account-page"
+    app_shell_open = f'<div class="app-layout">{app_sidebar(request)}<div class="app-main">' if is_app else ""
+    app_shell_close = "</div></div>" if is_app else ""
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -661,7 +698,7 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
     <title>{escape(title)} | RozLedger</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body class="account-page">
+  <body class="{body_class}">
     <header class="topbar">
       {brand_html()}
       <nav aria-label="Primary navigation">
@@ -674,7 +711,9 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
         {user_link}
       </nav>
     </header>
+    {app_shell_open}
     {body}
+    {app_shell_close}
     <a class="whatsapp-float" href="https://wa.me/919516022222" aria-label="Chat with RozLedger on WhatsApp" rel="noopener">
       <span class="whatsapp-icon" aria-hidden="true">W</span>
       <span class="whatsapp-text">WhatsApp</span>
