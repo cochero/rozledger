@@ -407,6 +407,64 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.total_text, "₹ 1500.00")
         self.assertIn("GST: Not charged", invoice.invoice_text)
 
+    def test_dot_com_dashboard_invoice_form_uses_us_tax_copy(self):
+        user = User.objects.create_user("us-form@example.com", "us-form@example.com", "strong-password-123")
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("invoice_new"), HTTP_HOST="rozledger.com")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sales tax rate %")
+        self.assertContains(response, "Amount before tax")
+        self.assertContains(response, "Payment link")
+        self.assertContains(response, "Client tax ID")
+        self.assertNotContains(response, "Client GSTIN")
+        self.assertNotContains(response, "Include GST")
+        self.assertNotContains(response, "Amount before GST")
+        self.assertNotContains(response, "UPI/payment")
+
+    def test_dot_com_dashboard_invoice_save_creates_us_invoice(self):
+        user = User.objects.create_user("us-save@example.com", "us-save@example.com", "strong-password-123")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "River City Handyman",
+                "business_phone": "(555) 014-7780",
+                "business_address": "100 Main Street\nAustin, TX",
+                "client_name": "Johnson Family",
+                "client_phone": "(555) 014-9000",
+                "client_address": "25 Oak Road\nAustin, TX",
+                "service_name": "Door repair",
+                "include_gst": "on",
+                "amount_before_gst": "100",
+                "gst_rate": "7.25",
+                "due_days": "7",
+                "upi_link": "https://pay.example.com/invoice-1",
+                "bank_details": "ACH details available on request.",
+                "thank_you_note": "Thank you for your business.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user)
+        self.assertEqual(invoice.currency_symbol, "$")
+        self.assertEqual(invoice.tax_label, "Sales tax")
+        self.assertEqual(invoice.total_text, "$ 107.25")
+        self.assertIn("Sales tax: 7.25%", invoice.invoice_text)
+        self.assertIn("Payment link: https://pay.example.com/invoice-1", invoice.invoice_text)
+        self.assertNotIn("GST", invoice.invoice_text)
+        self.assertNotIn("UPI", invoice.invoice_text)
+
+        print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]), HTTP_HOST="rozledger.com")
+        self.assertContains(print_response, "Sales tax")
+        self.assertContains(print_response, "Payment link")
+        self.assertContains(print_response, "www.rozledger.com")
+        self.assertNotContains(print_response, "GSTIN")
+        self.assertNotContains(print_response, "UPI")
+
     def test_invoice_owner_isolation_returns_404_for_other_customer(self):
         owner = User.objects.create_user("owner@example.com", "owner@example.com", "password-123456")
         other = User.objects.create_user("other@example.com", "other@example.com", "password-123456")

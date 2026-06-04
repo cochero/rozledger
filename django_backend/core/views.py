@@ -201,13 +201,23 @@ def digits_only(value: str) -> str:
     return re.sub(r"\D", "", value or "")
 
 
-def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal, include_gst: bool = True) -> str:
+def is_us_host(request: HttpRequest) -> bool:
+    host = request.get_host().split(":", 1)[0].lower()
+    return host in {"rozledger.com", "www.rozledger.com"}
+
+
+def invoice_is_us(invoice: Invoice) -> bool:
+    return invoice.currency_symbol == "$" or (invoice.tax_label or "").lower() == "sales tax"
+
+
+def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal, include_gst: bool = True, currency_symbol: str = RUPEE_SYMBOL) -> str:
     total = amount_before_gst + (amount_before_gst * gst_rate / Decimal("100")) if include_gst else amount_before_gst
-    return f"{RUPEE_SYMBOL} {total.quantize(Decimal('0.01'))}"
+    return f"{currency_symbol} {total.quantize(Decimal('0.01'))}"
 
 
 def build_invoice_text(invoice: Invoice) -> str:
     tax_label = invoice.tax_label or "GST"
+    payment_label = "Payment link" if invoice_is_us(invoice) else "UPI/payment link"
     return "\n".join(
         [
             f"Invoice from {invoice.business_name}",
@@ -216,12 +226,12 @@ def build_invoice_text(invoice: Invoice) -> str:
             f"Client: {invoice.client_name}",
             f"Client phone: {invoice.client_phone}" if invoice.client_phone else "",
             invoice.client_address,
-            f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin else "",
+            f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin and not invoice_is_us(invoice) else "",
             f"Service: {invoice.service_name}",
             f"Amount: {money(invoice.amount_before_gst, invoice.currency_symbol)}",
             f"{tax_label}: {invoice.gst_rate}%" if invoice.include_gst else f"{tax_label}: Not charged",
             f"Total: {invoice.total_text}",
-            f"UPI/payment link: {invoice.upi_link}" if invoice.upi_link else "",
+            f"{payment_label}: {invoice.upi_link}" if invoice.upi_link else "",
             f"Bank details: {invoice.bank_details}" if invoice.bank_details else "",
             invoice.thank_you_note or "Thank you for your business.",
         ]
@@ -407,8 +417,7 @@ def absolute_url(request: HttpRequest, path: str) -> str:
 
 
 def market_price(request: HttpRequest) -> str:
-    host = request.get_host().split(":", 1)[0].lower()
-    return "$3.99/month" if host in {"rozledger.com", "www.rozledger.com"} else f"{RUPEE_SYMBOL}299/month"
+    return "$3.99/month" if is_us_host(request) else f"{RUPEE_SYMBOL}299/month"
 
 
 def whatsapp_url(message: str) -> str:
@@ -1059,6 +1068,15 @@ def create_client(request: HttpRequest) -> HttpResponse:
 def invoice_new(request: HttpRequest) -> HttpResponse:
     error = ""
     profile = get_business_profile(request)
+    us_market = is_us_host(request)
+    tax_label = "Sales tax" if us_market else "GST"
+    currency_symbol = "$" if us_market else RUPEE_SYMBOL
+    tax_id_label = "Client tax ID" if us_market else "Client GSTIN"
+    amount_label = "Amount before tax" if us_market else "Amount before GST"
+    tax_rate_label = "Sales tax rate %" if us_market else "GST rate %"
+    include_tax_label = "Add sales tax to this invoice" if us_market else "Include GST on this invoice"
+    payment_link_label = "Payment link" if us_market else "UPI/payment link"
+    payment_placeholder = "Stripe, Square, PayPal, Venmo, Cash App or payment note" if us_market else "Optional UPI link or payment note"
     values = {
         "template": profile.template if profile else "classic",
         "accent_color": profile.accent_color if profile else "#126b4f",
@@ -1070,9 +1088,9 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         "client_address": "",
         "client_gstin": "",
         "service_name": "",
-        "include_gst": "on",
+        "include_gst": "" if us_market else "on",
         "amount_before_gst": "",
-        "gst_rate": "18",
+        "gst_rate": "0" if us_market else "18",
         "due_days": "7",
         "upi_link": profile.upi_link if profile else "",
         "bank_details": profile.bank_details if profile else "",
@@ -1118,10 +1136,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     include_gst=include_gst,
                     amount_before_gst=amount_before_gst,
                     gst_rate=gst_rate,
-                    tax_label="GST",
-                    currency_symbol=RUPEE_SYMBOL,
+                    tax_label=tax_label,
+                    currency_symbol=currency_symbol,
                     due_days=due_days,
-                    total_text=invoice_total_text(amount_before_gst, gst_rate, include_gst),
+                    total_text=invoice_total_text(amount_before_gst, gst_rate, include_gst, currency_symbol),
                     upi_link=values["upi_link"],
                     bank_details=values["bank_details"],
                     thank_you_note=values["thank_you_note"],
@@ -1156,13 +1174,13 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
           <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required /></label>
           <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(values['client_address'])}</textarea></label>
-          <label>Client GSTIN<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" /></label>
+          <label>{tax_id_label}<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" /></label>
           <label>Service<input name="service_name" value="{escape(values['service_name'])}" required /></label>
-          <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} /> Include GST on this invoice</label>
-          <label>Amount before GST<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required /></label>
-          <label>GST rate %<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required /></label>
+          <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} /> {include_tax_label}</label>
+          <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required /></label>
+          <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required /></label>
           <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" /></label>
-          <label class="full-row">UPI/payment link<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="Optional UPI link or payment note" /></label>
+          <label class="full-row">{payment_link_label}<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="{payment_placeholder}" /></label>
           <label class="full-row">Bank information<textarea name="bank_details" rows="4" placeholder="Bank name, account number, IFSC, account holder">{escape(values['bank_details'])}</textarea></label>
           <label class="full-row">Thank you note<textarea name="thank_you_note" rows="3">{escape(values['thank_you_note'])}</textarea></label>
           <div class="dashboard-actions">
@@ -1187,6 +1205,12 @@ def owned_invoice(request: HttpRequest, invoice_id: int) -> Invoice:
 @require_http_methods(["GET", "POST"])
 def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
     invoice = owned_invoice(request, invoice_id)
+    us_invoice = invoice_is_us(invoice)
+    tax_id_label = "Client tax ID" if us_invoice else "Client GSTIN"
+    amount_label = "Amount before tax" if us_invoice else "Amount before GST"
+    tax_rate_label = "Sales tax rate" if us_invoice else "GST rate"
+    include_tax_label = "Add sales tax to this invoice" if us_invoice else "Include GST on this invoice"
+    payment_link_label = "Payment link" if us_invoice else "UPI/payment link"
     if request.method == "POST":
         amount_before_gst = decimal_value(request.POST.get("amount_before_gst"))
         include_gst = request.POST.get("include_gst") == "on"
@@ -1215,7 +1239,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.status = status if status in dict(Invoice.STATUS_CHOICES) else invoice.status
             invoice.total_text = clean_text(request.POST.get("total_text"), invoice.total_text, 80)
             if not invoice.total_text:
-                invoice.total_text = invoice_total_text(amount_before_gst, gst_rate, include_gst)
+                invoice.total_text = invoice_total_text(amount_before_gst, gst_rate, include_gst, invoice.currency_symbol)
             invoice.upi_link = clean_text(request.POST.get("upi_link"))
             invoice.bank_details = clean_text(request.POST.get("bank_details"))
             invoice.thank_you_note = clean_text(request.POST.get("thank_you_note"))
@@ -1250,14 +1274,14 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
           <label>Client name<input name="client_name" value="{escape(invoice.client_name)}" /></label>
           <label>Client phone<input name="client_phone" value="{escape(invoice.client_phone)}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(invoice.client_address)}</textarea></label>
-          <label>Client GSTIN<input name="client_gstin" value="{escape(invoice.client_gstin)}" /></label>
+          <label>{tax_id_label}<input name="client_gstin" value="{escape(invoice.client_gstin)}" /></label>
           <label>Service<input name="service_name" value="{escape(invoice.service_name)}" /></label>
-          <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if invoice.include_gst else ''} /> Include GST on this invoice</label>
-          <label>Amount before GST<input name="amount_before_gst" type="number" min="1" step="0.01" value="{invoice.amount_before_gst}" /></label>
-          <label>GST rate<input name="gst_rate" type="number" min="0" step="0.01" value="{invoice.gst_rate}" /></label>
+          <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if invoice.include_gst else ''} /> {include_tax_label}</label>
+          <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{invoice.amount_before_gst}" /></label>
+          <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{invoice.gst_rate}" /></label>
           <label>Total text<input name="total_text" value="{escape(invoice.total_text)}" /></label>
           <label>Status<select name="status">{status_options}</select></label>
-          <label>UPI/payment link<input name="upi_link" value="{escape(invoice.upi_link)}" /></label>
+          <label>{payment_link_label}<input name="upi_link" value="{escape(invoice.upi_link)}" /></label>
           <label>Bank information<textarea name="bank_details" rows="4">{escape(invoice.bank_details)}</textarea></label>
           <label>Thank you note<textarea name="thank_you_note" rows="3">{escape(invoice.thank_you_note)}</textarea></label>
           <label>Invoice text<textarea name="invoice_text" rows="9">{escape(invoice.invoice_text)}</textarea></label>
@@ -1409,6 +1433,9 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     accent_color = clean_accent_color(invoice.accent_color)
     tax_label = invoice_tax_label(invoice)
     total_text = invoice_total_display(invoice)
+    us_invoice = invoice_is_us(invoice)
+    invoice_title = "Invoice" if us_invoice else "Tax invoice"
+    payment_link_label = "Payment link" if us_invoice else "UPI / payment link"
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1424,7 +1451,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
         <div class="invoice-brand-block">
           {invoice_logo_html(invoice)}
           <div>
-            <p class="invoice-kicker">Tax invoice</p>
+            <p class="invoice-kicker">{invoice_title}</p>
             <h1>{escape(invoice.business_name)}</h1>
             {f'<p class="invoice-contact-line">Phone: {escape(invoice.business_phone)}</p>' if invoice.business_phone else ''}
             <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
@@ -1452,7 +1479,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           <strong>{escape(invoice.client_name)}</strong>
           {f'<p class="invoice-contact-line">Phone: {escape(invoice.client_phone)}</p>' if invoice.client_phone else ''}
           <p>{escape(invoice.client_address).replace(chr(10), '<br />')}</p>
-          {f'<p>GSTIN: {escape(invoice.client_gstin)}</p>' if invoice.client_gstin else ''}
+          {f'<p>GSTIN: {escape(invoice.client_gstin)}</p>' if invoice.client_gstin and not us_invoice else ''}
         </article>
       </section>
       <table class="invoice-line-table">
@@ -1492,12 +1519,12 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
       </section>
       <section class="invoice-payment-grid">
         {f'<article><span>Bank information</span><p>{escape(invoice.bank_details).replace(chr(10), "<br />")}</p></article>' if invoice.bank_details else ''}
-        {f'<article><span>UPI / payment link</span><p>{escape(invoice.upi_link)}</p></article>' if invoice.upi_link else ''}
+        {f'<article><span>{payment_link_label}</span><p>{escape(invoice.upi_link)}</p></article>' if invoice.upi_link else ''}
       </section>
       {f'<p class="thank-you-note">{escape(invoice.thank_you_note)}</p>' if invoice.thank_you_note else ''}
       <section class="print-actions no-print">
         <button class="button primary" type="button" onclick="window.print()">Print / Save PDF</button>
-        {f'<a class="button secondary" href="{escape(invoice.upi_link)}">Open UPI link</a>' if invoice.upi_link else ''}
+        {f'<a class="button secondary" href="{escape(invoice.upi_link)}">Open payment link</a>' if invoice.upi_link else ''}
         <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/download.pdf">Download PDF</a>
         <a class="button secondary" href="{escape(whatsapp_url(invoice.invoice_text))}" rel="noopener">Send on WhatsApp</a>
         <a class="button ghost" href="/dashboard/">Dashboard</a>
@@ -1549,6 +1576,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     gst_amount = invoice_gst_amount(invoice)
     due_date = invoice_due_date(invoice)
     accent = colors.HexColor(clean_accent_color(invoice.accent_color))
+    us_invoice = invoice_is_us(invoice)
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
     styles = getSampleStyleSheet()
@@ -1591,7 +1619,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         Table([[""]], colWidths=[480], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
         Spacer(1, 18),
     ]
-    header_items = [Paragraph("TAX INVOICE", title_style), Paragraph(escape(invoice.business_name), heading_style)]
+    header_items = [Paragraph("INVOICE" if us_invoice else "TAX INVOICE", title_style), Paragraph(escape(invoice.business_name), heading_style)]
     if invoice.business_phone:
         header_items.append(para(f"Phone: {invoice.business_phone}", small_style))
     if invoice.business_address:
@@ -1641,7 +1669,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             [
                 [Paragraph("Bill to", label_style), Paragraph("Seller", label_style)],
                 [
-                    para("\n".join(part for part in [invoice.client_name, f"Phone: {invoice.client_phone}" if invoice.client_phone else "", invoice.client_address, f"GSTIN: {invoice.client_gstin}" if invoice.client_gstin else ""] if part)),
+                    para("\n".join(part for part in [invoice.client_name, f"Phone: {invoice.client_phone}" if invoice.client_phone else "", invoice.client_address, f"GSTIN: {invoice.client_gstin}" if invoice.client_gstin and not us_invoice else ""] if part)),
                     para("\n".join(part for part in [invoice.business_name, f"Phone: {invoice.business_phone}" if invoice.business_phone else "", invoice.business_address] if part)),
                 ],
             ],
