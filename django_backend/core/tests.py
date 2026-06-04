@@ -10,8 +10,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
-from .models import BusinessProfile, Client as SavedClient
-from .models import Invoice, Lead, PlanSubscription
+from .models import Account, BusinessProfile, Client as SavedClient
+from .models import Invoice, JournalEntry, Lead, PlanSubscription
 
 
 TEST_SETTINGS = {
@@ -583,6 +583,84 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(dashboard_response.status_code, 200)
         india_subscription = PlanSubscription.objects.get(owner=user, market="IN")
         self.assertEqual(india_subscription.status, "free")
+
+    def test_dashboard_seeds_default_chart_of_accounts_by_market(self):
+        user = User.objects.create_user("chart@example.com", "chart@example.com", "password-123456")
+        self.client.force_login(user)
+
+        india_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        us_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+
+        self.assertEqual(india_response.status_code, 200)
+        self.assertEqual(us_response.status_code, 200)
+        self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1100", name="Accounts receivable").exists())
+        self.assertTrue(Account.objects.filter(owner=user, market="US", code="1100", name="Accounts receivable").exists())
+
+    def test_customer_can_add_custom_account(self):
+        user = User.objects.create_user("account@example.com", "account@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+
+        response = self.client.post(
+            reverse("create_account"),
+            {"code": "6000", "name": "Fuel expense", "account_type": "expense", "normal_balance": "debit"},
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        account = Account.objects.get(owner=user, market="US", code="6000")
+        self.assertEqual(account.name, "Fuel expense")
+        self.assertEqual(account.account_type, "expense")
+
+    def test_customer_can_post_balanced_journal_entry(self):
+        user = User.objects.create_user("journal@example.com", "journal@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        expense = Account.objects.get(owner=user, market="US", code="5400")
+        bank = Account.objects.get(owner=user, market="US", code="1010")
+
+        response = self.client.post(
+            reverse("journal_new"),
+            {
+                "entry_date": "2026-06-05",
+                "memo": "Paid software subscription",
+                "debit_account": str(expense.id),
+                "debit_amount": "29.00",
+                "credit_account": str(bank.id),
+                "credit_amount": "29.00",
+                "description": "Monthly app subscription",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        entry = JournalEntry.objects.get(owner=user, market="US")
+        self.assertEqual(entry.total_debit, entry.total_credit)
+        self.assertEqual(entry.lines.count(), 2)
+
+    def test_unbalanced_journal_entry_is_rejected(self):
+        user = User.objects.create_user("unbalanced@example.com", "unbalanced@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        bank = Account.objects.get(owner=user, market="IN", code="1010")
+
+        response = self.client.post(
+            reverse("journal_new"),
+            {
+                "entry_date": "2026-06-05",
+                "memo": "Bad entry",
+                "debit_account": str(expense.id),
+                "debit_amount": "100.00",
+                "credit_account": str(bank.id),
+                "credit_amount": "90.00",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Journal entry must balance")
+        self.assertFalse(JournalEntry.objects.filter(owner=user).exists())
 
     def test_admin_can_activate_15_day_pro_trial(self):
         user = User.objects.create_user("trial@example.com", "trial@example.com", "password-123456")

@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import AffiliateClick, BusinessProfile, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PlanSubscription
 
 
 @admin.register(Lead)
@@ -159,6 +159,28 @@ class PlanSubscriptionAdmin(admin.ModelAdmin):
     def cancel_subscription(self, request, queryset):
         updated = queryset.update(status="cancelled", cancelled_at=timezone.now(), expires_at=None)
         self.message_user(request, f"{updated} subscription(s) cancelled.")
+
+
+@admin.register(Account)
+class AccountAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "code", "name", "account_type", "normal_balance", "is_active", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "code", "name")
+    list_filter = ("market", "account_type", "normal_balance", "is_active", "created_at")
+
+
+class JournalLineInline(admin.TabularInline):
+    model = JournalLine
+    extra = 0
+    fields = ("account", "description", "debit", "credit")
+
+
+@admin.register(JournalEntry)
+class JournalEntryAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "entry_date", "memo", "source", "total_debit", "total_credit", "is_posted", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "memo", "source", "lines__account__code", "lines__account__name")
+    list_filter = ("market", "source", "is_posted", "entry_date", "created_at")
+    readonly_fields = ("total_debit", "total_credit", "created_at")
+    inlines = (JournalLineInline,)
 
 
 class PaymentGatewayConfigForm(forms.ModelForm):

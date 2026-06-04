@@ -61,6 +61,19 @@ MARKET_CHOICES = [
     ("US", "United States"),
 ]
 
+ACCOUNT_TYPE_CHOICES = [
+    ("asset", "Asset"),
+    ("liability", "Liability"),
+    ("equity", "Equity"),
+    ("revenue", "Revenue"),
+    ("expense", "Expense"),
+]
+
+NORMAL_BALANCE_CHOICES = [
+    ("debit", "Debit"),
+    ("credit", "Credit"),
+]
+
 
 class Lead(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
@@ -202,6 +215,76 @@ class AffiliateClick(models.Model):
 
     def __str__(self) -> str:
         return self.offer_name
+
+
+class Account(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="accounts",
+    )
+    owner_email = models.EmailField(db_index=True)
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=180)
+    account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES)
+    normal_balance = models.CharField(max_length=10, choices=NORMAL_BALANCE_CHOICES)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["code"]
+        unique_together = ("market", "owner_email", "code")
+
+    def __str__(self) -> str:
+        return f"{self.code} - {self.name}"
+
+
+class JournalEntry(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="journal_entries",
+    )
+    owner_email = models.EmailField(db_index=True)
+    entry_date = models.DateField(default=timezone.localdate)
+    memo = models.CharField(max_length=240)
+    source = models.CharField(max_length=40, default="manual")
+    total_debit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_credit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    is_posted = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-entry_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.entry_date} - {self.memo}"
+
+    @property
+    def is_balanced(self) -> bool:
+        return self.total_debit == self.total_credit
+
+
+class JournalLine(models.Model):
+    entry = models.ForeignKey(JournalEntry, on_delete=models.CASCADE, related_name="lines")
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="journal_lines")
+    description = models.CharField(max_length=240, blank=True)
+    debit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    credit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        amount = self.debit if self.debit else self.credit
+        side = "Dr" if self.debit else "Cr"
+        return f"{self.account.code} {side} {amount}"
 
 
 class PlanSubscription(models.Model):

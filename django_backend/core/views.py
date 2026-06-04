@@ -28,7 +28,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import AffiliateClick, BusinessProfile, Client, Invoice, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PlanSubscription
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -43,6 +43,22 @@ HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 RUPEE_SYMBOL = "\u20b9"
 FREE_MONTHLY_INVOICE_LIMIT = 5
 PAID_MONTHLY_INVOICE_LIMIT = 100
+DEFAULT_CHART = [
+    ("1000", "Cash on hand", "asset", "debit"),
+    ("1010", "Bank account", "asset", "debit"),
+    ("1100", "Accounts receivable", "asset", "debit"),
+    ("1200", "Tax receivable", "asset", "debit"),
+    ("2000", "Accounts payable", "liability", "credit"),
+    ("2100", "Sales tax / GST payable", "liability", "credit"),
+    ("3000", "Owner equity", "equity", "credit"),
+    ("4000", "Service income", "revenue", "credit"),
+    ("4100", "Other income", "revenue", "credit"),
+    ("5000", "Cost of services", "expense", "debit"),
+    ("5100", "Office expenses", "expense", "debit"),
+    ("5200", "Marketing expenses", "expense", "debit"),
+    ("5300", "Travel expenses", "expense", "debit"),
+    ("5400", "Software subscriptions", "expense", "debit"),
+]
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -125,6 +141,45 @@ def invoice_quota_message(used: int, limit: int, plan_name: str) -> str:
 
 def get_business_profile(request: HttpRequest) -> BusinessProfile | None:
     return BusinessProfile.objects.filter(account_q(request)).first()
+
+
+def ensure_default_chart(request: HttpRequest) -> None:
+    email = current_account_email(request)
+    market = current_market(request)
+    existing_codes = set(Account.objects.filter(account_q(request)).values_list("code", flat=True))
+    accounts = []
+    for code, name, account_type, normal_balance in DEFAULT_CHART:
+        if code not in existing_codes:
+            accounts.append(
+                Account(
+                    market=market,
+                    owner=request.user,
+                    owner_email=email,
+                    code=code,
+                    name=name,
+                    account_type=account_type,
+                    normal_balance=normal_balance,
+                )
+            )
+    if accounts:
+        Account.objects.bulk_create(accounts)
+
+
+def account_options(accounts, selected_id: str = "") -> str:
+    return "".join(
+        f'<option value="{account.id}" {"selected" if selected_id and str(account.id) == str(selected_id) else ""}>{escape(account.code)} - {escape(account.name)}</option>'
+        for account in accounts
+    )
+
+
+def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
+    entries = JournalEntry.objects.filter(account_q(request), is_posted=True)
+    return {
+        "assets": sum((line.debit - line.credit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="asset")), Decimal("0")),
+        "liabilities": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="liability")), Decimal("0")),
+        "income": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="revenue")), Decimal("0")),
+        "expenses": sum((line.debit - line.credit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="expense")), Decimal("0")),
+    }
 
 
 def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
@@ -840,6 +895,7 @@ def password_reset_confirm_view(request: HttpRequest, uidb64: str, token: str) -
 @require_GET
 def dashboard(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
+    ensure_default_chart(request)
     us_market = is_us_host(request)
     client_tax_id_label = "Tax ID" if us_market else "GSTIN"
     client_tax_id_placeholder = "Optional tax ID" if us_market else "Optional GSTIN"
@@ -865,6 +921,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         notice += '<p class="dashboard-notice">Invoice saved. It is now available in your dashboard.</p>'
     paid_count = Invoice.objects.filter(account_q(request), status="paid").count()
     pending_count = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
+    accounts = Account.objects.filter(account_q(request), is_active=True)[:30]
+    journal_entries = JournalEntry.objects.filter(account_q(request))[:10]
+    accounting_totals = journal_totals_for_user(request)
 
     invoice_rows = []
     for invoice in invoices:
@@ -978,6 +1037,44 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             """
         )
 
+    account_rows = []
+    for account in accounts:
+        account_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(account.get_account_type_display())}</span>
+                <h2>{escape(account.code)} - {escape(account.name)}</h2>
+                <p>{escape(account.get_normal_balance_display())} normal balance</p>
+              </div>
+            </article>
+            """
+        )
+
+    journal_rows = []
+    for entry in journal_entries:
+        journal_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{entry.entry_date:%d %b %Y}</span>
+                <h2>{escape(entry.memo)}</h2>
+                <p>Debit {escape(money(entry.total_debit, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} / Credit {escape(money(entry.total_credit, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</p>
+              </div>
+            </article>
+            """
+        )
+    if not journal_rows:
+        journal_rows.append(
+            """
+            <article class="dashboard-card empty-state compact-card">
+              <span>Journal</span>
+              <h2>No accounting entries yet</h2>
+              <p>Record receipts, expenses, owner contributions and adjustments as journal entries.</p>
+            </article>
+            """
+        )
+
     display_name = request.user.first_name or email
     body = f"""
     <main class="dashboard-shell">
@@ -997,6 +1094,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
         <div><span>Monthly invoices</span><strong>{quota_used}/{quota_limit}</strong></div>
+        <div><span>Income</span><strong>{escape(money(accounting_totals['income'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
+        <div><span>Expenses</span><strong>{escape(money(accounting_totals['expenses'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
       </section>
       <section class="dashboard-section">
         <div class="section-head">
@@ -1030,6 +1129,40 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
         </div>
         <div class="dashboard-grid">{''.join(invoice_rows)}</div>
+      </section>
+      <section class="dashboard-section" id="accounting">
+        <div class="section-head">
+          <p class="eyebrow">Accounting</p>
+          <h2>Chart of accounts</h2>
+        </div>
+        <form method="post" action="/dashboard/accounting/accounts/" class="dashboard-form">
+          {csrf_input(request)}
+          <label>Code<input name="code" placeholder="6000" required /></label>
+          <label>Name<input name="name" placeholder="Fuel expense" required /></label>
+          <label>Type<select name="account_type">
+            <option value="asset">Asset</option>
+            <option value="liability">Liability</option>
+            <option value="equity">Equity</option>
+            <option value="revenue">Revenue</option>
+            <option value="expense">Expense</option>
+          </select></label>
+          <label>Normal balance<select name="normal_balance">
+            <option value="debit">Debit</option>
+            <option value="credit">Credit</option>
+          </select></label>
+          <button class="button primary" type="submit">Add account</button>
+        </form>
+        <div class="dashboard-grid">{''.join(account_rows)}</div>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head">
+          <p class="eyebrow">Accounting</p>
+          <h2>Journal entries</h2>
+        </div>
+        <div class="dashboard-actions section-actions">
+          <a class="button primary" href="/dashboard/accounting/journal/new/">Record journal entry</a>
+        </div>
+        <div class="dashboard-grid">{''.join(journal_rows)}</div>
       </section>
       <section class="dashboard-section">
         <div class="section-head">
@@ -1087,6 +1220,109 @@ def create_client(request: HttpRequest) -> HttpResponse:
         },
     )
     return redirect("/dashboard/")
+
+
+@login_required
+@require_POST
+def create_account(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    code = clean_text(request.POST.get("code"), max_length=20)
+    name = clean_text(request.POST.get("name"), max_length=180)
+    account_type = clean_text(request.POST.get("account_type"), max_length=20)
+    normal_balance = clean_text(request.POST.get("normal_balance"), max_length=10)
+    if not code or not name:
+        return redirect("/dashboard/#accounting")
+    if account_type not in {"asset", "liability", "equity", "revenue", "expense"}:
+        account_type = "expense"
+    if normal_balance not in {"debit", "credit"}:
+        normal_balance = "debit" if account_type in {"asset", "expense"} else "credit"
+    Account.objects.update_or_create(
+        market=current_market(request),
+        owner_email=current_account_email(request),
+        code=code,
+        defaults={
+            "owner": request.user,
+            "name": name,
+            "account_type": account_type,
+            "normal_balance": normal_balance,
+            "is_active": True,
+        },
+    )
+    return redirect("/dashboard/#accounting")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def journal_new(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    accounts = list(Account.objects.filter(account_q(request), is_active=True))
+    error = ""
+    values = {
+        "entry_date": f"{timezone.localdate():%Y-%m-%d}",
+        "memo": "",
+        "debit_account": "",
+        "debit_amount": "",
+        "credit_account": "",
+        "credit_amount": "",
+        "description": "",
+    }
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        debit_amount = decimal_value(values["debit_amount"])
+        credit_amount = decimal_value(values["credit_amount"])
+        debit_account = next((account for account in accounts if str(account.id) == values["debit_account"]), None)
+        credit_account = next((account for account in accounts if str(account.id) == values["credit_account"]), None)
+        if not values["memo"]:
+            error = "Memo is required."
+        elif not debit_account or not credit_account:
+            error = "Choose debit and credit accounts."
+        elif debit_account.id == credit_account.id:
+            error = "Debit and credit accounts must be different."
+        elif debit_amount <= 0 or credit_amount <= 0:
+            error = "Debit and credit amounts must be greater than zero."
+        elif debit_amount != credit_amount:
+            error = "Journal entry must balance: debit must equal credit."
+        else:
+            entry = JournalEntry.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                entry_date=values["entry_date"] or timezone.localdate(),
+                memo=values["memo"],
+                source="manual",
+                total_debit=debit_amount,
+                total_credit=credit_amount,
+            )
+            JournalLine.objects.create(entry=entry, account=debit_account, description=values["description"], debit=debit_amount, credit=Decimal("0"))
+            JournalLine.objects.create(entry=entry, account=credit_account, description=values["description"], debit=Decimal("0"), credit=credit_amount)
+            return redirect("/dashboard/#accounting")
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">Accounting</p>
+        <h1>Record journal entry</h1>
+        <p class="account-copy">Use this for owner contributions, expense payments, corrections and manual accounting adjustments. Debit must equal credit.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Date<input name="entry_date" type="date" value="{escape(values['entry_date'])}" required /></label>
+          <label>Memo<input name="memo" value="{escape(values['memo'])}" placeholder="Paid software subscription" required /></label>
+          <label>Debit account<select name="debit_account">{account_options(accounts, values['debit_account'])}</select></label>
+          <label>Debit amount<input name="debit_amount" type="number" min="0.01" step="0.01" value="{escape(values['debit_amount'])}" required /></label>
+          <label>Credit account<select name="credit_account">{account_options(accounts, values['credit_account'])}</select></label>
+          <label>Credit amount<input name="credit_amount" type="number" min="0.01" step="0.01" value="{escape(values['credit_amount'])}" required /></label>
+          <label class="full-row">Description<input name="description" value="{escape(values['description'])}" placeholder="Optional line note" /></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post journal entry</button>
+            <a class="button secondary" href="/dashboard/#accounting">Back to accounting</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Record journal entry", body, request)
 
 
 @login_required
