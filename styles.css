@@ -1092,6 +1092,145 @@ textarea {
   color: var(--muted);
 }
 
+.report-kpi-grid,
+.aging-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 1180px;
+  margin: 18px auto 0;
+}
+
+.aging-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 0 14px;
+}
+
+.report-kpi-grid article,
+.aging-grid div,
+.report-statement {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.report-kpi-grid article,
+.aging-grid div {
+  padding: 16px;
+}
+
+.report-kpi-grid span,
+.aging-grid span,
+.report-statement span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.report-kpi-grid strong,
+.aging-grid strong {
+  font-size: clamp(20px, 2vw, 28px);
+  overflow-wrap: anywhere;
+}
+
+.report-section {
+  max-width: 1180px;
+  margin: clamp(30px, 5vw, 54px) auto 0;
+}
+
+.report-statement {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+}
+
+.report-statement div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 18px;
+}
+
+.report-statement div:last-child {
+  border-bottom: 0;
+}
+
+.report-statement span {
+  margin-bottom: 0;
+}
+
+.report-statement strong {
+  font-size: 20px;
+  text-align: right;
+}
+
+.statement-total {
+  background: #f4fbf8;
+}
+
+.statement-total strong {
+  color: var(--green-dark);
+  font-size: 24px;
+}
+
+.report-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.report-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.report-table th,
+.report-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-table th {
+  color: var(--muted);
+  background: #f8faf8;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.report-table td strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.report-table td span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.amount-cell {
+  text-align: right !important;
+  font-weight: 900;
+}
+
+.empty-report-row {
+  color: var(--muted);
+  text-align: center !important;
+}
+
 .billing-panel {
   display: flex;
   align-items: center;
@@ -1506,6 +1645,8 @@ textarea {
   .blog-grid,
   .pro-workflow-grid,
   .dashboard-module-grid,
+  .report-kpi-grid,
+  .aging-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,
@@ -1544,6 +1685,8 @@ textarea {
   .blog-grid,
   .pro-workflow-grid,
   .dashboard-module-grid,
+  .report-kpi-grid,
+  .aging-grid,
   .dashboard-summary,
   .dashboard-form,
   .dashboard-grid,

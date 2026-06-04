@@ -764,6 +764,66 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(dashboard_response, "Accounts payable")
         self.assertContains(dashboard_response, "₹ 750.00")
 
+    def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
+        user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        invoice = Invoice.objects.create(
+            owner=user,
+            owner_email=user.email,
+            market="US",
+            business_name="Reports Business",
+            client_name="Reports Client",
+            service_name="Monthly service",
+            include_gst=False,
+            amount_before_gst=Decimal("300.00"),
+            gst_rate=Decimal("0"),
+            tax_label="Sales tax",
+            currency_symbol="$",
+            total_text="$ 300.00",
+            upi_link="https://pay.example.com",
+            invoice_text="Invoice text",
+            due_days=0,
+        )
+        expense = Account.objects.get(owner=user, market="US", code="5100")
+        self.client.post(
+            reverse("payment_new"),
+            {
+                "payment_date": "2026-06-05",
+                "payer_name": "Paid Client",
+                "amount": "125.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-05",
+                "due_date": "2026-06-20",
+                "vendor_name": "Reports Vendor",
+                "category": "Office supplies",
+                "expense_account": str(expense.id),
+                "amount": "75.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        response = self.client.get(reverse("reports"), HTTP_HOST="rozledger.com")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Profit & Loss")
+        self.assertContains(response, "AR aging by invoice and customer")
+        self.assertContains(response, "AP aging by vendor")
+        self.assertContains(response, "Cash and bank position")
+        self.assertContains(response, f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}")
+        self.assertContains(response, "Reports Client")
+        self.assertContains(response, "Reports Vendor")
+        self.assertContains(response, "$ 125.00")
+        self.assertContains(response, "$ 75.00")
+
     def test_admin_can_activate_15_day_pro_trial(self):
         user = User.objects.create_user("trial@example.com", "trial@example.com", "password-123456")
         subscription = PlanSubscription.objects.create(owner=user, owner_email=user.email, plan="pro", status="requested")

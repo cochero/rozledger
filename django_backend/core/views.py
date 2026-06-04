@@ -253,6 +253,33 @@ def finance_summary_for_user(request: HttpRequest) -> dict[str, Decimal]:
     }
 
 
+def aging_bucket(days_old: int) -> str:
+    if days_old <= 0:
+        return "Current"
+    if days_old <= 30:
+        return "1-30"
+    if days_old <= 60:
+        return "31-60"
+    if days_old <= 90:
+        return "61-90"
+    return "90+"
+
+
+def empty_aging_totals() -> dict[str, Decimal]:
+    return {bucket: Decimal("0") for bucket in ("Current", "1-30", "31-60", "61-90", "90+")}
+
+
+def cash_account_balances(request: HttpRequest) -> dict[str, Decimal]:
+    entries = JournalEntry.objects.filter(account_q(request), is_posted=True)
+    lines = JournalLine.objects.filter(entry__in=entries, account__code__in=["1000", "1010"])
+    balances = {"cash": Decimal("0"), "bank": Decimal("0")}
+    for line in lines:
+        key = "cash" if line.account.code == "1000" else "bank"
+        balances[key] += line.debit - line.credit
+    balances["total"] = balances["cash"] + balances["bank"]
+    return balances
+
+
 def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
     if not invoice.owner_email:
         return
@@ -1219,7 +1246,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <a class="module-tile" href="/dashboard/invoices/new/"><span>01</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
         <a class="module-tile" href="/dashboard/payments/new/"><span>02</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
         <a class="module-tile" href="/dashboard/expenses/new/"><span>03</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
-        <a class="module-tile" href="/dashboard/#accounting"><span>04</span><strong>Review accounts</strong><p>See chart, journals, receivables and payables.</p></a>
+        <a class="module-tile" href="/dashboard/reports/"><span>04</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -1493,6 +1520,142 @@ def payment_method_options(selected: str = "bank") -> str:
         ("other", "Other"),
     ]
     return "".join(f'<option value="{value}" {"selected" if value == selected else ""}>{label}</option>' for value, label in choices)
+
+
+@login_required
+@require_GET
+def reports(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    email = current_account_email(request)
+    today = timezone.localdate()
+    totals = journal_totals_for_user(request)
+    finance = finance_summary_for_user(request)
+    cash = cash_account_balances(request)
+    profit = totals["income"] - totals["expenses"]
+
+    ar_totals = empty_aging_totals()
+    ar_rows = []
+    for invoice in Invoice.objects.filter(account_q(request)).exclude(status="paid").order_by("created_at"):
+        due_date = timezone.localtime(invoice.created_at).date() + timedelta(days=invoice.due_days)
+        bucket = aging_bucket((today - due_date).days)
+        amount = invoice_total_amount(invoice)
+        ar_totals[bucket] += amount
+        ar_rows.append(
+            f"""
+            <tr>
+              <td><strong>{escape(invoice_number(invoice))}</strong><span>{escape(invoice.client_name)}</span></td>
+              <td>{escape(invoice.created_at.strftime('%d %b %Y'))}</td>
+              <td>{escape(due_date.strftime('%d %b %Y'))}</td>
+              <td>{escape(bucket)}</td>
+              <td class="amount-cell">{escape(money(amount, currency))}</td>
+            </tr>
+            """
+        )
+    if not ar_rows:
+        ar_rows.append('<tr><td colspan="5" class="empty-report-row">No unpaid customer invoices.</td></tr>')
+
+    ap_totals = empty_aging_totals()
+    ap_rows = []
+    for bill in VendorBill.objects.filter(account_q(request), status="unpaid").order_by("due_date", "bill_date"):
+        due_date = bill.due_date or bill.bill_date
+        bucket = aging_bucket((today - due_date).days)
+        ap_totals[bucket] += bill.amount
+        ap_rows.append(
+            f"""
+            <tr>
+              <td><strong>{escape(bill.vendor_name)}</strong><span>{escape(bill.category)}</span></td>
+              <td>{escape(bill.bill_date.strftime('%d %b %Y'))}</td>
+              <td>{escape(due_date.strftime('%d %b %Y'))}</td>
+              <td>{escape(bucket)}</td>
+              <td class="amount-cell">{escape(money(bill.amount, currency))}</td>
+            </tr>
+            """
+        )
+    if not ap_rows:
+        ap_rows.append('<tr><td colspan="5" class="empty-report-row">No unpaid vendor bills.</td></tr>')
+
+    def aging_cards(totals_by_bucket: dict[str, Decimal]) -> str:
+        return "".join(
+            f'<div><span>{escape(bucket)}</span><strong>{escape(money(amount, currency))}</strong></div>'
+            for bucket, amount in totals_by_bucket.items()
+        )
+
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Reports</p>
+        <h1>Financial reports</h1>
+        <p>Review profit, unpaid customer invoices, unpaid vendor bills and cash movement for {escape(email)}.</p>
+        <div class="hero-actions">
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          <a class="button primary" href="/dashboard/payments/new/">Record payment</a>
+          <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid" aria-label="Report summary">
+        <article><span>Income</span><strong>{escape(money(totals['income'], currency))}</strong></article>
+        <article><span>Expenses</span><strong>{escape(money(totals['expenses'], currency))}</strong></article>
+        <article><span>Net profit</span><strong>{escape(money(profit, currency))}</strong></article>
+        <article><span>Cash & bank</span><strong>{escape(money(cash['total'], currency))}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Profit & Loss</p>
+          <h2>Income minus expenses</h2>
+          <p>Based on posted journal entries. Payment received posts income; paid expenses and unpaid vendor bills post expenses.</p>
+        </div>
+        <div class="report-statement">
+          <div><span>Income</span><strong>{escape(money(totals['income'], currency))}</strong></div>
+          <div><span>Expenses</span><strong>{escape(money(totals['expenses'], currency))}</strong></div>
+          <div class="statement-total"><span>Net profit</span><strong>{escape(money(profit, currency))}</strong></div>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Accounts receivable</p>
+          <h2>AR aging by invoice and customer</h2>
+          <p>Total unpaid customer invoices: {escape(money(finance['accounts_receivable'], currency))}.</p>
+        </div>
+        <div class="aging-grid">{aging_cards(ar_totals)}</div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Invoice / customer</th><th>Invoice date</th><th>Due date</th><th>Aging</th><th>Amount</th></tr></thead>
+            <tbody>{''.join(ar_rows)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Accounts payable</p>
+          <h2>AP aging by vendor</h2>
+          <p>Total unpaid vendor bills: {escape(money(finance['accounts_payable'], currency))}.</p>
+        </div>
+        <div class="aging-grid">{aging_cards(ap_totals)}</div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Vendor / category</th><th>Bill date</th><th>Due date</th><th>Aging</th><th>Amount</th></tr></thead>
+            <tbody>{''.join(ap_rows)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Cash summary</p>
+          <h2>Cash and bank position</h2>
+          <p>Based on posted journal lines to Cash on hand and Bank account.</p>
+        </div>
+        <div class="report-statement">
+          <div><span>Cash on hand</span><strong>{escape(money(cash['cash'], currency))}</strong></div>
+          <div><span>Bank account</span><strong>{escape(money(cash['bank'], currency))}</strong></div>
+          <div><span>Customer payments recorded</span><strong>{escape(money(finance['cash_collected'], currency))}</strong></div>
+          <div><span>Bills paid</span><strong>{escape(money(finance['bills_paid'], currency))}</strong></div>
+          <div class="statement-total"><span>Total cash and bank</span><strong>{escape(money(cash['total'], currency))}</strong></div>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Financial reports", body, request)
 
 
 @login_required
