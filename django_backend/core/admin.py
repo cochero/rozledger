@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 @admin.register(Lead)
@@ -181,6 +181,22 @@ class JournalEntryAdmin(admin.ModelAdmin):
     list_filter = ("market", "source", "is_posted", "entry_date", "created_at")
     readonly_fields = ("total_debit", "total_credit", "created_at")
     inlines = (JournalLineInline,)
+
+
+@admin.register(PaymentReceipt)
+class PaymentReceiptAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "payment_date", "payer_name", "amount", "method", "invoice", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "payer_name", "reference", "notes", "invoice__client_name")
+    list_filter = ("market", "method", "payment_date", "created_at")
+    readonly_fields = ("journal_entry", "created_at")
+
+
+@admin.register(VendorBill)
+class VendorBillAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "bill_date", "vendor_name", "category", "amount", "status", "due_date", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "notes")
+    list_filter = ("market", "status", "bill_date", "due_date", "created_at")
+    readonly_fields = ("journal_entry", "created_at")
 
 
 class PaymentGatewayConfigForm(forms.ModelForm):

@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -11,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, BusinessProfile, Client as SavedClient
-from .models import Invoice, JournalEntry, Lead, PlanSubscription
+from .models import Invoice, JournalEntry, Lead, PaymentReceipt, PlanSubscription, VendorBill
 
 
 TEST_SETTINGS = {
@@ -668,6 +669,90 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Journal entry must balance")
         self.assertFalse(JournalEntry.objects.filter(owner=user).exists())
+
+    def test_customer_can_record_payment_received_for_invoice(self):
+        user = User.objects.create_user("receipt@example.com", "receipt@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        invoice = Invoice.objects.create(
+            owner=user,
+            owner_email=user.email,
+            market="US",
+            business_name="Receipt Business",
+            client_name="Receipt Client",
+            service_name="Consulting",
+            include_gst=False,
+            amount_before_gst=Decimal("100.00"),
+            gst_rate=Decimal("0"),
+            tax_label="Sales tax",
+            currency_symbol="$",
+            total_text="$ 100.00",
+            upi_link="https://pay.example.com",
+            invoice_text="Invoice text",
+        )
+
+        response = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Receipt Client",
+                "amount": "100.00",
+                "method": "bank",
+                "reference": "stripe_123",
+                "notes": "Paid in full",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        receipt = PaymentReceipt.objects.get(owner=user, market="US")
+        self.assertEqual(receipt.amount, Decimal("100.00"))
+        self.assertEqual(receipt.invoice_id, invoice.id)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "paid")
+        entry = receipt.journal_entry
+        self.assertEqual(entry.source, "payment_received")
+        self.assertEqual(entry.total_debit, entry.total_credit)
+        self.assertTrue(entry.lines.filter(account__code="1010", debit=Decimal("100.00")).exists())
+        self.assertTrue(entry.lines.filter(account__code="4000", credit=Decimal("100.00")).exists())
+
+    def test_customer_can_record_unpaid_vendor_bill_as_accounts_payable(self):
+        user = User.objects.create_user("payable@example.com", "payable@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+
+        response = self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-05",
+                "due_date": "2026-06-20",
+                "vendor_name": "Office Vendor",
+                "category": "Office supplies",
+                "expense_account": str(expense.id),
+                "amount": "750.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "BILL-1",
+                "notes": "Printer paper",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        bill = VendorBill.objects.get(owner=user, market="IN")
+        self.assertEqual(bill.status, "unpaid")
+        self.assertEqual(bill.amount, Decimal("750.00"))
+        entry = bill.journal_entry
+        self.assertEqual(entry.source, "vendor_bill")
+        self.assertEqual(entry.total_debit, entry.total_credit)
+        self.assertTrue(entry.lines.filter(account__code="5100", debit=Decimal("750.00")).exists())
+        self.assertTrue(entry.lines.filter(account__code="2000", credit=Decimal("750.00")).exists())
+
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        self.assertContains(dashboard_response, "Accounts payable")
+        self.assertContains(dashboard_response, "₹ 750.00")
 
     def test_admin_can_activate_15_day_pro_trial(self):
         user = User.objects.create_user("trial@example.com", "trial@example.com", "password-123456")

@@ -28,7 +28,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PlanSubscription
+from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -179,6 +179,54 @@ def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
         "liabilities": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="liability")), Decimal("0")),
         "income": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="revenue")), Decimal("0")),
         "expenses": sum((line.debit - line.credit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="expense")), Decimal("0")),
+    }
+
+
+def invoice_total_amount(invoice: Invoice) -> Decimal:
+    tax = invoice.amount_before_gst * invoice.gst_rate / Decimal("100") if invoice.include_gst else Decimal("0")
+    return (invoice.amount_before_gst + tax).quantize(Decimal("0.01"))
+
+
+def account_by_code(request: HttpRequest, code: str) -> Account:
+    ensure_default_chart(request)
+    return Account.objects.get(account_q(request), code=code)
+
+
+def post_two_line_entry(
+    request: HttpRequest,
+    *,
+    entry_date,
+    memo: str,
+    source: str,
+    debit_account: Account,
+    credit_account: Account,
+    amount: Decimal,
+    description: str = "",
+) -> JournalEntry:
+    amount = amount.quantize(Decimal("0.01"))
+    entry = JournalEntry.objects.create(
+        market=current_market(request),
+        owner=request.user,
+        owner_email=current_account_email(request),
+        entry_date=entry_date or timezone.localdate(),
+        memo=memo,
+        source=source,
+        total_debit=amount,
+        total_credit=amount,
+    )
+    JournalLine.objects.create(entry=entry, account=debit_account, description=description, debit=amount, credit=Decimal("0"))
+    JournalLine.objects.create(entry=entry, account=credit_account, description=description, debit=Decimal("0"), credit=amount)
+    return entry
+
+
+def finance_summary_for_user(request: HttpRequest) -> dict[str, Decimal]:
+    invoices = Invoice.objects.filter(account_q(request))
+    bills = VendorBill.objects.filter(account_q(request))
+    return {
+        "accounts_receivable": sum((invoice_total_amount(invoice) for invoice in invoices.exclude(status="paid")), Decimal("0")),
+        "accounts_payable": sum((bill.amount for bill in bills.filter(status="unpaid")), Decimal("0")),
+        "cash_collected": sum((receipt.amount for receipt in PaymentReceipt.objects.filter(account_q(request))), Decimal("0")),
+        "bills_paid": sum((bill.amount for bill in bills.filter(status="paid")), Decimal("0")),
     }
 
 
@@ -924,6 +972,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     accounts = Account.objects.filter(account_q(request), is_active=True)[:30]
     journal_entries = JournalEntry.objects.filter(account_q(request))[:10]
     accounting_totals = journal_totals_for_user(request)
+    finance_summary = finance_summary_for_user(request)
+    payment_receipts = PaymentReceipt.objects.filter(account_q(request))[:8]
+    vendor_bills = VendorBill.objects.filter(account_q(request))[:8]
 
     invoice_rows = []
     for invoice in invoices:
@@ -945,6 +996,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                   <input type="hidden" name="status" value="paid" />
                   <button class="button ghost" type="submit">Mark paid</button>
                 </form>
+                <a class="button ghost" href="/dashboard/payments/new/?invoice={invoice.id}">Record payment</a>
               </div>
             </article>
             """
@@ -1075,6 +1127,55 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             """
         )
 
+    payment_rows = []
+    for receipt in payment_receipts:
+        payment_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{receipt.payment_date:%d %b %Y}</span>
+                <h2>{escape(receipt.payer_name)}</h2>
+                <p>{escape(money(receipt.amount, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} via {escape(receipt.get_method_display())}</p>
+              </div>
+            </article>
+            """
+        )
+    if not payment_rows:
+        payment_rows.append(
+            """
+            <article class="dashboard-card empty-state compact-card">
+              <span>Receipts</span>
+              <h2>No payments recorded yet</h2>
+              <p>Record customer payments to update income and collection totals.</p>
+            </article>
+            """
+        )
+
+    bill_rows = []
+    for bill in vendor_bills:
+        bill_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(bill.get_status_display())}</span>
+                <h2>{escape(bill.vendor_name)}</h2>
+                <p>{escape(bill.category)} - {escape(money(bill.amount, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</p>
+                {f'<p>Due {bill.due_date:%d %b %Y}</p>' if bill.due_date else ''}
+              </div>
+            </article>
+            """
+        )
+    if not bill_rows:
+        bill_rows.append(
+            """
+            <article class="dashboard-card empty-state compact-card">
+              <span>Payables</span>
+              <h2>No vendor bills yet</h2>
+              <p>Add expenses or unpaid vendor bills to track accounts payable.</p>
+            </article>
+            """
+        )
+
     display_name = request.user.first_name or email
     body = f"""
     <main class="dashboard-shell">
@@ -1094,6 +1195,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
         <div><span>Monthly invoices</span><strong>{quota_used}/{quota_limit}</strong></div>
+        <div><span>Accounts receivable</span><strong>{escape(money(finance_summary['accounts_receivable'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
+        <div><span>Accounts payable</span><strong>{escape(money(finance_summary['accounts_payable'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
         <div><span>Income</span><strong>{escape(money(accounting_totals['income'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
         <div><span>Expenses</span><strong>{escape(money(accounting_totals['expenses'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
       </section>
@@ -1153,6 +1256,26 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <button class="button primary" type="submit">Add account</button>
         </form>
         <div class="dashboard-grid">{''.join(account_rows)}</div>
+      </section>
+      <section class="dashboard-section" id="receipts">
+        <div class="section-head">
+          <p class="eyebrow">Accounts receivable</p>
+          <h2>Payment received</h2>
+        </div>
+        <div class="dashboard-actions section-actions">
+          <a class="button primary" href="/dashboard/payments/new/">Record payment received</a>
+        </div>
+        <div class="dashboard-grid">{''.join(payment_rows)}</div>
+      </section>
+      <section class="dashboard-section" id="payables">
+        <div class="section-head">
+          <p class="eyebrow">Accounts payable</p>
+          <h2>Expenses and vendor bills</h2>
+        </div>
+        <div class="dashboard-actions section-actions">
+          <a class="button primary" href="/dashboard/expenses/new/">Record expense or bill</a>
+        </div>
+        <div class="dashboard-grid">{''.join(bill_rows)}</div>
       </section>
       <section class="dashboard-section">
         <div class="section-head">
@@ -1323,6 +1446,197 @@ def journal_new(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Record journal entry", body, request)
+
+
+def payment_method_options(selected: str = "bank") -> str:
+    choices = [
+        ("bank", "Bank transfer"),
+        ("cash", "Cash"),
+        ("upi", "UPI"),
+        ("card", "Card"),
+        ("check", "Check"),
+        ("paypal", "PayPal"),
+        ("stripe", "Stripe"),
+        ("other", "Other"),
+    ]
+    return "".join(f'<option value="{value}" {"selected" if value == selected else ""}>{label}</option>' for value, label in choices)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def payment_new(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    invoice = None
+    invoice_id = clean_text(request.GET.get("invoice") or request.POST.get("invoice_id"), max_length=20)
+    if invoice_id:
+        try:
+            invoice = owned_invoice(request, int(invoice_id))
+        except (ValueError, Http404):
+            invoice = None
+    values = {
+        "payment_date": f"{timezone.localdate():%Y-%m-%d}",
+        "payer_name": invoice.client_name if invoice else "",
+        "amount": f"{invoice_total_amount(invoice)}" if invoice else "",
+        "method": "bank",
+        "reference": "",
+        "notes": "",
+    }
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        amount = decimal_value(values["amount"])
+        if not values["payer_name"]:
+            error = "Payer name is required."
+        elif amount <= 0:
+            error = "Payment amount must be greater than zero."
+        else:
+            debit_account = account_by_code(request, "1000" if values["method"] == "cash" else "1010")
+            credit_account = account_by_code(request, "4000")
+            entry = post_two_line_entry(
+                request,
+                entry_date=values["payment_date"] or timezone.localdate(),
+                memo=f"Payment received from {values['payer_name']}",
+                source="payment_received",
+                debit_account=debit_account,
+                credit_account=credit_account,
+                amount=amount,
+                description=values["reference"] or values["notes"],
+            )
+            receipt = PaymentReceipt.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                invoice=invoice,
+                journal_entry=entry,
+                payment_date=values["payment_date"] or timezone.localdate(),
+                payer_name=values["payer_name"],
+                amount=amount,
+                method=values["method"] if values["method"] in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank",
+                reference=values["reference"],
+                notes=values["notes"],
+            )
+            if receipt.invoice:
+                receipt.invoice.status = "paid"
+                receipt.invoice.save(update_fields=["status", "updated_at"])
+            return redirect("/dashboard/#receipts")
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    invoice_hidden = f'<input type="hidden" name="invoice_id" value="{invoice.id}" />' if invoice else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">Accounts receivable</p>
+        <h1>Record payment received</h1>
+        <p class="account-copy">Use this when a customer pays an invoice or sends money for completed service work. RozLedger posts a balanced income entry and marks the linked invoice paid.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          {invoice_hidden}
+          <label>Date<input name="payment_date" type="date" value="{escape(values['payment_date'])}" required /></label>
+          <label>Payer name<input name="payer_name" value="{escape(values['payer_name'])}" placeholder="Client or customer name" required /></label>
+          <label>Amount<input name="amount" type="number" min="0.01" step="0.01" value="{escape(values['amount'])}" required /></label>
+          <label>Method<select name="method">{payment_method_options(values['method'])}</select></label>
+          <label>Reference<input name="reference" value="{escape(values['reference'])}" placeholder="UPI ref, check no, Stripe payment ID" /></label>
+          <label>Notes<input name="notes" value="{escape(values['notes'])}" placeholder="Optional note" /></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post payment received</button>
+            <a class="button secondary" href="/dashboard/#receipts">Back to dashboard</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Record payment received", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def expense_new(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    expense_accounts = list(Account.objects.filter(account_q(request), is_active=True, account_type="expense"))
+    values = {
+        "bill_date": f"{timezone.localdate():%Y-%m-%d}",
+        "due_date": "",
+        "vendor_name": "",
+        "category": "Office expenses",
+        "expense_account": str(next((account.id for account in expense_accounts if account.code == "5100"), expense_accounts[0].id if expense_accounts else "")),
+        "amount": "",
+        "status": "paid",
+        "payment_method": "bank",
+        "reference": "",
+        "notes": "",
+    }
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        amount = decimal_value(values["amount"])
+        expense_account = next((account for account in expense_accounts if str(account.id) == values["expense_account"]), None)
+        status = values["status"] if values["status"] in {"paid", "unpaid"} else "paid"
+        if not values["vendor_name"]:
+            error = "Vendor name is required."
+        elif amount <= 0:
+            error = "Expense amount must be greater than zero."
+        elif expense_account is None:
+            error = "Choose an expense account."
+        else:
+            credit_account = account_by_code(request, "2000" if status == "unpaid" else ("1000" if values["payment_method"] == "cash" else "1010"))
+            entry = post_two_line_entry(
+                request,
+                entry_date=values["bill_date"] or timezone.localdate(),
+                memo=f"{'Vendor bill' if status == 'unpaid' else 'Expense paid'} - {values['vendor_name']}",
+                source="vendor_bill" if status == "unpaid" else "expense_paid",
+                debit_account=expense_account,
+                credit_account=credit_account,
+                amount=amount,
+                description=values["reference"] or values["notes"],
+            )
+            VendorBill.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                journal_entry=entry,
+                bill_date=values["bill_date"] or timezone.localdate(),
+                due_date=values["due_date"] or None,
+                vendor_name=values["vendor_name"],
+                category=values["category"] or expense_account.name,
+                amount=amount,
+                status=status,
+                payment_method=values["payment_method"] if values["payment_method"] in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank",
+                reference=values["reference"],
+                notes=values["notes"],
+            )
+            return redirect("/dashboard/#payables")
+
+    status_options = "".join(f'<option value="{value}" {"selected" if values["status"] == value else ""}>{label}</option>' for value, label in [("paid", "Paid now"), ("unpaid", "Unpaid vendor bill")])
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">Accounts payable</p>
+        <h1>Record expense or vendor bill</h1>
+        <p class="account-copy">Use this for paid expenses and unpaid supplier bills. Paid expenses reduce bank or cash; unpaid bills increase accounts payable.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Bill date<input name="bill_date" type="date" value="{escape(values['bill_date'])}" required /></label>
+          <label>Due date<input name="due_date" type="date" value="{escape(values['due_date'])}" /></label>
+          <label>Vendor name<input name="vendor_name" value="{escape(values['vendor_name'])}" placeholder="Supplier or vendor" required /></label>
+          <label>Category<input name="category" value="{escape(values['category'])}" placeholder="Office expenses" /></label>
+          <label>Expense account<select name="expense_account">{account_options(expense_accounts, values['expense_account'])}</select></label>
+          <label>Amount<input name="amount" type="number" min="0.01" step="0.01" value="{escape(values['amount'])}" required /></label>
+          <label>Status<select name="status">{status_options}</select></label>
+          <label>Payment method<select name="payment_method">{payment_method_options(values['payment_method'])}</select></label>
+          <label>Reference<input name="reference" value="{escape(values['reference'])}" placeholder="Bill number, payment ref or receipt number" /></label>
+          <label>Notes<input name="notes" value="{escape(values['notes'])}" placeholder="Optional note" /></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post expense or bill</button>
+            <a class="button secondary" href="/dashboard/#payables">Back to dashboard</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Record expense or bill", body, request)
 
 
 @login_required

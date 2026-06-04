@@ -74,6 +74,22 @@ NORMAL_BALANCE_CHOICES = [
     ("credit", "Credit"),
 ]
 
+PAYMENT_METHOD_CHOICES = [
+    ("bank", "Bank transfer"),
+    ("cash", "Cash"),
+    ("upi", "UPI"),
+    ("card", "Card"),
+    ("check", "Check"),
+    ("paypal", "PayPal"),
+    ("stripe", "Stripe"),
+    ("other", "Other"),
+]
+
+BILL_STATUS_CHOICES = [
+    ("unpaid", "Unpaid"),
+    ("paid", "Paid"),
+]
+
 
 class Lead(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
@@ -285,6 +301,62 @@ class JournalLine(models.Model):
         amount = self.debit if self.debit else self.credit
         side = "Dr" if self.debit else "Cr"
         return f"{self.account.code} {side} {amount}"
+
+
+class PaymentReceipt(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="payment_receipts",
+    )
+    owner_email = models.EmailField(db_index=True)
+    invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL, related_name="payments")
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="payment_receipts")
+    payment_date = models.DateField(default=timezone.localdate)
+    payer_name = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="bank")
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-payment_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.payer_name} - {self.amount}"
+
+
+class VendorBill(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="vendor_bills",
+    )
+    owner_email = models.EmailField(db_index=True)
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="vendor_bills")
+    bill_date = models.DateField(default=timezone.localdate)
+    due_date = models.DateField(null=True, blank=True)
+    vendor_name = models.CharField(max_length=180)
+    category = models.CharField(max_length=180, default="Office expenses")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=20, choices=BILL_STATUS_CHOICES, default="unpaid", db_index=True)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="bank")
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-bill_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.vendor_name} - {self.amount}"
 
 
 class PlanSubscription(models.Model):
