@@ -607,6 +607,36 @@ class AccountWorkflowTests(TestCase):
         self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1100", name="Accounts receivable").exists())
         self.assertTrue(Account.objects.filter(owner=user, market="US", code="1100", name="Accounts receivable").exists())
 
+    def test_customer_can_create_business_profile_before_invoice(self):
+        user = User.objects.create_user("profile@example.com", "profile@example.com", "password-123456", first_name="Profile Owner")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("business_profile"),
+            {
+                "business_name": "Profile Business",
+                "business_phone": "+91 95160 22222",
+                "business_address": "Profile Street\nKochi",
+                "gstin": "32ABCDE1234F1Z5",
+                "upi_link": "upi://pay?pa=profile@upi",
+                "bank_details": "Profile Bank\nIFSC: PROF0001",
+                "thank_you_note": "Thanks from profile.",
+                "template": "service",
+                "accent_color": "#285c9f",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        profile = BusinessProfile.objects.get(owner=user, market="IN")
+        self.assertEqual(profile.business_name, "Profile Business")
+        self.assertEqual(profile.gstin, "32ABCDE1234F1Z5")
+        self.assertEqual(profile.template, "service")
+        invoice_form = self.client.get(reverse("invoice_new"), HTTP_HOST="rozledger.in")
+        self.assertContains(invoice_form, 'value="Profile Business"')
+        self.assertContains(invoice_form, "Profile Street")
+        self.assertContains(invoice_form, "Profile Bank")
+
     def test_customer_can_add_custom_account(self):
         user = User.objects.create_user("account@example.com", "account@example.com", "password-123456")
         self.client.force_login(user)

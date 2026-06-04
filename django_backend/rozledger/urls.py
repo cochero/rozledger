@@ -30,6 +30,7 @@ urlpatterns = [
     path("accounts/password-reset/", views.password_reset_view, name="password_reset"),
     path("accounts/reset/<str:uidb64>/<str:token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
     path("dashboard/", views.dashboard, name="dashboard"),
+    path("dashboard/business-profile/", views.business_profile, name="business_profile"),
     path("dashboard/clients/", views.create_client, name="create_client"),
     path("dashboard/accounting/accounts/", views.create_account, name="create_account"),
     path("dashboard/accounting/journal/new/", views.journal_new, name="journal_new"),

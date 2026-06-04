@@ -614,6 +614,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
         ("/dashboard/reports/", "P", "Reports"),
+        ("/dashboard/business-profile/", "S", "Business profile"),
         ("/dashboard/#invoices", "C", "Customers"),
         ("/dashboard/#accounting", "A", "Chart of accounts"),
         ("/dashboard/billing/pro/", "B", "Billing"),
@@ -1056,6 +1057,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         notice = '<p class="dashboard-notice">Your Pro activation request was saved. Admin approval is pending.</p>'
     if request.GET.get("invoice") == "created":
         notice += '<p class="dashboard-notice">Invoice saved. It is now available in your dashboard.</p>'
+    if request.GET.get("profile") == "saved":
+        notice += '<p class="dashboard-notice">Business profile saved. New invoices will use these defaults.</p>'
     paid_count = Invoice.objects.filter(account_q(request), status="paid").count()
     pending_count = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
     accounts = Account.objects.filter(account_q(request), is_active=True)[:30]
@@ -1142,6 +1145,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             <p>{escape(business_profile.business_address or 'No address saved yet').replace(chr(10), '<br />')}</p>
             {f'<p>{escape(business_profile.bank_details).replace(chr(10), "<br />")}</p>' if business_profile.bank_details else ''}
           </div>
+          <div class="dashboard-actions">
+            <a class="button secondary" href="/dashboard/business-profile/">Edit profile</a>
+          </div>
         </article>
         """
     else:
@@ -1149,7 +1155,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <article class="dashboard-card empty-state compact-card">
           <span>Business profile</span>
           <h2>No business profile yet</h2>
-          <p>Create an invoice once and RozLedger will save your company details for the next invoice.</p>
+          <p>Create your profile now so invoices, payment notes, bank information and branding are ready before billing customers.</p>
+          <a class="button secondary" href="/dashboard/business-profile/">Create profile</a>
         </article>
         """
 
@@ -1286,6 +1293,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <a class="module-tile" href="/dashboard/payments/new/"><span>02</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
         <a class="module-tile" href="/dashboard/expenses/new/"><span>03</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
         <a class="module-tile" href="/dashboard/reports/"><span>04</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
+        <a class="module-tile" href="/dashboard/business-profile/"><span>05</span><strong>Business profile</strong><p>Save company details, tax ID, bank info and invoice branding.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -1442,6 +1450,91 @@ def create_client(request: HttpRequest) -> HttpResponse:
         },
     )
     return redirect("/dashboard/")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def business_profile(request: HttpRequest) -> HttpResponse:
+    profile = get_business_profile(request)
+    us_market = is_us_host(request)
+    tax_label = "Tax ID" if us_market else "GSTIN"
+    payment_label = "Payment link" if us_market else "UPI/payment link"
+    payment_placeholder = "Stripe, Square, PayPal, Venmo, Cash App or payment note" if us_market else "UPI link or payment note"
+    values = {
+        "business_name": profile.business_name if profile else request.user.first_name or "",
+        "business_phone": profile.business_phone if profile else "",
+        "business_address": profile.business_address if profile else "",
+        "gstin": profile.gstin if profile else "",
+        "upi_link": profile.upi_link if profile else "",
+        "bank_details": profile.bank_details if profile else "",
+        "thank_you_note": profile.thank_you_note if profile else "Thank you for your business.",
+        "template": profile.template if profile else "classic",
+        "accent_color": profile.accent_color if profile else "#126b4f",
+    }
+    error = ""
+    if request.method == "POST":
+        values = {
+            "business_name": clean_text(request.POST.get("business_name"), max_length=180),
+            "business_phone": clean_text(request.POST.get("business_phone"), max_length=40),
+            "business_address": clean_text(request.POST.get("business_address")),
+            "gstin": clean_text(request.POST.get("gstin"), max_length=20).upper(),
+            "upi_link": clean_text(request.POST.get("upi_link")),
+            "bank_details": clean_text(request.POST.get("bank_details")),
+            "thank_you_note": clean_text(request.POST.get("thank_you_note")),
+            "template": clean_invoice_template(request.POST.get("template")),
+            "accent_color": clean_accent_color(request.POST.get("accent_color")),
+        }
+        logo_upload = request.FILES.get("business_logo")
+        logo_error = valid_logo_upload(logo_upload)
+        if not values["business_name"]:
+            error = "Business name is required."
+        elif logo_error:
+            error = logo_error
+        else:
+            profile, _created = BusinessProfile.objects.update_or_create(
+                market=current_market(request),
+                owner_email=current_account_email(request),
+                defaults={
+                    "owner": request.user,
+                    **values,
+                },
+            )
+            if logo_upload:
+                profile.business_logo = logo_upload
+                profile.save(update_fields=["business_logo", "updated_at"])
+            return redirect("/dashboard/?profile=saved")
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    logo_hint = "Current logo is saved. Upload a new file to replace it." if profile and profile.business_logo else "Optional PNG, JPG, WebP or GIF logo."
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Settings</p>
+        <h1>Business profile</h1>
+        <p class="account-copy">Save your company details once. RozLedger will use this profile to pre-fill invoices, payment notes, bank details and invoice styling.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form" enctype="multipart/form-data">
+          {csrf_input(request)}
+          <label>Business name<input name="business_name" value="{escape(values['business_name'])}" placeholder="Your company or trade name" required /></label>
+          <label>Business phone<input name="business_phone" value="{escape(values['business_phone'])}" placeholder="Phone or WhatsApp number" /></label>
+          <label class="full-row">Business full address<textarea name="business_address" rows="3" placeholder="Registered or billing address">{escape(values['business_address'])}</textarea></label>
+          <label>{tax_label}<input name="gstin" value="{escape(values['gstin'])}" placeholder="Optional {tax_label}" /></label>
+          <label>{payment_label}<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="{escape(payment_placeholder)}" /></label>
+          <label class="full-row">Bank information<textarea name="bank_details" rows="4" placeholder="Bank name, account number, routing/IFSC, account holder">{escape(values['bank_details'])}</textarea></label>
+          <label class="full-row">Default thank you note<textarea name="thank_you_note" rows="3" placeholder="Thank you for your business.">{escape(values['thank_you_note'])}</textarea></label>
+          <label>Default invoice template<select name="template">{invoice_template_options(values['template'])}</select></label>
+          <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" /></label>
+          <label class="full-row">Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+          <p class="form-hint full-row">{escape(logo_hint)}</p>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Save business profile</button>
+            <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Business profile", body, request)
 
 
 @login_required
