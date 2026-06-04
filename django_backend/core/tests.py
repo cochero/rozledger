@@ -148,8 +148,10 @@ class AccountWorkflowTests(TestCase):
                     "template": "executive",
                     "accent_color": "#334155",
                     "business_name": "Owner Business",
+                    "business_phone": "+91 95160 22222",
                     "business_address": "Owner Street\nKochi",
                     "client_name": "Alpha Client",
+                    "client_phone": "+91 90000 11111",
                     "client_address": "Client Road\nMumbai",
                     "client_gstin": "32ABCDE1234F1Z5",
                     "service_name": "Monthly service",
@@ -173,17 +175,24 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.owner_email, "owner@example.com")
         self.assertEqual(invoice.template, "executive")
         self.assertEqual(invoice.accent_color, "#334155")
+        self.assertEqual(invoice.business_phone, "+91 95160 22222")
         self.assertEqual(invoice.business_address, "Owner Street\nKochi")
+        self.assertEqual(invoice.client_phone, "+91 90000 11111")
         self.assertEqual(invoice.client_gstin, "32ABCDE1234F1Z5")
         self.assertEqual(invoice.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
         saved_client = SavedClient.objects.get(owner=user, owner_email="owner@example.com")
+        self.assertEqual(saved_client.phone, "+91 90000 11111")
         self.assertEqual(saved_client.address, "Client Road\nMumbai")
         self.assertEqual(saved_client.gstin, "32ABCDE1234F1Z5")
         business_profile = BusinessProfile.objects.get(owner=user, owner_email="owner@example.com")
         self.assertEqual(business_profile.business_name, "Owner Business")
+        self.assertEqual(business_profile.business_phone, "+91 95160 22222")
         self.assertEqual(business_profile.business_address, "Owner Street\nKochi")
         self.assertEqual(business_profile.bank_details, "Bank: Test Bank\nIFSC: TEST0001")
 
+        print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
+        self.assertContains(print_response, "Phone: +91 95160 22222")
+        self.assertContains(print_response, "Phone: +91 90000 11111")
         pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
         self.assertEqual(pdf_response.status_code, 200)
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
@@ -315,8 +324,10 @@ class AccountWorkflowTests(TestCase):
                 "business_name": "Form Business",
                 "template": "modern",
                 "accent_color": "#7c3aed",
+                "business_phone": "+91 95160 22222",
                 "business_address": "Form Address",
                 "client_name": "Form Client",
+                "client_phone": "+91 90000 22222",
                 "client_address": "Client Address",
                 "client_gstin": "32ABCDE1234F1Z5",
                 "service_name": "Form Service",
@@ -343,15 +354,19 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.accent_color, "#7c3aed")
         self.assertEqual(invoice.total_text, "₹ 2360.00")
         self.assertTrue(invoice.include_gst)
+        self.assertEqual(invoice.business_phone, "+91 95160 22222")
+        self.assertEqual(invoice.client_phone, "+91 90000 22222")
         self.assertEqual(invoice.client_address, "Client Address")
         self.assertEqual(invoice.thank_you_note, "Thanks from form.")
         self.assertIn("Form Service", invoice.invoice_text)
         self.assertTrue(invoice.business_logo.name)
         saved_client = SavedClient.objects.get(owner=user, owner_email="form-owner@example.com")
+        self.assertEqual(saved_client.phone, "+91 90000 22222")
         self.assertEqual(saved_client.address, "Client Address")
         self.assertEqual(saved_client.gstin, "32ABCDE1234F1Z5")
         business_profile = BusinessProfile.objects.get(owner=user, owner_email="form-owner@example.com")
         self.assertEqual(business_profile.business_name, "Form Business")
+        self.assertEqual(business_profile.business_phone, "+91 95160 22222")
         self.assertEqual(business_profile.business_address, "Form Address")
         self.assertEqual(business_profile.bank_details, "Form Bank")
         self.assertTrue(business_profile.business_logo.name)
@@ -365,6 +380,8 @@ class AccountWorkflowTests(TestCase):
         print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
         self.assertContains(print_response, "invoice-template-modern")
         self.assertContains(print_response, "--invoice-accent: #7c3aed")
+        self.assertContains(print_response, "Phone: +91 95160 22222")
+        self.assertContains(print_response, "Phone: +91 90000 22222")
 
     def test_dashboard_invoice_form_creates_without_gst(self):
         user = User.objects.create_user("nogst@example.com", "nogst@example.com", "strong-password-123")

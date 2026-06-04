@@ -94,8 +94,10 @@ function attributionPayload(source) {
 function invoicePayload() {
   return {
     business_name: byId("bizName").value.trim(),
+    business_phone: byId("bizPhone").value.trim(),
     owner_email: byId("ownerEmail").value.trim(),
     client_name: byId("clientName").value.trim(),
+    client_phone: byId("clientPhone").value.trim(),
     service_name: byId("serviceName").value.trim(),
     amount_before_gst: Number(byId("amount").value) || 0,
     gst_rate: Number(byId("gstRate").value) || 0,
@@ -161,7 +163,9 @@ async function copyText(text, button) {
 
 function updateInvoice() {
   const business = byId("bizName").value.trim() || "Your business";
+  const businessPhone = byId("bizPhone").value.trim();
   const client = byId("clientName").value.trim() || "Client";
+  const clientPhone = byId("clientPhone").value.trim();
   const service = byId("serviceName").value.trim() || "Professional service";
   const amount = Number(byId("amount").value) || 0;
   const gstRate = Number(byId("gstRate").value) || 0;
@@ -185,7 +189,9 @@ function updateInvoice() {
 
   byId("invoiceText").value = [
     `Invoice from ${business}`,
+    businessPhone ? `Business phone: ${businessPhone}` : "",
     `Bill to: ${client}`,
+    clientPhone ? `Client phone: ${clientPhone}` : "",
     `Service: ${service}`,
     `Amount: ${money(amount)}`,
     `${config.taxLabel} (${gstRate}%): ${money(gst)}`,
@@ -193,7 +199,7 @@ function updateInvoice() {
     `Due date: ${byId("dueDate").textContent}`,
     "",
     config.paymentConfirmation,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   updateUpi();
   updateTarget();
@@ -260,7 +266,9 @@ if (hasTool) {
 
   [
     "bizName",
+    "bizPhone",
     "clientName",
+    "clientPhone",
     "serviceName",
     "amount",
     "gstRate",

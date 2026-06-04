@@ -128,6 +128,7 @@ def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
     defaults = {
         "owner": owner or invoice.owner,
         "business_name": invoice.business_name,
+        "business_phone": invoice.business_phone,
         "business_address": invoice.business_address,
         "upi_link": invoice.upi_link,
         "bank_details": invoice.bank_details,
@@ -148,6 +149,7 @@ def save_client_from_invoice(invoice: Invoice, owner=None) -> None:
         name=invoice.client_name,
         defaults={
             "owner": owner or invoice.owner,
+            "phone": invoice.client_phone,
             "address": invoice.client_address,
             "gstin": invoice.client_gstin,
         },
@@ -210,7 +212,9 @@ def build_invoice_text(invoice: Invoice) -> str:
         [
             f"Invoice from {invoice.business_name}",
             invoice.business_address,
+            f"Phone: {invoice.business_phone}" if invoice.business_phone else "",
             f"Client: {invoice.client_name}",
+            f"Client phone: {invoice.client_phone}" if invoice.client_phone else "",
             invoice.client_address,
             f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin else "",
             f"Service: {invoice.service_name}",
@@ -899,6 +903,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <div>
             <span>Business profile</span>
             <h2>{escape(business_profile.business_name)}</h2>
+            {f'<p>Phone: {escape(business_profile.business_phone)}</p>' if business_profile.business_phone else ''}
             <p>{escape(business_profile.business_address or 'No address saved yet').replace(chr(10), '<br />')}</p>
             {f'<p>{escape(business_profile.bank_details).replace(chr(10), "<br />")}</p>' if business_profile.bank_details else ''}
           </div>
@@ -1058,8 +1063,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         "template": profile.template if profile else "classic",
         "accent_color": profile.accent_color if profile else "#126b4f",
         "business_name": profile.business_name if profile else request.user.first_name or "Your business",
+        "business_phone": profile.business_phone if profile else "",
         "business_address": profile.business_address if profile else "",
         "client_name": "",
+        "client_phone": "",
         "client_address": "",
         "client_gstin": "",
         "service_name": "",
@@ -1101,8 +1108,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     template=values["template"],
                     accent_color=values["accent_color"],
                     business_name=values["business_name"],
+                    business_phone=values["business_phone"],
                     business_address=values["business_address"],
                     client_name=values["client_name"],
+                    client_phone=values["client_phone"],
                     client_address=values["client_address"],
                     client_gstin=values["client_gstin"].upper(),
                     service_name=values["service_name"],
@@ -1142,8 +1151,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
           <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" /></label>
           <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required /></label>
           <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+          <label>Business phone<input name="business_phone" value="{escape(values['business_phone'])}" placeholder="Optional" /></label>
           <label>Business full address<textarea name="business_address" rows="3">{escape(values['business_address'])}</textarea></label>
           <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required /></label>
+          <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(values['client_address'])}</textarea></label>
           <label>Client GSTIN<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" /></label>
           <label>Service<input name="service_name" value="{escape(values['service_name'])}" required /></label>
@@ -1188,8 +1199,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.template = clean_invoice_template(request.POST.get("template"))
             invoice.accent_color = clean_accent_color(request.POST.get("accent_color"))
             invoice.business_name = clean_text(request.POST.get("business_name"), invoice.business_name, 180)
+            invoice.business_phone = clean_text(request.POST.get("business_phone"), max_length=40)
             invoice.business_address = clean_text(request.POST.get("business_address"))
             invoice.client_name = clean_text(request.POST.get("client_name"), invoice.client_name, 180)
+            invoice.client_phone = clean_text(request.POST.get("client_phone"), max_length=40)
             invoice.client_address = clean_text(request.POST.get("client_address"))
             invoice.client_gstin = clean_text(request.POST.get("client_gstin"), max_length=20).upper()
             invoice.service_name = clean_text(request.POST.get("service_name"), invoice.service_name, 240)
@@ -1232,8 +1245,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
           <label>Business name<input name="business_name" value="{escape(invoice.business_name)}" /></label>
           <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
           {f'<p class="form-hint">Current logo is attached. Upload a new file to replace it.</p>' if invoice.business_logo else ''}
+          <label>Business phone<input name="business_phone" value="{escape(invoice.business_phone)}" placeholder="Optional" /></label>
           <label>Business full address<textarea name="business_address" rows="3">{escape(invoice.business_address)}</textarea></label>
           <label>Client name<input name="client_name" value="{escape(invoice.client_name)}" /></label>
+          <label>Client phone<input name="client_phone" value="{escape(invoice.client_phone)}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(invoice.client_address)}</textarea></label>
           <label>Client GSTIN<input name="client_gstin" value="{escape(invoice.client_gstin)}" /></label>
           <label>Service<input name="service_name" value="{escape(invoice.service_name)}" /></label>
@@ -1411,6 +1426,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           <div>
             <p class="invoice-kicker">Tax invoice</p>
             <h1>{escape(invoice.business_name)}</h1>
+            {f'<p class="invoice-contact-line">Phone: {escape(invoice.business_phone)}</p>' if invoice.business_phone else ''}
             <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
           </div>
         </div>
@@ -1428,11 +1444,13 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
         <article>
           <span>Seller</span>
           <strong>{escape(invoice.business_name)}</strong>
+          {f'<p class="invoice-contact-line">Phone: {escape(invoice.business_phone)}</p>' if invoice.business_phone else ''}
           <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
         </article>
         <article>
           <span>Bill to</span>
           <strong>{escape(invoice.client_name)}</strong>
+          {f'<p class="invoice-contact-line">Phone: {escape(invoice.client_phone)}</p>' if invoice.client_phone else ''}
           <p>{escape(invoice.client_address).replace(chr(10), '<br />')}</p>
           {f'<p>GSTIN: {escape(invoice.client_gstin)}</p>' if invoice.client_gstin else ''}
         </article>
@@ -1574,6 +1592,8 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         Spacer(1, 18),
     ]
     header_items = [Paragraph("TAX INVOICE", title_style), Paragraph(escape(invoice.business_name), heading_style)]
+    if invoice.business_phone:
+        header_items.append(para(f"Phone: {invoice.business_phone}", small_style))
     if invoice.business_address:
         header_items.append(para(invoice.business_address, small_style))
     meta_table = Table(
@@ -1621,8 +1641,8 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
             [
                 [Paragraph("Bill to", label_style), Paragraph("Seller", label_style)],
                 [
-                    para("\n".join(part for part in [invoice.client_name, invoice.client_address, f"GSTIN: {invoice.client_gstin}" if invoice.client_gstin else ""] if part)),
-                    para("\n".join(part for part in [invoice.business_name, invoice.business_address] if part)),
+                    para("\n".join(part for part in [invoice.client_name, f"Phone: {invoice.client_phone}" if invoice.client_phone else "", invoice.client_address, f"GSTIN: {invoice.client_gstin}" if invoice.client_gstin else ""] if part)),
+                    para("\n".join(part for part in [invoice.business_name, f"Phone: {invoice.business_phone}" if invoice.business_phone else "", invoice.business_address] if part)),
                 ],
             ],
             colWidths=[240, 240],
@@ -1955,8 +1975,10 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         template=clean_invoice_template(payload.get("template")),
         accent_color=clean_accent_color(payload.get("accent_color")),
         business_name=clean_text(payload.get("business_name"), "Your business", 180),
+        business_phone=clean_text(payload.get("business_phone"), max_length=40),
         business_address=clean_text(payload.get("business_address")),
         client_name=clean_text(payload.get("client_name"), "Client", 180),
+        client_phone=clean_text(payload.get("client_phone"), max_length=40),
         client_address=clean_text(payload.get("client_address")),
         client_gstin=clean_text(payload.get("client_gstin"), max_length=20).upper(),
         service_name=clean_text(payload.get("service_name"), "Service", 240),

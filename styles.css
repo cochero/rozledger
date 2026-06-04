@@ -1150,6 +1150,14 @@ textarea {
   line-height: 1.55;
 }
 
+.invoice-brand-block .invoice-contact-line,
+.invoice-address-grid .invoice-contact-line {
+  margin: 4px 0;
+  color: #2f3d39;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .invoice-kicker,
 .invoice-number-card span,
 .invoice-address-grid span,

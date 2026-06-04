@@ -40,17 +40,19 @@ class LeadAdmin(admin.ModelAdmin):
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
         "business_name",
+        "business_phone",
         "owner",
         "owner_email",
         "status",
         "client_name",
+        "client_phone",
         "amount_before_gst",
         "gst_rate",
         "total_text",
         "created_at",
     )
     readonly_fields = ("public_token", "created_at")
-    search_fields = ("business_name", "owner__username", "owner__email", "owner_email", "client_name", "service_name", "public_token")
+    search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "client_name", "client_phone", "service_name", "public_token")
     list_filter = ("status", "gst_rate", "created_at")
 
 
@@ -63,8 +65,8 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(BusinessProfile)
 class BusinessProfileAdmin(admin.ModelAdmin):
-    list_display = ("business_name", "owner", "owner_email", "gstin", "updated_at")
-    search_fields = ("business_name", "owner__username", "owner__email", "owner_email", "business_address", "gstin")
+    list_display = ("business_name", "owner", "owner_email", "business_phone", "gstin", "updated_at")
+    search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "business_address", "gstin")
     list_filter = ("updated_at", "created_at")
 
 
