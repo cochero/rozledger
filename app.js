@@ -281,6 +281,11 @@ if (hasTool) {
 
   byId("saveInvoice").addEventListener("click", async () => {
     const payload = invoicePayload();
+    if (!payload.owner_email) {
+      showStatus("invoiceStatus", "Enter your email or create an account to save invoices.", true);
+      byId("ownerEmail").focus();
+      return;
+    }
 
     try {
       const result = await postJson("/api/invoices", payload);

@@ -39,7 +39,9 @@ SPAM_TEXT_RE = re.compile(
 )
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
-RUPEE_SYMBOL = "₹"
+RUPEE_SYMBOL = "\u20b9"
+FREE_MONTHLY_INVOICE_LIMIT = 5
+PAID_MONTHLY_INVOICE_LIMIT = 100
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -80,6 +82,39 @@ def get_subscription(request: HttpRequest) -> PlanSubscription:
         subscription.owner = request.user
         subscription.save(update_fields=["owner", "updated_at"])
     return subscription
+
+
+def subscription_for_email(email: str) -> PlanSubscription | None:
+    if not email:
+        return None
+    return PlanSubscription.objects.filter(owner_email__iexact=email).first()
+
+
+def invoice_month_range():
+    now = timezone.localtime()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
+
+
+def invoice_quota_for_email(email: str) -> tuple[int, int, str]:
+    subscription = subscription_for_email(email)
+    limit = PAID_MONTHLY_INVOICE_LIMIT if subscription and subscription.is_pro_active else FREE_MONTHLY_INVOICE_LIMIT
+    plan_name = "paid" if subscription and subscription.is_pro_active else "free"
+    start, end = invoice_month_range()
+    used = Invoice.objects.filter(owner_email__iexact=email, created_at__gte=start, created_at__lt=end).count()
+    return used, limit, plan_name
+
+
+def invoice_quota_message(used: int, limit: int, plan_name: str) -> str:
+    if used >= limit:
+        if plan_name == "paid":
+            return f"Your paid plan allows {limit} invoices per month. Contact support if you need a higher limit."
+        return f"Free plan allows {limit} invoices per month. Upgrade to create up to {PAID_MONTHLY_INVOICE_LIMIT} invoices per month."
+    return f"{used}/{limit} invoices used this month on your {plan_name} plan."
 
 
 def get_business_profile(request: HttpRequest) -> BusinessProfile | None:
@@ -353,6 +388,11 @@ def absolute_url(request: HttpRequest, path: str) -> str:
     return request.build_absolute_uri(path)
 
 
+def market_price(request: HttpRequest) -> str:
+    host = request.get_host().split(":", 1)[0].lower()
+    return "$3.99/month" if host in {"rozledger.com", "www.rozledger.com"} else f"{RUPEE_SYMBOL}299/month"
+
+
 def whatsapp_url(message: str) -> str:
     return f"https://wa.me/919516022222?text={quote_plus(message)}"
 
@@ -371,8 +411,8 @@ def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, 
     if subscription.is_pro_active:
         expiry_copy = f" Trial expires on {subscription.expires_at:%d %b %Y}." if subscription.expires_at else ""
         return (
-            "Pro active",
-            f"Your RozLedger Pro access is active. You can use saved clients, invoice history, PDF downloads and payment status tracking.{expiry_copy}",
+            "Paid plan active",
+            f"Your RozLedger paid access is active. You can create up to {PAID_MONTHLY_INVOICE_LIMIT} invoices per month with saved clients, PDF downloads and payment status tracking.{expiry_copy}",
             "active",
         )
     if subscription.plan == "pro" and subscription.status == "active" and subscription.expires_at and subscription.expires_at <= timezone.now():
@@ -401,7 +441,7 @@ def subscription_status_copy(subscription: PlanSubscription) -> tuple[str, str, 
         )
     return (
         "Free plan",
-        "You are using the free RozLedger tools. Request Pro when you need saved clients, invoice history and payment tracking.",
+        f"You are using the free RozLedger plan with up to {FREE_MONTHLY_INVOICE_LIMIT} saved invoices per month. Upgrade when you need up to {PAID_MONTHLY_INVOICE_LIMIT} invoices per month.",
         "free",
     )
 
@@ -743,6 +783,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     clients = Client.objects.filter(account_q(request))[:20]
     business_profile = get_business_profile(request)
     subscription = get_subscription(request)
+    quota_used, quota_limit, quota_plan = invoice_quota_for_email(email)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
     subscription_title, subscription_message, subscription_tone = subscription_status_copy(subscription)
     gateway_message = (
@@ -887,6 +928,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Paid invoices</span><strong>{paid_count}</strong></div>
         <div><span>Saved clients</span><strong>{Client.objects.filter(account_q(request)).count()}</strong></div>
         <div><span>Plan</span><strong>{escape(subscription_title)}</strong></div>
+        <div><span>Monthly invoices</span><strong>{quota_used}/{quota_limit}</strong></div>
       </section>
       <section class="dashboard-section">
         <div class="section-head">
@@ -1020,38 +1062,42 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         elif logo_error:
             error = logo_error
         else:
-            invoice = Invoice.objects.create(
-                owner=request.user,
-                owner_email=current_account_email(request),
-                template=values["template"],
-                accent_color=values["accent_color"],
-                business_name=values["business_name"],
-                business_address=values["business_address"],
-                client_name=values["client_name"],
-                client_address=values["client_address"],
-                client_gstin=values["client_gstin"].upper(),
-                service_name=values["service_name"],
-                include_gst=include_gst,
-                amount_before_gst=amount_before_gst,
-                gst_rate=gst_rate,
-                tax_label="GST",
-                currency_symbol=RUPEE_SYMBOL,
-                due_days=due_days,
-                total_text=invoice_total_text(amount_before_gst, gst_rate, include_gst),
-                upi_link=values["upi_link"],
-                bank_details=values["bank_details"],
-                thank_you_note=values["thank_you_note"],
-                invoice_text="",
-            )
-            if logo_upload:
-                invoice.business_logo = logo_upload
-            elif profile and profile.business_logo:
-                invoice.business_logo = profile.business_logo
-            invoice.invoice_text = build_invoice_text(invoice)
-            invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
-            save_business_profile_from_invoice(invoice, request.user)
-            save_client_from_invoice(invoice, request.user)
-            return redirect(f"/dashboard/?invoice=created#invoices")
+            quota_used, quota_limit, quota_plan = invoice_quota_for_email(current_account_email(request))
+            if quota_used >= quota_limit:
+                error = invoice_quota_message(quota_used, quota_limit, quota_plan)
+            else:
+                invoice = Invoice.objects.create(
+                    owner=request.user,
+                    owner_email=current_account_email(request),
+                    template=values["template"],
+                    accent_color=values["accent_color"],
+                    business_name=values["business_name"],
+                    business_address=values["business_address"],
+                    client_name=values["client_name"],
+                    client_address=values["client_address"],
+                    client_gstin=values["client_gstin"].upper(),
+                    service_name=values["service_name"],
+                    include_gst=include_gst,
+                    amount_before_gst=amount_before_gst,
+                    gst_rate=gst_rate,
+                    tax_label="GST",
+                    currency_symbol=RUPEE_SYMBOL,
+                    due_days=due_days,
+                    total_text=invoice_total_text(amount_before_gst, gst_rate, include_gst),
+                    upi_link=values["upi_link"],
+                    bank_details=values["bank_details"],
+                    thank_you_note=values["thank_you_note"],
+                    invoice_text="",
+                )
+                if logo_upload:
+                    invoice.business_logo = logo_upload
+                elif profile and profile.business_logo:
+                    invoice.business_logo = profile.business_logo
+                invoice.invoice_text = build_invoice_text(invoice)
+                invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
+                save_business_profile_from_invoice(invoice, request.user)
+                save_client_from_invoice(invoice, request.user)
+                return redirect(f"/dashboard/?invoice=created#invoices")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     body = f"""
@@ -1215,6 +1261,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
     subscription = get_subscription(request)
     title, message, tone = subscription_status_copy(subscription)
     payment_gateway = PaymentGatewayConfig.active_razorpay()
+    paid_price = market_price(request)
     gateway_message = (
         f"Razorpay {payment_gateway.get_mode_display()} mode is configured, but manual admin approval is still kept as a control step."
         if payment_gateway
@@ -1237,7 +1284,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
       <section class="account-card">
         <p class="eyebrow">RozLedger Pro</p>
         <h1>Pro activation workflow</h1>
-        <p class="account-copy">Request Pro from this page. The RozLedger admin can then approve your account from Django admin. Payment checkout can be attached after Razorpay approval.</p>
+        <p class="account-copy">Free accounts can save {FREE_MONTHLY_INVOICE_LIMIT} invoices per month. Paid access is {escape(paid_price)} and allows up to {PAID_MONTHLY_INVOICE_LIMIT} invoices per month. Payment checkout can be attached after gateway approval.</p>
         <div class="pro-status-panel">
           <span class="plan-badge plan-{escape(tone)}">{escape(title)}</span>
           <h2>{escape(title)}</h2>
@@ -1855,11 +1902,23 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     owner_email = clean_text(payload.get("owner_email"), max_length=254).lower()
     if request.user.is_authenticated and request.user.email:
         owner_email = request.user.email.lower()
-    if owner_email and "@" not in owner_email:
+    if not owner_email:
+        return JsonResponse({"error": "Enter your email or create an account to save invoices."}, status=400)
+    if "@" not in owner_email:
         return JsonResponse({"error": "Enter a valid email to save this invoice."}, status=400)
 
     if amount_before_gst <= 0:
         return JsonResponse({"error": "Invoice amount must be greater than zero."}, status=400)
+
+    quota_used, quota_limit, quota_plan = invoice_quota_for_email(owner_email)
+    if quota_used >= quota_limit:
+        return JsonResponse(
+            {
+                "error": invoice_quota_message(quota_used, quota_limit, quota_plan),
+                "quota": {"used": quota_used, "limit": quota_limit, "plan": quota_plan},
+            },
+            status=403,
+        )
 
     invoice = Invoice.objects.create(
         owner=request.user if request.user.is_authenticated else None,

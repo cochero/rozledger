@@ -78,7 +78,7 @@
               </label>
               <label>
                 Your email for dashboard
-                <input id="ownerEmail" type="email" placeholder="you@example.com" />
+                <input id="ownerEmail" type="email" placeholder="you@example.com" required />
               </label>
               <label>
                 Client name
@@ -129,7 +129,7 @@
               <button class="button ghost" id="printInvoice" type="button">Print</button>
             </div>
             <p class="status-text" id="invoiceStatus" aria-live="polite"></p>
-            <p class="form-hint">Create an account or use the same email to keep invoices and client records in your dashboard.</p>
+            <p class="form-hint">Create an account or use the same email to keep invoices and client records in your dashboard. Free accounts can save 5 invoices per month.</p>
           </section>
 
           <section class="tab-panel" data-panel="upi">
@@ -229,9 +229,9 @@
           <p class="eyebrow">US launch plan</p>
           <h2>Start free. Upgrade when reminders save time.</h2>
           <ul>
-            <li>Free: create invoices, copy reminders and save a small number of invoices.</li>
-            <li>Planned Pro: unlimited invoices, saved clients, logo, PDF downloads and payment reminders.</li>
-            <li>Target launch price: $9/month or $79/year after payment gateway setup.</li>
+            <li>Free: save up to 5 invoices per month with client records.</li>
+            <li>Paid: save up to 100 invoices per month with logo, PDFs, clients and reminders.</li>
+            <li>US launch price: $3.99/month after payment gateway setup.</li>
           </ul>
         </div>
         <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="us_launch_interest">

@@ -171,6 +171,86 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(print_response, "$ 402.19")
         self.assertContains(print_response, "www.rozledger.com")
 
+    def test_free_plan_blocks_after_five_invoices_per_month(self):
+        email = "free-limit@example.com"
+        for index in range(5):
+            Invoice.objects.create(
+                owner_email=email,
+                business_name="Free Business",
+                client_name=f"Client {index}",
+                service_name="Service",
+                amount_before_gst="100.00",
+                gst_rate="0.00",
+                include_gst=False,
+                total_text="$ 100.00",
+                upi_link="",
+                invoice_text="",
+                currency_symbol="$",
+                tax_label="Sales tax",
+            )
+
+        response = self.client.post(
+            reverse("create_invoice"),
+            data=json.dumps(
+                {
+                    "owner_email": email,
+                    "business_name": "Free Business",
+                    "client_name": "Blocked Client",
+                    "service_name": "Service",
+                    "amount_before_gst": "100",
+                    "gst_rate": "0",
+                    "include_gst": False,
+                    "currency_symbol": "$",
+                    "tax_label": "Sales tax",
+                    "total_text": "$ 100.00",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Free plan allows 5 invoices per month", response.json()["error"])
+
+    def test_paid_plan_allows_hundredth_invoice_but_blocks_next(self):
+        user = User.objects.create_user(username="paid@example.com", email="paid@example.com", password="strong-password-123")
+        PlanSubscription.objects.create(owner=user, owner_email=user.email, plan="pro", status="active", activated_at=timezone.now())
+        for index in range(99):
+            Invoice.objects.create(
+                owner=user,
+                owner_email=user.email,
+                business_name="Paid Business",
+                client_name=f"Client {index}",
+                service_name="Service",
+                amount_before_gst="100.00",
+                gst_rate="0.00",
+                include_gst=False,
+                total_text="$ 100.00",
+                upi_link="",
+                invoice_text="",
+                currency_symbol="$",
+                tax_label="Sales tax",
+            )
+        self.client.force_login(user)
+
+        payload = {
+            "business_name": "Paid Business",
+            "client_name": "Allowed Client",
+            "service_name": "Service",
+            "amount_before_gst": "100",
+            "gst_rate": "0",
+            "include_gst": False,
+            "currency_symbol": "$",
+            "tax_label": "Sales tax",
+            "total_text": "$ 100.00",
+        }
+        allowed = self.client.post(reverse("create_invoice"), data=json.dumps(payload), content_type="application/json", HTTP_HOST="rozledger.com")
+        blocked = self.client.post(reverse("create_invoice"), data=json.dumps(payload), content_type="application/json", HTTP_HOST="rozledger.com")
+
+        self.assertEqual(allowed.status_code, 201)
+        self.assertEqual(blocked.status_code, 403)
+        self.assertIn("paid plan allows 100 invoices per month", blocked.json()["error"])
+
     def test_dashboard_invoice_form_creates_saved_invoice_without_javascript(self):
         user = User.objects.create_user(
             username="form-owner@example.com",
