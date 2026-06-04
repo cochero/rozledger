@@ -1,5 +1,28 @@
-const rupee = new Intl.NumberFormat("en-IN", {
-  maximumFractionDigits: 0,
+const market = document.body.dataset.market || "in";
+const marketConfig = {
+  in: {
+    currencySymbol: "\u20b9",
+    currencyCode: "INR",
+    locale: "en-IN",
+    taxLabel: "GST",
+    paymentLabel: "UPI/payment link",
+    reminderChannel: "WhatsApp",
+    paymentConfirmation: "Please share payment confirmation after transfer. Thank you.",
+  },
+  us: {
+    currencySymbol: "$",
+    currencyCode: "USD",
+    locale: "en-US",
+    taxLabel: "Sales tax",
+    paymentLabel: "Payment link",
+    reminderChannel: "email or SMS",
+    paymentConfirmation: "Please pay by the due date. Thank you.",
+  },
+};
+const config = marketConfig[market] || marketConfig.in;
+const currencyFormatter = new Intl.NumberFormat(config.locale, {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
 });
 
 const state = {
@@ -11,7 +34,7 @@ function byId(id) {
 }
 
 function money(value) {
-  return `Rs ${rupee.format(Number.isFinite(value) ? value : 0)}`;
+  return `${config.currencySymbol} ${currencyFormatter.format(Number.isFinite(value) ? value : 0)}`;
 }
 
 function encodeUpi(value) {
@@ -76,6 +99,9 @@ function invoicePayload() {
     service_name: byId("serviceName").value.trim(),
     amount_before_gst: Number(byId("amount").value) || 0,
     gst_rate: Number(byId("gstRate").value) || 0,
+    include_gst: Number(byId("gstRate").value) > 0,
+    tax_label: config.taxLabel,
+    currency_symbol: config.currencySymbol,
     due_days: Number(byId("dueDays").value) || 0,
     total_text: byId("totalValue").textContent,
     upi_link: byId("upiLink").value,
@@ -147,24 +173,26 @@ function updateInvoice() {
 
   byId("gstValue").textContent = money(gst);
   byId("totalValue").textContent = money(total);
-  byId("dueDate").textContent = due.toLocaleDateString("en-IN", {
+  byId("dueDate").textContent = due.toLocaleDateString(config.locale, {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
-  byId("upiAmount").value = Math.round(total);
-  byId("upiNote").value = service;
+  if (market === "in") {
+    byId("upiAmount").value = Math.round(total);
+    byId("upiNote").value = service;
+  }
 
   byId("invoiceText").value = [
     `Invoice from ${business}`,
     `Bill to: ${client}`,
     `Service: ${service}`,
     `Amount: ${money(amount)}`,
-    `GST (${gstRate}%): ${money(gst)}`,
+    `${config.taxLabel} (${gstRate}%): ${money(gst)}`,
     `Total payable: ${money(total)}`,
     `Due date: ${byId("dueDate").textContent}`,
     "",
-    "Please share payment confirmation after transfer. Thank you.",
+    config.paymentConfirmation,
   ].join("\n");
 
   updateUpi();
@@ -172,6 +200,13 @@ function updateInvoice() {
 }
 
 function updateUpi() {
+  if (market === "us") {
+    const paymentLink = byId("upiId").value.trim();
+    byId("upiLink").value = paymentLink || "Add your Stripe, Square, PayPal, Venmo, or Cash App payment link.";
+    renderQr(byId("upiLink").value);
+    return;
+  }
+
   const upiId = byId("upiId").value.trim();
   const payee = byId("payeeName").value.trim();
   const amount = Number(byId("upiAmount").value) || 0;
@@ -202,7 +237,7 @@ function updateTarget() {
   byId("reminderText").value = [
     "Hi, gentle reminder for the pending payment.",
     `Amount due: ${byId("totalValue").textContent}`,
-    `Payment link: ${byId("upiLink").value}`,
+    `${config.paymentLabel}: ${byId("upiLink").value}`,
     "Please complete it today if possible. Thank you.",
   ].join("\n");
 }
@@ -249,11 +284,14 @@ if (hasTool) {
 
     try {
       const result = await postJson("/api/invoices", payload);
-      showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", [
+      const actions = [
         { label: "Open invoice", href: result.print_url, newTab: true },
-        { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true },
         { label: "Dashboard", href: result.dashboard_url },
-      ]);
+      ];
+      if (market !== "us") {
+        actions.splice(1, 0, { label: "Send on WhatsApp", href: result.whatsapp_url, newTab: true });
+      }
+      showStatusActions("invoiceStatus", "Saved. Your printable invoice is ready.", actions);
     } catch (error) {
       saveFallback("rozledger_invoices", payload);
       showStatus("invoiceStatus", `${error.message} Saved in this browser only. Please try again or contact support.`);

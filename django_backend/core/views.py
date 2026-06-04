@@ -169,6 +169,7 @@ def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal, include_gs
 
 
 def build_invoice_text(invoice: Invoice) -> str:
+    tax_label = invoice.tax_label or "GST"
     return "\n".join(
         [
             f"Invoice from {invoice.business_name}",
@@ -177,8 +178,8 @@ def build_invoice_text(invoice: Invoice) -> str:
             invoice.client_address,
             f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin else "",
             f"Service: {invoice.service_name}",
-            f"Amount: {RUPEE_SYMBOL} {invoice.amount_before_gst}",
-            f"GST: {invoice.gst_rate}%" if invoice.include_gst else "GST: Not charged",
+            f"Amount: {money(invoice.amount_before_gst, invoice.currency_symbol)}",
+            f"{tax_label}: {invoice.gst_rate}%" if invoice.include_gst else f"{tax_label}: Not charged",
             f"Total: {invoice.total_text}",
             f"UPI/payment link: {invoice.upi_link}" if invoice.upi_link else "",
             f"Bank details: {invoice.bank_details}" if invoice.bank_details else "",
@@ -218,8 +219,32 @@ def invoice_gst_amount(invoice: Invoice) -> Decimal:
     return (invoice.amount_before_gst * invoice.gst_rate / Decimal("100")).quantize(Decimal("0.01"))
 
 
-def money(value: Decimal) -> str:
-    return f"{RUPEE_SYMBOL} {value.quantize(Decimal('0.01'))}"
+def money(value: Decimal, currency_symbol: str = RUPEE_SYMBOL) -> str:
+    return f"{currency_symbol or RUPEE_SYMBOL} {value.quantize(Decimal('0.01'))}"
+
+
+def invoice_money(invoice: Invoice, value: Decimal) -> str:
+    return money(value, invoice.currency_symbol)
+
+
+def invoice_tax_label(invoice: Invoice) -> str:
+    return invoice.tax_label or "GST"
+
+
+def invoice_total_display(invoice: Invoice) -> str:
+    text = (invoice.total_text or "").strip()
+    if text.lower().startswith("rs"):
+        return f"{RUPEE_SYMBOL} {text[2:].strip()}"
+    if text.startswith(RUPEE_SYMBOL) or text.startswith("$"):
+        return text
+    try:
+        return money(Decimal(text), invoice.currency_symbol)
+    except (InvalidOperation, ValueError):
+        return text
+
+
+def invoice_brand_url(invoice: Invoice) -> str:
+    return "www.rozledger.com" if invoice.currency_symbol == "$" else "www.rozledger.in"
 
 
 def clean_accent_color(value: Any) -> str:
@@ -231,6 +256,15 @@ def clean_invoice_template(value: Any) -> str:
     template = clean_text(value, "classic", 20)
     allowed = {choice[0] for choice in Invoice.TEMPLATE_CHOICES}
     return template if template in allowed else "classic"
+
+
+def clean_currency_symbol(value: Any) -> str:
+    symbol = clean_text(value, RUPEE_SYMBOL, 8)
+    return symbol if symbol in {RUPEE_SYMBOL, "$"} else RUPEE_SYMBOL
+
+
+def clean_tax_label(value: Any) -> str:
+    return clean_text(value, "GST", 40) or "GST"
 
 
 def invoice_template_options(selected: str) -> str:
@@ -532,6 +566,9 @@ def password_confirm_form(request: HttpRequest, uidb64: str, token: str, error: 
 
 @require_http_methods(GET_OR_HEAD)
 def index(request: HttpRequest) -> FileResponse:
+    host = request.get_host().split(":", 1)[0].lower()
+    if host in {"rozledger.com", "www.rozledger.com"}:
+        return serve_project_file("index-us.html", "text/html")
     return serve_project_file("index.html", "text/html")
 
 
@@ -997,6 +1034,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 include_gst=include_gst,
                 amount_before_gst=amount_before_gst,
                 gst_rate=gst_rate,
+                tax_label="GST",
+                currency_symbol=RUPEE_SYMBOL,
                 due_days=due_days,
                 total_text=invoice_total_text(amount_before_gst, gst_rate, include_gst),
                 upi_link=values["upi_link"],
@@ -1082,6 +1121,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.include_gst = include_gst
             invoice.amount_before_gst = amount_before_gst
             invoice.gst_rate = gst_rate
+            invoice.tax_label = clean_tax_label(request.POST.get("tax_label") or invoice.tax_label)
+            invoice.currency_symbol = clean_currency_symbol(request.POST.get("currency_symbol") or invoice.currency_symbol)
             status = clean_text(request.POST.get("status"), invoice.status, 20)
             invoice.status = status if status in dict(Invoice.STATUS_CHOICES) else invoice.status
             invoice.total_text = clean_text(request.POST.get("total_text"), invoice.total_text, 80)
@@ -1275,6 +1316,8 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     due_date = invoice_due_date(invoice)
     template_class = f"invoice-template-{clean_invoice_template(invoice.template)}"
     accent_color = clean_accent_color(invoice.accent_color)
+    tax_label = invoice_tax_label(invoice)
+    total_text = invoice_total_display(invoice)
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1323,7 +1366,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           <tr>
             <th>Description</th>
             <th>Amount</th>
-            <th>GST</th>
+            <th>{escape(tax_label)}</th>
             <th>Total</th>
           </tr>
         </thead>
@@ -1333,24 +1376,24 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
               <strong>{escape(invoice.service_name)}</strong>
               <span>{escape(invoice.client_name)}</span>
             </td>
-            <td>{escape(money(invoice.amount_before_gst))}</td>
-            <td>{escape(money(gst_amount)) if invoice.include_gst else 'Not charged'}</td>
-            <td>{escape(invoice.total_text)}</td>
+            <td>{escape(invoice_money(invoice, invoice.amount_before_gst))}</td>
+            <td>{escape(invoice_money(invoice, gst_amount)) if invoice.include_gst else 'Not charged'}</td>
+            <td>{escape(total_text)}</td>
           </tr>
         </tbody>
       </table>
       <section class="invoice-total-panel">
         <div>
           <span>Subtotal</span>
-          <strong>{escape(money(invoice.amount_before_gst))}</strong>
+          <strong>{escape(invoice_money(invoice, invoice.amount_before_gst))}</strong>
         </div>
         <div>
-          <span>{f'GST @ {invoice.gst_rate}%' if invoice.include_gst else 'GST'}</span>
-          <strong>{escape(money(gst_amount)) if invoice.include_gst else 'Not charged'}</strong>
+          <span>{f'{tax_label} @ {invoice.gst_rate}%' if invoice.include_gst else tax_label}</span>
+          <strong>{escape(invoice_money(invoice, gst_amount)) if invoice.include_gst else 'Not charged'}</strong>
         </div>
         <div class="grand-total">
           <span>Amount payable</span>
-          <strong>{escape(invoice.total_text)}</strong>
+          <strong>{escape(total_text)}</strong>
         </div>
       </section>
       <section class="invoice-payment-grid">
@@ -1365,7 +1408,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
         <a class="button secondary" href="{escape(whatsapp_url(invoice.invoice_text))}" rel="noopener">Send on WhatsApp</a>
         <a class="button ghost" href="/dashboard/">Dashboard</a>
       </section>
-      <p class="print-disclaimer">Generated by RozLedger. Verify tax and legal details with a qualified professional.</p>
+      <p class="print-disclaimer">Generated by RozLedger - {escape(invoice_brand_url(invoice))}. Verify tax and legal details with a qualified professional.</p>
     </main>
   </body>
 </html>
@@ -1450,17 +1493,6 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     def para(value: str, style=body_style) -> Paragraph:
         return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
 
-    def total_display() -> str:
-        text = (invoice.total_text or "").strip()
-        if text.lower().startswith("rs"):
-            return f"{RUPEE_SYMBOL} {text[2:].strip()}"
-        if text.startswith(RUPEE_SYMBOL):
-            return text
-        try:
-            return money(Decimal(text))
-        except (InvalidOperation, ValueError):
-            return text
-
     story = [
         Table([[""]], colWidths=[480], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
         Spacer(1, 18),
@@ -1533,12 +1565,12 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(
         Table(
             [
-                [Paragraph("Description", label_style), Paragraph("Amount", label_style), Paragraph("GST", label_style), Paragraph("Total", label_style)],
+                [Paragraph("Description", label_style), Paragraph("Amount", label_style), Paragraph(invoice_tax_label(invoice), label_style), Paragraph("Total", label_style)],
                 [
                     para(f"{invoice.service_name}\n{invoice.client_name}"),
-                    para(money(invoice.amount_before_gst), amount_style),
-                    para(money(gst_amount) if invoice.include_gst else "Not charged", amount_style),
-                    para(total_display(), amount_bold_style),
+                    para(invoice_money(invoice, invoice.amount_before_gst), amount_style),
+                    para(invoice_money(invoice, gst_amount) if invoice.include_gst else "Not charged", amount_style),
+                    para(invoice_total_display(invoice), amount_bold_style),
                 ],
             ],
             colWidths=[235, 88, 72, 85],
@@ -1558,9 +1590,9 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(
         Table(
             [
-                [para("Subtotal", right_style), para(money(invoice.amount_before_gst), amount_bold_style)],
-                [para(f"GST @ {invoice.gst_rate}%" if invoice.include_gst else "GST", right_style), para(money(gst_amount) if invoice.include_gst else "Not charged", amount_bold_style)],
-                [para("Amount payable", right_bold_style), para(total_display(), amount_bold_style)],
+                [para("Subtotal", right_style), para(invoice_money(invoice, invoice.amount_before_gst), amount_bold_style)],
+                [para(f"{invoice_tax_label(invoice)} @ {invoice.gst_rate}%" if invoice.include_gst else invoice_tax_label(invoice), right_style), para(invoice_money(invoice, gst_amount) if invoice.include_gst else "Not charged", amount_bold_style)],
+                [para("Amount payable", right_bold_style), para(invoice_total_display(invoice), amount_bold_style)],
             ],
             colWidths=[330, 150],
             style=TableStyle(
@@ -1582,7 +1614,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(Spacer(1, 16))
     story.append(Paragraph("Verify tax and legal details with a qualified professional.", styles["Italic"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph("Invoice generated by RozLedger - www.rozledger.in", small_style))
+    story.append(Paragraph(f"Invoice generated by RozLedger - {invoice_brand_url(invoice)}", small_style))
     doc.build(story)
     response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="rozledger-invoice-{invoice.id}.pdf"'
@@ -1843,6 +1875,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         include_gst=include_gst,
         amount_before_gst=amount_before_gst,
         gst_rate=gst_rate,
+        tax_label=clean_tax_label(payload.get("tax_label")),
+        currency_symbol=clean_currency_symbol(payload.get("currency_symbol")),
         due_days=max(int(payload.get("due_days") or 0), 0),
         total_text=clean_text(payload.get("total_text"), invoice_total_text(amount_before_gst, gst_rate, include_gst), 80),
         upi_link=clean_text(payload.get("upi_link")),

@@ -19,6 +19,7 @@ TEST_SETTINGS = {
     "SECURE_SSL_REDIRECT": False,
     "DEFAULT_FROM_EMAIL": "RozLedger <cs@rozledger.in>",
     "ROZLEDGER_NOTIFY_EMAIL": "cs@rozledger.in",
+    "ALLOWED_HOSTS": ["testserver", "rozledger.in", "rozledger.com", "www.rozledger.com"],
     "CACHES": {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -35,6 +36,22 @@ class PublicPagesTests(TestCase):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
+
+    def test_dot_com_homepage_uses_us_positioning(self):
+        response = self.client.get("/", HTTP_HOST="rozledger.com")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("US small service businesses", content)
+        self.assertIn("Sales tax", content)
+        self.assertNotIn("Built for India", content)
+
+    def test_dot_in_homepage_keeps_india_positioning(self):
+        response = self.client.get("/", HTTP_HOST="rozledger.in")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Built for India", content)
 
 
 @override_settings(**TEST_SETTINGS)
@@ -120,6 +137,39 @@ class AccountWorkflowTests(TestCase):
         pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
         self.assertEqual(pdf_response.status_code, 200)
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+
+    def test_us_invoice_api_saves_us_currency_and_tax_label(self):
+        response = self.client.post(
+            reverse("create_invoice"),
+            data=json.dumps(
+                {
+                    "owner_email": "us-owner@example.com",
+                    "business_name": "River City Handyman",
+                    "client_name": "Johnson Family",
+                    "service_name": "Door repair",
+                    "amount_before_gst": "375",
+                    "gst_rate": "7.25",
+                    "include_gst": True,
+                    "tax_label": "Sales tax",
+                    "currency_symbol": "$",
+                    "total_text": "$ 402.19",
+                    "invoice_text": "",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        invoice = Invoice.objects.get(owner_email="us-owner@example.com")
+        self.assertEqual(invoice.currency_symbol, "$")
+        self.assertEqual(invoice.tax_label, "Sales tax")
+        self.assertIn("Sales tax", invoice.invoice_text)
+        self.assertIn("$ 375.00", invoice.invoice_text)
+        print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
+        self.assertContains(print_response, "Sales tax")
+        self.assertContains(print_response, "$ 402.19")
+        self.assertContains(print_response, "www.rozledger.com")
 
     def test_dashboard_invoice_form_creates_saved_invoice_without_javascript(self):
         user = User.objects.create_user(

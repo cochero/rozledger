@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="RozLedger is a fast invoice and payment reminder tool for US cleaners, handymen, tutors, photographers, consultants and other small service businesses."
+    />
+    <title>RozLedger | Fast Invoices and Reminders for US Service Businesses</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "RozLedger",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "url": "https://rozledger.com",
+        "description": "Fast invoices, client records and payment reminders for US small service businesses."
+      }
+    </script>
+  </head>
+  <body data-market="us">
+    <header class="topbar">
+      <a class="brand" href="#tool" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
+      <nav aria-label="Primary navigation">
+        <a href="#tool">Tool</a>
+        <a href="#business">Who it helps</a>
+        <a href="#pricing">Pricing</a>
+        <a href="/accounts/register/">Create account</a>
+        <a href="/accounts/login/">Login</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" id="tool">
+        <div class="hero-copy">
+          <p class="eyebrow">Built for US small service businesses</p>
+          <h1>The fastest invoice and reminder tool for getting paid after the job.</h1>
+          <p class="subcopy">
+            Create a professional invoice in under a minute, save the client, copy a payment
+            reminder, and track what is still unpaid without learning full accounting software.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#tool-panel">Create invoice</a>
+            <a class="button secondary" href="/accounts/register/">Save invoices</a>
+            <a class="button secondary" href="#pricing">See pricing</a>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="tool-panel" aria-label="Fast invoice tool">
+          <div class="tabs" role="tablist" aria-label="Daily tools">
+            <button class="tab active" data-tab="invoice" type="button">Invoice</button>
+            <button class="tab" data-tab="upi" type="button">Payment link</button>
+            <button class="tab" data-tab="target" type="button">Daily target</button>
+          </div>
+
+          <section class="tab-panel active" data-panel="invoice">
+            <div class="grid two">
+              <label>
+                Business name
+                <input id="bizName" value="River City Handyman" />
+              </label>
+              <label>
+                Your email for dashboard
+                <input id="ownerEmail" type="email" placeholder="you@example.com" />
+              </label>
+              <label>
+                Client name
+                <input id="clientName" value="Johnson Family" />
+              </label>
+              <label>
+                Service
+                <input id="serviceName" value="Door repair and wall patching" />
+              </label>
+              <label>
+                Amount before tax
+                <input id="amount" type="number" min="0" value="375" />
+              </label>
+              <label>
+                Sales tax rate
+                <select id="gstRate">
+                  <option value="0" selected>No sales tax</option>
+                  <option value="4">4%</option>
+                  <option value="6">6%</option>
+                  <option value="7.25">7.25%</option>
+                  <option value="8.25">8.25%</option>
+                  <option value="10">10%</option>
+                </select>
+              </label>
+              <label>
+                Due in days
+                <input id="dueDays" type="number" min="0" value="7" />
+              </label>
+            </div>
+            <div class="result-strip" aria-live="polite">
+              <div>
+                <span>Sales tax</span>
+                <strong id="gstValue">$ 0.00</strong>
+              </div>
+              <div>
+                <span>Total</span>
+                <strong id="totalValue">$ 0.00</strong>
+              </div>
+              <div>
+                <span>Due date</span>
+                <strong id="dueDate">Today</strong>
+              </div>
+            </div>
+            <textarea id="invoiceText" rows="7" readonly></textarea>
+            <div class="actions">
+              <button class="button primary" id="copyInvoice" type="button">Copy invoice text</button>
+              <button class="button secondary" id="saveInvoice" type="button">Save invoice details</button>
+              <button class="button ghost" id="printInvoice" type="button">Print</button>
+            </div>
+            <p class="status-text" id="invoiceStatus" aria-live="polite"></p>
+            <p class="form-hint">Create an account or use the same email to keep invoices and client records in your dashboard.</p>
+          </section>
+
+          <section class="tab-panel" data-panel="upi">
+            <div class="grid two">
+              <label>
+                Stripe, Square, PayPal, Venmo or Cash App link
+                <input id="upiId" value="https://pay.example.com/river-city-handyman" />
+              </label>
+              <label>
+                Payment label
+                <input id="payeeName" value="River City Handyman" />
+              </label>
+              <label>
+                Collection amount
+                <input id="upiAmount" type="number" min="0" value="375" />
+              </label>
+              <label>
+                Note
+                <input id="upiNote" value="Invoice payment" />
+              </label>
+            </div>
+            <div class="qr-box">
+              <img id="upiQr" alt="Payment link QR code" />
+              <div>
+                <p class="small-title">Payment link</p>
+                <textarea id="upiLink" rows="4" readonly></textarea>
+                <button class="button primary" id="copyUpi" type="button">Copy payment link</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="target">
+            <div class="grid two">
+              <label>
+                Monthly collection target
+                <input id="monthlyGoal" type="number" min="0" value="12000" />
+              </label>
+              <label>
+                Working days this month
+                <input id="workDays" type="number" min="1" value="22" />
+              </label>
+              <label>
+                Today collected
+                <input id="collected" type="number" min="0" value="250" />
+              </label>
+              <label>
+                Average job value
+                <input id="aov" type="number" min="1" value="350" />
+              </label>
+            </div>
+            <div class="result-strip target-results" aria-live="polite">
+              <div>
+                <span>Daily target</span>
+                <strong id="dailyTarget">$ 0.00</strong>
+              </div>
+              <div>
+                <span>Left today</span>
+                <strong id="leftToday">$ 0.00</strong>
+              </div>
+              <div>
+                <span>Jobs needed</span>
+                <strong id="ordersNeeded">0</strong>
+              </div>
+            </div>
+            <textarea id="reminderText" rows="6" readonly></textarea>
+            <button class="button primary" id="copyReminder" type="button">Copy reminder</button>
+          </section>
+        </div>
+      </section>
+
+      <section class="band" id="business">
+        <div class="section-head">
+          <p class="eyebrow">Use it after every job</p>
+          <h2>Made for service businesses that need simple billing, not heavy bookkeeping</h2>
+        </div>
+        <div class="business-grid">
+          <article>
+            <span>Home services</span>
+            <h3>Handymen, cleaners, lawn care, mobile repair</h3>
+            <p>Create invoices fast, save repeat clients, and send polite reminders when payment is late.</p>
+          </article>
+          <article>
+            <span>Independent work</span>
+            <h3>Tutors, consultants, photographers, coaches</h3>
+            <p>Keep each client, job, amount, due date and payment status in one practical dashboard.</p>
+          </article>
+          <article>
+            <span>Simple records</span>
+            <h3>Professional PDFs without accounting complexity</h3>
+            <p>RozLedger helps with invoice records and payment follow-up. It is not tax filing or accounting advice.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="pro" id="pricing">
+        <div>
+          <p class="eyebrow">US launch plan</p>
+          <h2>Start free. Upgrade when reminders save time.</h2>
+          <ul>
+            <li>Free: create invoices, copy reminders and save a small number of invoices.</li>
+            <li>Planned Pro: unlimited invoices, saved clients, logo, PDF downloads and payment reminders.</li>
+            <li>Target launch price: $9/month or $79/year after payment gateway setup.</li>
+          </ul>
+        </div>
+        <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="us_launch_interest">
+          <input type="hidden" name="source" value="us_launch_interest" />
+          <input type="hidden" name="landing_path" value="/us-home" />
+          <label>Your name<input name="name" required /></label>
+          <label>Email<input name="email" type="email" required /></label>
+          <label>Phone<input name="phone" placeholder="Optional" /></label>
+          <label>Business type
+            <select name="business_type">
+              <option>Shop or local service</option>
+              <option>Freelancer</option>
+              <option>Consultant</option>
+              <option>Agency</option>
+              <option>Tutor or coaching</option>
+            </select>
+          </label>
+          <button class="button primary" type="submit">Join US early access</button>
+          <p class="status-text" id="leadStatus" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div>
+          <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
+          <p>Fast invoices, client records and payment reminders for US small service businesses.</p>
+        </div>
+        <div>
+          <h3>Product</h3>
+          <ul>
+            <li><a href="#tool">Invoice tool</a></li>
+            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="/accounts/register/">Create account</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Legal</h3>
+          <ul>
+            <li><a href="/privacy/">Privacy</a></li>
+            <li><a href="/terms/">Terms</a></li>
+            <li><a href="/contact/">Contact</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>&copy; 2026 RozLedger. All rights reserved.</span>
+        <span>RozLedger is an invoice and recordkeeping tool, not tax or accounting advice.</span>
+      </div>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

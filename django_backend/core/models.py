@@ -161,6 +161,8 @@ class Invoice(models.Model):
     include_gst = models.BooleanField(default=True)
     amount_before_gst = models.DecimalField(max_digits=12, decimal_places=2)
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    tax_label = models.CharField(max_length=40, default="GST")
+    currency_symbol = models.CharField(max_length=8, default="\u20b9")
     due_days = models.PositiveIntegerField(default=0)
     total_text = models.CharField(max_length=80)
     upi_link = models.TextField()
