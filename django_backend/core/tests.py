@@ -411,8 +411,11 @@ class AccountWorkflowTests(TestCase):
         user = User.objects.create_user("us-form@example.com", "us-form@example.com", "strong-password-123")
         self.client.force_login(user)
 
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
         response = self.client.get(reverse("invoice_new"), HTTP_HOST="rozledger.com")
 
+        self.assertContains(dashboard_response, "Tax ID")
+        self.assertNotContains(dashboard_response, "GSTIN")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sales tax rate %")
         self.assertContains(response, "Amount before tax")

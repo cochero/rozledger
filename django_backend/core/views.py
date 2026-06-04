@@ -820,6 +820,9 @@ def password_reset_confirm_view(request: HttpRequest, uidb64: str, token: str) -
 @require_GET
 def dashboard(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
+    us_market = is_us_host(request)
+    client_tax_id_label = "Tax ID" if us_market else "GSTIN"
+    client_tax_id_placeholder = "Optional tax ID" if us_market else "Optional GSTIN"
     invoices = Invoice.objects.filter(account_q(request))[:20]
     leads = Lead.objects.filter(email__iexact=email)[:10]
     clients = Client.objects.filter(account_q(request))[:20]
@@ -991,7 +994,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <label>Email<input name="email" type="email" placeholder="client@example.com" /></label>
           <label>Phone<input name="phone" placeholder="Mobile or WhatsApp" /></label>
           <label>Address<textarea name="address" rows="2" placeholder="Client billing address"></textarea></label>
-          <label>GSTIN<input name="gstin" placeholder="Optional GSTIN" /></label>
+          <label>{client_tax_id_label}<input name="gstin" placeholder="{client_tax_id_placeholder}" /></label>
           <button class="button primary" type="submit">Save client</button>
         </form>
         <div class="dashboard-grid">{''.join(client_rows)}</div>
