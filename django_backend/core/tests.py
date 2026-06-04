@@ -623,6 +623,11 @@ class AccountWorkflowTests(TestCase):
                 "thank_you_note": "Thanks from profile.",
                 "template": "service",
                 "accent_color": "#285c9f",
+                "business_logo": SimpleUploadedFile(
+                    "profile-logo.png",
+                    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\xe2p\xb8\x00\x00\x00\x00IEND\xaeB`\x82",
+                    content_type="image/png",
+                ),
             },
             HTTP_HOST="rozledger.in",
         )
@@ -632,6 +637,10 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(profile.business_name, "Profile Business")
         self.assertEqual(profile.gstin, "32ABCDE1234F1Z5")
         self.assertEqual(profile.template, "service")
+        self.assertTrue(profile.business_logo.name)
+        logo_response = self.client.get(reverse("business_profile_logo"), HTTP_HOST="rozledger.in")
+        self.assertEqual(logo_response.status_code, 200)
+        self.assertEqual(logo_response["Content-Type"], "image/png")
         invoice_form = self.client.get(reverse("invoice_new"), HTTP_HOST="rozledger.in")
         self.assertContains(invoice_form, 'value="Profile Business"')
         self.assertContains(invoice_form, "Profile Street")
@@ -639,6 +648,7 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(invoice_form, "Selected template preview")
         self.assertContains(invoice_form, "Service Pro")
         self.assertContains(invoice_form, "invoice-live-preview")
+        self.assertContains(invoice_form, "/dashboard/business-profile/logo/")
         self.assertContains(invoice_form, "Profile Business")
 
     def test_customer_can_add_custom_account(self):

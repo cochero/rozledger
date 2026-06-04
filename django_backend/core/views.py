@@ -403,6 +403,16 @@ def invoice_logo_html(invoice: Invoice) -> str:
     return f'<img class="invoice-logo" src="/invoice/{escape(invoice.public_token)}/logo/" alt="{escape(invoice.business_name)} logo" />'
 
 
+def image_content_type(filename: str) -> str:
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(Path(filename).suffix.lower(), "application/octet-stream")
+
+
 def valid_logo_upload(upload) -> str:
     if not upload:
         return ""
@@ -1538,6 +1548,17 @@ def business_profile(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+@require_GET
+def business_profile_logo(request: HttpRequest) -> HttpResponse:
+    profile = get_business_profile(request)
+    if not profile or not profile.business_logo:
+        raise Http404("Logo not found")
+    response = FileResponse(profile.business_logo.open("rb"))
+    response["Content-Type"] = image_content_type(profile.business_logo.name)
+    return response
+
+
+@login_required
 @require_POST
 def create_account(request: HttpRequest) -> HttpResponse:
     ensure_default_chart(request)
@@ -2110,7 +2131,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     preview_logo = ""
     if profile and profile.business_logo:
-        preview_logo = f'<span class="invoice-preview-logo">Logo saved</span>'
+        preview_logo = '<img class="invoice-preview-logo" data-preview-logo src="/dashboard/business-profile/logo/" alt="Business logo preview" />'
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card invoice-builder-card">
@@ -2154,7 +2175,9 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             <article class="invoice-preview-document invoice-preview-{escape(values['template'])}" data-preview-document style="--preview-accent: {escape(values['accent_color'])};">
               <header class="invoice-preview-header">
                 <div>
-                  {preview_logo}
+                  <div class="invoice-preview-logo-frame" data-preview-logo-frame>
+                    {preview_logo or '<span data-preview-logo-placeholder>Logo preview</span>'}
+                  </div>
                   <span class="invoice-preview-kicker">{escape('Tax invoice' if not us_market else 'Invoice')}</span>
                   <h2 data-preview="business_name">{escape(values['business_name'] or 'Your business')}</h2>
                   <p data-preview="business_phone">{escape(values['business_phone'] or 'Business phone')}</p>
@@ -2220,6 +2243,19 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
               const total = doc.querySelector('[data-preview-total]');
               if (total) total.textContent = totalText();
             }};
+            const logoInput = form.elements.business_logo;
+            const logoFrame = document.querySelector('[data-preview-logo-frame]');
+            if (logoInput && logoFrame) {{
+              logoInput.addEventListener('change', () => {{
+                const file = logoInput.files && logoInput.files[0];
+                if (!file || !file.type.startsWith('image/')) return;
+                const reader = new FileReader();
+                reader.onload = () => {{
+                  logoFrame.innerHTML = `<img class="invoice-preview-logo" data-preview-logo src="${{reader.result}}" alt="Business logo preview" />`;
+                }};
+                reader.readAsDataURL(file);
+              }});
+            }}
             form.querySelectorAll('[data-preview-field]').forEach((field) => {{
               field.addEventListener('input', update);
               field.addEventListener('change', update);
@@ -2589,14 +2625,7 @@ def invoice_logo(request: HttpRequest, token: str) -> HttpResponse:
     if not invoice.business_logo:
         raise Http404("Logo not found")
     response = FileResponse(invoice.business_logo.open("rb"))
-    content_type = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-    }.get(Path(invoice.business_logo.name).suffix.lower(), "application/octet-stream")
-    response["Content-Type"] = content_type
+    response["Content-Type"] = image_content_type(invoice.business_logo.name)
     return response
 
 

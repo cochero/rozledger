@@ -31,6 +31,7 @@ urlpatterns = [
     path("accounts/reset/<str:uidb64>/<str:token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("dashboard/business-profile/", views.business_profile, name="business_profile"),
+    path("dashboard/business-profile/logo/", views.business_profile_logo, name="business_profile_logo"),
     path("dashboard/clients/", views.create_client, name="create_client"),
     path("dashboard/accounting/accounts/", views.create_account, name="create_account"),
     path("dashboard/accounting/journal/new/", views.journal_new, name="journal_new"),
