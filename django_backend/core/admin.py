@@ -10,6 +10,7 @@ from .models import AffiliateClick, BusinessProfile, Client, Invoice, Lead, Paym
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
     list_display = (
+        "market",
         "name",
         "email",
         "phone",
@@ -33,12 +34,13 @@ class LeadAdmin(admin.ModelAdmin):
         "utm_campaign",
         "public_token",
     )
-    list_filter = ("business_type", "source", "utm_source", "notification_sent", "created_at")
+    list_filter = ("market", "business_type", "source", "utm_source", "notification_sent", "created_at")
 
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
+        "market",
         "business_name",
         "business_phone",
         "owner",
@@ -53,31 +55,31 @@ class InvoiceAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("public_token", "created_at")
     search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "client_name", "client_phone", "service_name", "public_token")
-    list_filter = ("status", "gst_rate", "created_at")
+    list_filter = ("market", "status", "gst_rate", "created_at")
 
 
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
-    list_display = ("name", "owner", "owner_email", "email", "phone", "gstin", "created_at")
+    list_display = ("market", "name", "owner", "owner_email", "email", "phone", "gstin", "created_at")
     search_fields = ("name", "owner__username", "owner__email", "owner_email", "email", "phone", "address", "gstin")
-    list_filter = ("created_at",)
+    list_filter = ("market", "created_at")
 
 
 @admin.register(BusinessProfile)
 class BusinessProfileAdmin(admin.ModelAdmin):
-    list_display = ("business_name", "owner", "owner_email", "business_phone", "gstin", "updated_at")
+    list_display = ("market", "business_name", "owner", "owner_email", "business_phone", "gstin", "updated_at")
     search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "business_address", "gstin")
-    list_filter = ("updated_at", "created_at")
+    list_filter = ("market", "updated_at", "created_at")
 
 
 @admin.register(PlanSubscription)
 class PlanSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("owner", "owner_email", "plan", "status", "requested_at", "activated_at", "expires_at", "updated_at")
+    list_display = ("market", "owner", "owner_email", "plan", "status", "requested_at", "activated_at", "expires_at", "updated_at")
     search_fields = ("owner__username", "owner__email", "owner_email")
-    list_filter = ("plan", "status", "requested_at", "activated_at", "expires_at")
+    list_filter = ("market", "plan", "status", "requested_at", "activated_at", "expires_at")
     readonly_fields = ("requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at", "updated_at")
     fieldsets = (
-        ("Customer", {"fields": ("owner", "owner_email")}),
+        ("Customer", {"fields": ("market", "owner", "owner_email")}),
         ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at")}),
         ("Admin note", {"fields": ("admin_note",)}),
     )
@@ -161,18 +163,18 @@ class PlanSubscriptionAdmin(admin.ModelAdmin):
 
 class PaymentGatewayConfigForm(forms.ModelForm):
     razorpay_key_id = forms.CharField(
-        label="Razorpay Key ID",
+        label="Gateway Key ID / Client ID",
         required=False,
         help_text="Paste to add or rotate. Leave blank to keep the currently encrypted value.",
     )
     razorpay_key_secret = forms.CharField(
-        label="Razorpay Key Secret",
+        label="Gateway Key Secret",
         required=False,
         widget=forms.PasswordInput(render_value=False),
         help_text="Encrypted before saving. Leave blank to keep the current secret.",
     )
     razorpay_webhook_secret = forms.CharField(
-        label="Razorpay Webhook Secret",
+        label="Gateway Webhook Secret",
         required=False,
         widget=forms.PasswordInput(render_value=False),
         help_text="Optional now, required before webhook-based auto activation.",
@@ -180,7 +182,7 @@ class PaymentGatewayConfigForm(forms.ModelForm):
 
     class Meta:
         model = PaymentGatewayConfig
-        fields = ("gateway", "enabled", "mode", "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret")
+        fields = ("market", "gateway", "enabled", "mode", "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret")
 
     def clean(self):
         cleaned = super().clean()
@@ -189,7 +191,7 @@ class PaymentGatewayConfigForm(forms.ModelForm):
         has_key_id = bool(cleaned.get("razorpay_key_id") or getattr(instance, "key_id", ""))
         has_key_secret = bool(cleaned.get("razorpay_key_secret") or getattr(instance, "key_secret", ""))
         if enabled and not (has_key_id and has_key_secret):
-            raise forms.ValidationError("Razorpay Key ID and Key Secret are required before enabling the gateway.")
+            raise forms.ValidationError("Gateway Key ID / Client ID and Key Secret are required before enabling the gateway.")
         return cleaned
 
     def save(self, commit=True):
@@ -211,8 +213,8 @@ class PaymentGatewayConfigForm(forms.ModelForm):
 @admin.register(PaymentGatewayConfig)
 class PaymentGatewayConfigAdmin(admin.ModelAdmin):
     form = PaymentGatewayConfigForm
-    list_display = ("gateway", "enabled", "mode", "configured", "masked_key_id_display", "updated_at")
-    list_filter = ("enabled", "mode", "updated_at")
+    list_display = ("market", "gateway", "enabled", "mode", "configured", "masked_key_id_display", "updated_at")
+    list_filter = ("market", "gateway", "enabled", "mode", "updated_at")
     readonly_fields = (
         "configured",
         "masked_key_id_display",
@@ -221,9 +223,9 @@ class PaymentGatewayConfigAdmin(admin.ModelAdmin):
         "updated_at",
     )
     fieldsets = (
-        ("Gateway", {"fields": ("gateway", "enabled", "mode", "configured", "updated_at")}),
+        ("Gateway", {"fields": ("market", "gateway", "enabled", "mode", "configured", "updated_at")}),
         (
-            "Encrypted Razorpay credentials",
+            "Encrypted gateway credentials",
             {
                 "fields": (
                     "masked_key_id_display",

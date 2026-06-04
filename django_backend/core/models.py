@@ -56,8 +56,14 @@ INVOICE_STATUS_CHOICES = [
     ("overdue", "Overdue"),
 ]
 
+MARKET_CHOICES = [
+    ("IN", "India"),
+    ("US", "United States"),
+]
+
 
 class Lead(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
     name = models.CharField(max_length=160)
     email = models.EmailField(blank=True)
@@ -83,6 +89,7 @@ class Lead(models.Model):
 
 
 class Client(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -101,13 +108,14 @@ class Client(models.Model):
 
     class Meta:
         ordering = ["name"]
-        unique_together = ("owner_email", "name")
+        unique_together = ("market", "owner_email", "name")
 
     def __str__(self) -> str:
         return self.name
 
 
 class BusinessProfile(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -115,7 +123,7 @@ class BusinessProfile(models.Model):
         on_delete=models.CASCADE,
         related_name="business_profiles",
     )
-    owner_email = models.EmailField(unique=True)
+    owner_email = models.EmailField(db_index=True)
     business_name = models.CharField(max_length=180)
     business_logo = models.FileField(upload_to="business_logos/%Y/%m/", blank=True)
     business_phone = models.CharField(max_length=40, blank=True)
@@ -131,6 +139,7 @@ class BusinessProfile(models.Model):
 
     class Meta:
         ordering = ["business_name"]
+        unique_together = ("market", "owner_email")
 
     def __str__(self) -> str:
         return self.business_name
@@ -141,6 +150,7 @@ class Invoice(models.Model):
     STATUS_CHOICES = INVOICE_STATUS_CHOICES
 
     public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -209,14 +219,15 @@ class PlanSubscription(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
-    owner = models.OneToOneField(
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.CASCADE,
-        related_name="subscription",
+        related_name="subscriptions",
     )
-    owner_email = models.EmailField(unique=True)
+    owner_email = models.EmailField(db_index=True)
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="free")
     requested_at = models.DateTimeField(null=True, blank=True)
@@ -229,9 +240,10 @@ class PlanSubscription(models.Model):
 
     class Meta:
         ordering = ["owner_email"]
+        unique_together = ("market", "owner_email")
 
     def __str__(self) -> str:
-        return f"{self.owner_email} - {self.plan} ({self.status})"
+        return f"{self.owner_email} - {self.market} - {self.plan} ({self.status})"
 
     @property
     def is_pro_active(self) -> bool:
@@ -243,6 +255,8 @@ class PlanSubscription(models.Model):
 class PaymentGatewayConfig(models.Model):
     GATEWAY_CHOICES = [
         ("razorpay", "Razorpay"),
+        ("stripe", "Stripe"),
+        ("paypal", "PayPal"),
     ]
 
     MODE_CHOICES = [
@@ -250,7 +264,8 @@ class PaymentGatewayConfig(models.Model):
         ("live", "Live"),
     ]
 
-    gateway = models.CharField(max_length=30, choices=GATEWAY_CHOICES, unique=True, default="razorpay")
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    gateway = models.CharField(max_length=30, choices=GATEWAY_CHOICES, default="razorpay")
     enabled = models.BooleanField(default=False)
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="test")
     encrypted_key_id = models.TextField(blank=True)
@@ -259,22 +274,31 @@ class PaymentGatewayConfig(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["gateway"]
+        ordering = ["market", "gateway"]
+        unique_together = ("market", "gateway")
 
     def __str__(self) -> str:
         status = "enabled" if self.enabled else "disabled"
         return f"{self.get_gateway_display()} {self.get_mode_display()} ({status})"
 
     @classmethod
-    def razorpay(cls) -> "PaymentGatewayConfig | None":
-        return cls.objects.filter(gateway="razorpay").first()
+    def for_gateway(cls, gateway: str, market: str) -> "PaymentGatewayConfig | None":
+        return cls.objects.filter(gateway=gateway, market=market).first()
 
     @classmethod
-    def active_razorpay(cls) -> "PaymentGatewayConfig | None":
-        config = cls.razorpay()
+    def active_gateway(cls, gateway: str, market: str) -> "PaymentGatewayConfig | None":
+        config = cls.for_gateway(gateway, market)
         if config and config.enabled and config.is_configured:
             return config
         return None
+
+    @classmethod
+    def razorpay(cls) -> "PaymentGatewayConfig | None":
+        return cls.for_gateway("razorpay", "IN")
+
+    @classmethod
+    def active_razorpay(cls) -> "PaymentGatewayConfig | None":
+        return cls.active_gateway("razorpay", "IN")
 
     @property
     def key_id(self) -> str:

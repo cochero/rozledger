@@ -234,6 +234,7 @@ class AccountWorkflowTests(TestCase):
         email = "free-limit@example.com"
         for index in range(5):
             Invoice.objects.create(
+                market="US",
                 owner_email=email,
                 business_name="Free Business",
                 client_name=f"Client {index}",
@@ -271,11 +272,54 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("Free plan allows 5 invoices per month", response.json()["error"])
 
+    def test_us_quota_does_not_count_india_invoices_for_same_email(self):
+        email = "dual-market@example.com"
+        for index in range(5):
+            Invoice.objects.create(
+                market="IN",
+                owner_email=email,
+                business_name="India Business",
+                client_name=f"India Client {index}",
+                service_name="Service",
+                amount_before_gst="100.00",
+                gst_rate="0.00",
+                include_gst=False,
+                total_text="₹ 100.00",
+                upi_link="",
+                invoice_text="",
+                currency_symbol="₹",
+                tax_label="GST",
+            )
+
+        response = self.client.post(
+            reverse("create_invoice"),
+            data=json.dumps(
+                {
+                    "owner_email": email,
+                    "business_name": "US Business",
+                    "client_name": "US Client",
+                    "service_name": "Service",
+                    "amount_before_gst": "100",
+                    "gst_rate": "0",
+                    "include_gst": False,
+                    "currency_symbol": "$",
+                    "tax_label": "Sales tax",
+                    "total_text": "$ 100.00",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Invoice.objects.get(client_name="US Client").market, "US")
+
     def test_paid_plan_allows_hundredth_invoice_but_blocks_next(self):
         user = User.objects.create_user(username="paid@example.com", email="paid@example.com", password="strong-password-123")
-        PlanSubscription.objects.create(owner=user, owner_email=user.email, plan="pro", status="active", activated_at=timezone.now())
+        PlanSubscription.objects.create(market="US", owner=user, owner_email=user.email, plan="pro", status="active", activated_at=timezone.now())
         for index in range(99):
             Invoice.objects.create(
+                market="US",
                 owner=user,
                 owner_email=user.email,
                 business_name="Paid Business",
@@ -503,6 +547,23 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(subscription.plan, "pro")
         self.assertEqual(subscription.status, "requested")
         self.assertContains(response, "Admin approval is pending")
+
+    def test_subscriptions_are_separated_by_market_for_same_user(self):
+        user = User.objects.create_user("dual-sub@example.com", "dual-sub@example.com", "password-123456")
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("request_pro_activation"), HTTP_HOST="rozledger.com", follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        us_subscription = PlanSubscription.objects.get(owner=user, market="US")
+        self.assertEqual(us_subscription.status, "requested")
+        self.assertFalse(PlanSubscription.objects.filter(owner=user, market="IN").exists())
+
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+
+        self.assertEqual(dashboard_response.status_code, 200)
+        india_subscription = PlanSubscription.objects.get(owner=user, market="IN")
+        self.assertEqual(india_subscription.status, "free")
 
     def test_admin_can_activate_15_day_pro_trial(self):
         user = User.objects.create_user("trial@example.com", "trial@example.com", "password-123456")

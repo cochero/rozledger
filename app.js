@@ -93,6 +93,7 @@ function attributionPayload(source) {
 
 function invoicePayload() {
   return {
+    market: market === "us" ? "US" : "IN",
     business_name: byId("bizName").value.trim(),
     business_phone: byId("bizPhone").value.trim(),
     owner_email: byId("ownerEmail").value.trim(),

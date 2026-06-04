@@ -69,26 +69,31 @@ def current_account_email(request: HttpRequest) -> str:
     return (request.user.email or request.user.username).lower()
 
 
+def current_market(request: HttpRequest) -> str:
+    return "US" if is_us_host(request) else "IN"
+
+
 def account_q(request: HttpRequest) -> Q:
     email = current_account_email(request)
-    return Q(owner=request.user) | Q(owner_email__iexact=email)
+    return (Q(owner=request.user) | Q(owner_email__iexact=email)) & Q(market=current_market(request))
 
 
 def get_subscription(request: HttpRequest) -> PlanSubscription:
     email = current_account_email(request)
-    subscription = PlanSubscription.objects.filter(Q(owner=request.user) | Q(owner_email__iexact=email)).first()
+    market = current_market(request)
+    subscription = PlanSubscription.objects.filter((Q(owner=request.user) | Q(owner_email__iexact=email)) & Q(market=market)).first()
     if subscription is None:
-        subscription = PlanSubscription.objects.create(owner=request.user, owner_email=email)
+        subscription = PlanSubscription.objects.create(owner=request.user, owner_email=email, market=market)
     elif subscription.owner_id is None:
         subscription.owner = request.user
         subscription.save(update_fields=["owner", "updated_at"])
     return subscription
 
 
-def subscription_for_email(email: str) -> PlanSubscription | None:
+def subscription_for_email(email: str, market: str = "IN") -> PlanSubscription | None:
     if not email:
         return None
-    return PlanSubscription.objects.filter(owner_email__iexact=email).first()
+    return PlanSubscription.objects.filter(owner_email__iexact=email, market=market).first()
 
 
 def invoice_month_range():
@@ -101,12 +106,12 @@ def invoice_month_range():
     return start, end
 
 
-def invoice_quota_for_email(email: str) -> tuple[int, int, str]:
-    subscription = subscription_for_email(email)
+def invoice_quota_for_email(email: str, market: str = "IN") -> tuple[int, int, str]:
+    subscription = subscription_for_email(email, market)
     limit = PAID_MONTHLY_INVOICE_LIMIT if subscription and subscription.is_pro_active else FREE_MONTHLY_INVOICE_LIMIT
     plan_name = "paid" if subscription and subscription.is_pro_active else "free"
     start, end = invoice_month_range()
-    used = Invoice.objects.filter(owner_email__iexact=email, created_at__gte=start, created_at__lt=end).count()
+    used = Invoice.objects.filter(owner_email__iexact=email, market=market, created_at__gte=start, created_at__lt=end).count()
     return used, limit, plan_name
 
 
@@ -138,13 +143,14 @@ def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
     }
     if invoice.business_logo:
         defaults["business_logo"] = invoice.business_logo
-    BusinessProfile.objects.update_or_create(owner_email=invoice.owner_email, defaults=defaults)
+    BusinessProfile.objects.update_or_create(market=invoice.market, owner_email=invoice.owner_email, defaults=defaults)
 
 
 def save_client_from_invoice(invoice: Invoice, owner=None) -> None:
     if not invoice.owner_email or not invoice.client_name:
         return
     Client.objects.update_or_create(
+        market=invoice.market,
         owner_email=invoice.owner_email,
         name=invoice.client_name,
         defaults={
@@ -315,6 +321,18 @@ def clean_currency_symbol(value: Any) -> str:
 
 def clean_tax_label(value: Any) -> str:
     return clean_text(value, "GST", 40) or "GST"
+
+
+def preferred_gateway_for_market(market: str) -> str:
+    return "stripe" if market == "US" else "razorpay"
+
+
+def active_payment_gateway_for_market(market: str) -> PaymentGatewayConfig | None:
+    return PaymentGatewayConfig.active_gateway(preferred_gateway_for_market(market), market)
+
+
+def gateway_name_for_market(market: str) -> str:
+    return "Stripe or PayPal" if market == "US" else "Razorpay"
 
 
 def invoice_template_options(selected: str) -> str:
@@ -824,17 +842,19 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     client_tax_id_label = "Tax ID" if us_market else "GSTIN"
     client_tax_id_placeholder = "Optional tax ID" if us_market else "Optional GSTIN"
     invoices = Invoice.objects.filter(account_q(request))[:20]
-    leads = Lead.objects.filter(email__iexact=email)[:10]
+    leads = Lead.objects.filter(email__iexact=email, market=current_market(request))[:10]
     clients = Client.objects.filter(account_q(request))[:20]
     business_profile = get_business_profile(request)
     subscription = get_subscription(request)
-    quota_used, quota_limit, quota_plan = invoice_quota_for_email(email)
-    payment_gateway = PaymentGatewayConfig.active_razorpay()
+    market = current_market(request)
+    quota_used, quota_limit, quota_plan = invoice_quota_for_email(email, market)
+    payment_gateway = active_payment_gateway_for_market(market)
+    gateway_name = gateway_name_for_market(market)
     subscription_title, subscription_message, subscription_tone = subscription_status_copy(subscription)
     gateway_message = (
-        f"Razorpay {payment_gateway.get_mode_display()} mode is enabled. Online checkout can be connected to this approval flow."
+        f"{payment_gateway.get_gateway_display()} {payment_gateway.get_mode_display()} mode is enabled. Online checkout can be connected to this approval flow."
         if payment_gateway
-        else "Online payment checkout is disabled. Pro activation is currently handled by admin approval."
+        else f"Online payment checkout is disabled. {gateway_name} activation is currently handled by admin approval."
     )
     notice = ""
     if request.GET.get("pro") == "requested":
@@ -1053,6 +1073,7 @@ def create_client(request: HttpRequest) -> HttpResponse:
         return redirect("/dashboard/")
 
     Client.objects.update_or_create(
+        market=current_market(request),
         owner_email=email,
         name=name,
         defaults={
@@ -1119,11 +1140,12 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         elif logo_error:
             error = logo_error
         else:
-            quota_used, quota_limit, quota_plan = invoice_quota_for_email(current_account_email(request))
+            quota_used, quota_limit, quota_plan = invoice_quota_for_email(current_account_email(request), current_market(request))
             if quota_used >= quota_limit:
                 error = invoice_quota_message(quota_used, quota_limit, quota_plan)
             else:
                 invoice = Invoice.objects.create(
+                    market=current_market(request),
                     owner=request.user,
                     owner_email=current_account_email(request),
                     template=values["template"],
@@ -1331,12 +1353,14 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
     subscription = get_subscription(request)
     title, message, tone = subscription_status_copy(subscription)
-    payment_gateway = PaymentGatewayConfig.active_razorpay()
+    market = current_market(request)
+    payment_gateway = active_payment_gateway_for_market(market)
+    gateway_name = gateway_name_for_market(market)
     paid_price = market_price(request)
     gateway_message = (
-        f"Razorpay {payment_gateway.get_mode_display()} mode is configured, but manual admin approval is still kept as a control step."
+        f"{payment_gateway.get_gateway_display()} {payment_gateway.get_mode_display()} mode is configured, but manual admin approval is still kept as a control step."
         if payment_gateway
-        else "Razorpay checkout is not enabled yet. This request will be reviewed and approved manually from Django admin."
+        else f"{gateway_name} checkout is not enabled yet. This request will be reviewed and approved manually from Django admin."
     )
     request_button = ""
     if subscription.is_pro_active:
@@ -1400,7 +1424,8 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
 @require_POST
 def request_pro_activation(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
-    payment_gateway = PaymentGatewayConfig.active_razorpay()
+    market = current_market(request)
+    payment_gateway = active_payment_gateway_for_market(market)
     subscription = get_subscription(request)
     subscription.plan = "pro"
     subscription.status = "requested"
@@ -1413,7 +1438,8 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
         "\n".join(
             [
                 f"Pro activation requested by {email}.",
-                f"Payment gateway: {'Razorpay enabled' if payment_gateway else 'disabled'}",
+                f"Market: {subscription.get_market_display()}",
+                f"Payment gateway: {payment_gateway.get_gateway_display() + ' enabled' if payment_gateway else 'disabled'}",
             ]
         ),
         settings.DEFAULT_FROM_EMAIL,
@@ -1825,6 +1851,7 @@ def options(request: HttpRequest) -> JsonResponse:
 
 
 def lead_from_payload(payload: dict[str, Any], request: HttpRequest, require_same_origin: bool = True) -> tuple[Lead | None, dict[str, str]]:
+    market = current_market(request)
     name = clean_text(payload.get("name"), max_length=160)
     email = clean_text(payload.get("email"), max_length=254).lower()
     phone = clean_text(payload.get("phone"), max_length=40)
@@ -1852,14 +1879,15 @@ def lead_from_payload(payload: dict[str, Any], request: HttpRequest, require_sam
         errors["business_type"] = "Choose a valid business type."
     if SPAM_TEXT_RE.search(" ".join([name, phone, business_type, source, utm_source, utm_medium, utm_campaign])):
         errors["request"] = "Request could not be saved."
-    if email and Lead.objects.filter(email__iexact=email, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
+    if email and Lead.objects.filter(email__iexact=email, market=market, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
         errors["email"] = "A request for this email is already saved."
-    if phone_digits and Lead.objects.filter(phone_digits=phone_digits, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
+    if phone_digits and Lead.objects.filter(phone_digits=phone_digits, market=market, created_at__gte=timezone.now() - timedelta(hours=24)).exists():
         errors["phone"] = "A request for this phone number is already saved."
     if errors:
         return None, errors
 
     lead = Lead.objects.create(
+        market=market,
         name=name,
         email=email,
         phone=phone,
@@ -1990,7 +2018,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     if amount_before_gst <= 0:
         return JsonResponse({"error": "Invoice amount must be greater than zero."}, status=400)
 
-    quota_used, quota_limit, quota_plan = invoice_quota_for_email(owner_email)
+    market = current_market(request)
+    quota_used, quota_limit, quota_plan = invoice_quota_for_email(owner_email, market)
     if quota_used >= quota_limit:
         return JsonResponse(
             {
@@ -2001,6 +2030,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         )
 
     invoice = Invoice.objects.create(
+        market=market,
         owner=request.user if request.user.is_authenticated else None,
         owner_email=owner_email,
         template=clean_invoice_template(payload.get("template")),
