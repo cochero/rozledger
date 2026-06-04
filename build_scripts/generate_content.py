@@ -459,13 +459,31 @@ def render_content_index() -> str:
     <main class="article-shell">
       <section class="article">
         <p class="eyebrow">RozLedger template library</p>
-        <h1>Invoice, GST, Receipt and WhatsApp Templates for India</h1>
-        <p class="article-lead">Browse practical invoice, receipt, GST and WhatsApp payment templates for Indian freelancers, tutors, agencies and shop owners.</p>
-        <div class="content-grid">{items}</div>
+        <h1>Invoice, GST, Receipt and Accounting Templates for India</h1>
+        <p class="article-lead">
+          Browse practical invoice, receipt, GST, WhatsApp payment and accounting workflow templates
+          for Indian freelancers, tutors, agencies and shop owners.
+        </p>
+        <section>
+          <h2>Finance workflows now supported in RozLedger</h2>
+          <p>
+            RozLedger now supports saved invoices, client records, a chart of accounts and manual
+            journal entries. Use the templates below for daily billing work, then use the dashboard
+            to keep practical finance records for income, expenses, receivables and payables.
+          </p>
+        </section>
+        <div class="content-grid">{items}
+          <a class="content-link" href="/accounts/register/"><span>Accounting</span><strong>Chart of accounts starter for Indian small business</strong></a>
+          <a class="content-link" href="/dashboard/accounting/journal/new/"><span>Accounting</span><strong>Journal entry template for daily records</strong></a>
+        </div>
       </section>
     </main>
 """
-    return layout("Invoice, GST, Receipt and WhatsApp Templates", "RozLedger template library for Indian small businesses.", body)
+    return layout(
+        "Invoice, GST, Receipt and Accounting Templates",
+        "RozLedger templates and finance workflows for Indian small businesses: invoices, GST, receipts, WhatsApp reminders, chart of accounts and journal entry basics.",
+        body,
+    )
 
 
 BLOG_SECTIONS = {
