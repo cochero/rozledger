@@ -704,6 +704,8 @@ def terms(request: HttpRequest) -> FileResponse:
 
 @require_http_methods(GET_OR_HEAD)
 def contact(request: HttpRequest) -> FileResponse:
+    if is_us_host(request):
+        return serve_project_file("contact-us.html", "text/html")
     return serve_project_file("contact.html", "text/html")
 
 

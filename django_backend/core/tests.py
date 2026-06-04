@@ -71,6 +71,25 @@ class PublicPagesTests(TestCase):
         self.assertIn("Invoice, GST", content)
         self.assertIn("GST Invoice Format", content)
 
+    def test_dot_com_contact_uses_us_contact_details(self):
+        response = self.client.get("/contact/", HTTP_HOST="rozledger.com")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("114 Crockett Rd", content)
+        self.assertIn("King Of Prussia, PA 19406", content)
+        self.assertIn("(215) 774-1500", content)
+        self.assertNotIn("Palarivattom", content)
+
+    def test_dot_in_contact_keeps_india_contact_details(self):
+        response = self.client.get("/contact/", HTTP_HOST="rozledger.in")
+        content = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Palarivattom", content)
+        self.assertIn("+91 95160 22222", content)
+        self.assertNotIn("114 Crockett Rd", content)
+
 
 @override_settings(**TEST_SETTINGS)
 class AccountWorkflowTests(TestCase):
