@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import timedelta
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
@@ -313,6 +314,19 @@ def csrf_input(request: HttpRequest) -> str:
     return f'<input type="hidden" name="csrfmiddlewaretoken" value="{escape(get_token(request))}" />'
 
 
+def generate_registration_captcha(request: HttpRequest) -> str:
+    left = secrets.randbelow(8) + 2
+    right = secrets.randbelow(8) + 2
+    request.session["registration_captcha_answer"] = str(left + right)
+    return f"{left} + {right}"
+
+
+def registration_captcha_valid(request: HttpRequest) -> bool:
+    expected = request.session.pop("registration_captcha_answer", "")
+    provided = clean_text(request.POST.get("captcha_answer"), max_length=20)
+    return bool(expected) and provided == expected
+
+
 def google_tag() -> str:
     return """<!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-KLPE4CG3TK"></script>
@@ -519,6 +533,15 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
         if is_register
         else ""
     )
+    captcha_field = ""
+    if is_register:
+        captcha_question = generate_registration_captcha(request)
+        captcha_field = f"""
+        <label>
+          Security check: {escape(captcha_question)}
+          <input name="captcha_answer" inputmode="numeric" autocomplete="off" placeholder="Answer" required />
+        </label>
+        """
     password_id = f"{mode}-password"
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     body = f"""
@@ -543,6 +566,7 @@ def auth_form(request: HttpRequest, mode: str, error: str = "") -> HttpResponse:
               <button class="password-toggle" type="button" data-password-toggle="{password_id}" aria-label="Show password">Show</button>
             </span>
           </label>
+          {captcha_field}
           <button class="button primary" type="submit">{title}</button>
         </form>
         <p class="account-alt">{alternate}</p>
@@ -684,6 +708,8 @@ def register_view(request: HttpRequest) -> HttpResponse:
 
     if "@" not in email or len(password) < 8:
         return auth_form(request, "register", "Enter a valid email and a password with at least 8 characters.")
+    if not registration_captcha_valid(request):
+        return auth_form(request, "register", "Please complete the security check correctly.")
     if User.objects.filter(username=email).exists():
         return auth_form(request, "register", "An account already exists for this email. Please login.")
 

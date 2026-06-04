@@ -60,12 +60,16 @@ class AccountWorkflowTests(TestCase):
         cache.clear()
 
     def test_register_logs_customer_into_dashboard(self):
+        session = self.client.session
+        session["registration_captcha_answer"] = "12"
+        session.save()
         response = self.client.post(
             reverse("register"),
             {
                 "name": "Test Customer",
                 "email": "customer@example.com",
                 "password": "strong-password-123",
+                "captcha_answer": "12",
                 "next": "/dashboard/",
             },
             follow=True,
@@ -74,6 +78,34 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Dashboard")
         self.assertTrue(User.objects.filter(username="customer@example.com").exists())
+
+    def test_register_form_has_password_toggle_and_captcha(self):
+        response = self.client.get(reverse("register"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-password-toggle="register-password"')
+        self.assertContains(response, "Security check:")
+        self.assertContains(response, 'name="captcha_answer"')
+
+    def test_register_rejects_wrong_captcha(self):
+        session = self.client.session
+        session["registration_captcha_answer"] = "12"
+        session.save()
+
+        response = self.client.post(
+            reverse("register"),
+            {
+                "name": "Bot User",
+                "email": "bot@example.com",
+                "password": "strong-password-123",
+                "captcha_answer": "13",
+                "next": "/dashboard/",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Please complete the security check correctly.")
+        self.assertFalse(User.objects.filter(username="bot@example.com").exists())
 
     def test_login_form_has_password_show_toggle(self):
         response = self.client.get(reverse("login"))
