@@ -636,6 +636,10 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(invoice_form, 'value="Profile Business"')
         self.assertContains(invoice_form, "Profile Street")
         self.assertContains(invoice_form, "Profile Bank")
+        self.assertContains(invoice_form, "Selected template preview")
+        self.assertContains(invoice_form, "Service Pro")
+        self.assertContains(invoice_form, "invoice-live-preview")
+        self.assertContains(invoice_form, "Profile Business")
 
     def test_customer_can_add_custom_account(self):
         user = User.objects.create_user("account@example.com", "account@example.com", "password-123456")

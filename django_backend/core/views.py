@@ -2108,38 +2108,125 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 return redirect(f"/dashboard/?invoice=created#invoices")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    preview_logo = ""
+    if profile and profile.business_logo:
+        preview_logo = f'<span class="invoice-preview-logo">Logo saved</span>'
     body = f"""
     <main class="account-shell wide-form">
-      <section class="account-card">
-        <p class="eyebrow">Invoice</p>
-        <h1>Create invoice</h1>
-        <p class="account-copy">Use this dashboard form when you want the invoice saved directly to your account.</p>
-        {error_html}
-        <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form" enctype="multipart/form-data">
-          {csrf_input(request)}
-          <label>Professional template<select name="template">{invoice_template_options(values['template'])}</select></label>
-          <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" /></label>
-          <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required /></label>
-          <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
-          <label>Business phone<input name="business_phone" value="{escape(values['business_phone'])}" placeholder="Optional" /></label>
-          <label>Business full address<textarea name="business_address" rows="3">{escape(values['business_address'])}</textarea></label>
-          <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required /></label>
-          <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" /></label>
-          <label>Client full address<textarea name="client_address" rows="3">{escape(values['client_address'])}</textarea></label>
-          <label>{tax_id_label}<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" /></label>
-          <label>Service<input name="service_name" value="{escape(values['service_name'])}" required /></label>
-          <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} /> {include_tax_label}</label>
-          <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required /></label>
-          <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required /></label>
-          <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" /></label>
-          <label class="full-row">{payment_link_label}<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="{payment_placeholder}" /></label>
-          <label class="full-row">Bank information<textarea name="bank_details" rows="4" placeholder="Bank name, account number, IFSC, account holder">{escape(values['bank_details'])}</textarea></label>
-          <label class="full-row">Thank you note<textarea name="thank_you_note" rows="3">{escape(values['thank_you_note'])}</textarea></label>
-          <div class="dashboard-actions">
-            <button class="button primary" type="submit">Save invoice</button>
-            <a class="button secondary" href="/dashboard/">Back to dashboard</a>
-          </div>
-        </form>
+      <section class="account-card invoice-builder-card">
+        <div>
+          <p class="eyebrow">Invoice</p>
+          <h1>Create invoice</h1>
+          <p class="account-copy">Choose a professional template and preview it with your saved company information before saving the invoice.</p>
+          {error_html}
+        </div>
+        <div class="invoice-builder-layout">
+          <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form invoice-builder-form" enctype="multipart/form-data">
+            {csrf_input(request)}
+            <label>Professional template<select name="template" data-preview-field>{invoice_template_options(values['template'])}</select></label>
+            <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" data-preview-field /></label>
+            <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required data-preview-field /></label>
+            <label>Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
+            <label>Business phone<input name="business_phone" value="{escape(values['business_phone'])}" placeholder="Optional" data-preview-field /></label>
+            <label>Business full address<textarea name="business_address" rows="3" data-preview-field>{escape(values['business_address'])}</textarea></label>
+            <label>Client name<input name="client_name" value="{escape(values['client_name'])}" required data-preview-field /></label>
+            <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" data-preview-field /></label>
+            <label>Client full address<textarea name="client_address" rows="3" data-preview-field>{escape(values['client_address'])}</textarea></label>
+            <label>{tax_id_label}<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" data-preview-field /></label>
+            <label>Service<input name="service_name" value="{escape(values['service_name'])}" required data-preview-field /></label>
+            <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} data-preview-field /> {include_tax_label}</label>
+            <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required data-preview-field /></label>
+            <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required data-preview-field /></label>
+            <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" data-preview-field /></label>
+            <label class="full-row">{payment_link_label}<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="{payment_placeholder}" data-preview-field /></label>
+            <label class="full-row">Bank information<textarea name="bank_details" rows="4" placeholder="Bank name, account number, IFSC, account holder" data-preview-field>{escape(values['bank_details'])}</textarea></label>
+            <label class="full-row">Thank you note<textarea name="thank_you_note" rows="3" data-preview-field>{escape(values['thank_you_note'])}</textarea></label>
+            <div class="dashboard-actions">
+              <button class="button primary" type="submit">Save invoice</button>
+              <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+            </div>
+          </form>
+          <aside class="invoice-live-preview" aria-label="Selected invoice template preview">
+            <div class="preview-toolbar">
+              <span>Selected template preview</span>
+              <strong data-preview-template-name>{escape(dict(Invoice.TEMPLATE_CHOICES).get(values['template'], 'Classic Ledger'))}</strong>
+            </div>
+            <article class="invoice-preview-document invoice-preview-{escape(values['template'])}" data-preview-document style="--preview-accent: {escape(values['accent_color'])};">
+              <header class="invoice-preview-header">
+                <div>
+                  {preview_logo}
+                  <span class="invoice-preview-kicker">{escape('Tax invoice' if not us_market else 'Invoice')}</span>
+                  <h2 data-preview="business_name">{escape(values['business_name'] or 'Your business')}</h2>
+                  <p data-preview="business_phone">{escape(values['business_phone'] or 'Business phone')}</p>
+                  <p data-preview="business_address">{escape(values['business_address'] or 'Business address').replace(chr(10), '<br />')}</p>
+                </div>
+                <div class="invoice-preview-number">
+                  <strong>RL-PREVIEW</strong>
+                  <span>Due in <b data-preview="due_days">{escape(values['due_days'] or '7')}</b> days</span>
+                </div>
+              </header>
+              <section class="invoice-preview-addresses">
+                <div><span>Bill to</span><strong data-preview="client_name">{escape(values['client_name'] or 'Client name')}</strong><p data-preview="client_phone">{escape(values['client_phone'] or 'Client phone')}</p><p data-preview="client_address">{escape(values['client_address'] or 'Client address').replace(chr(10), '<br />')}</p></div>
+                <div><span>Payment</span><p data-preview="upi_link">{escape(values['upi_link'] or payment_link_label)}</p><p data-preview="bank_details">{escape(values['bank_details'] or 'Bank information').replace(chr(10), '<br />')}</p></div>
+              </section>
+              <div class="invoice-preview-line">
+                <span data-preview="service_name">{escape(values['service_name'] or 'Service description')}</span>
+                <strong data-preview-total>{escape(invoice_total_text(decimal_value(values['amount_before_gst']), decimal_value(values['gst_rate']), values['include_gst'] == 'on', currency_symbol))}</strong>
+              </div>
+              <p class="invoice-preview-note" data-preview="thank_you_note">{escape(values['thank_you_note'] or 'Thank you for your business.')}</p>
+            </article>
+          </aside>
+        </div>
+        <script>
+          (() => {{
+            const form = document.querySelector('.invoice-builder-form');
+            const doc = document.querySelector('[data-preview-document]');
+            if (!form || !doc) return;
+            const labels = {{"classic": "Classic Ledger", "executive": "Executive Black", "modern": "Modern Accent", "minimal": "Minimal Clean", "service": "Service Pro"}};
+            const currency = {json.dumps(currency_symbol)};
+            const taxLabel = {json.dumps(tax_label)};
+            const setHtml = (name, fallback) => {{
+              const target = doc.querySelector(`[data-preview="${{name}}"]`);
+              const field = form.elements[name];
+              if (!target || !field) return;
+              const value = field.value || fallback;
+              target.innerHTML = value.replace(/\\n/g, '<br />');
+            }};
+            const totalText = () => {{
+              const amount = Number(form.elements.amount_before_gst.value || 0);
+              const includeTax = Boolean(form.elements.include_gst?.checked);
+              const rate = includeTax ? Number(form.elements.gst_rate.value || 0) : 0;
+              const total = amount + (amount * rate / 100);
+              return `${{currency}} ${{total.toFixed(2)}}`;
+            }};
+            const update = () => {{
+              const template = form.elements.template.value || 'classic';
+              const accent = form.elements.accent_color.value || '#126b4f';
+              doc.className = `invoice-preview-document invoice-preview-${{template}}`;
+              doc.style.setProperty('--preview-accent', accent);
+              const templateName = document.querySelector('[data-preview-template-name]');
+              if (templateName) templateName.textContent = labels[template] || 'Classic Ledger';
+              setHtml('business_name', 'Your business');
+              setHtml('business_phone', 'Business phone');
+              setHtml('business_address', 'Business address');
+              setHtml('client_name', 'Client name');
+              setHtml('client_phone', 'Client phone');
+              setHtml('client_address', 'Client address');
+              setHtml('service_name', 'Service description');
+              setHtml('upi_link', {json.dumps(payment_link_label)});
+              setHtml('bank_details', 'Bank information');
+              setHtml('thank_you_note', 'Thank you for your business.');
+              setHtml('due_days', '7');
+              const total = doc.querySelector('[data-preview-total]');
+              if (total) total.textContent = totalText();
+            }};
+            form.querySelectorAll('[data-preview-field]').forEach((field) => {{
+              field.addEventListener('input', update);
+              field.addEventListener('change', update);
+            }});
+            update();
+          }})();
+        </script>
       </section>
     </main>
     """
