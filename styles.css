@@ -1680,6 +1680,14 @@ textarea {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.voucher-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.voucher-form .full-row {
+  grid-column: 1 / -1;
+}
+
 .inventory-form .full-row,
 .inventory-form .checkbox-row,
 .inventory-form .button {
@@ -2294,6 +2302,7 @@ textarea {
   .setup-preset-grid,
   .setup-detail-grid,
   .inventory-form,
+  .voucher-form,
   .dashboard-module-grid,
   .report-kpi-grid,
   .aging-grid,
@@ -2310,7 +2319,8 @@ textarea {
 
   .inventory-form .full-row,
   .inventory-form .checkbox-row,
-  .inventory-form .button {
+  .inventory-form .button,
+  .voucher-form .full-row {
     grid-column: 1 / -1;
   }
 }
@@ -2344,7 +2354,8 @@ textarea {
   .invoice-preview-item,
   .setup-preset-grid,
   .setup-detail-grid,
-  .inventory-form {
+  .inventory-form,
+  .voucher-form {
     grid-template-columns: 1fr;
   }
 

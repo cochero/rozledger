@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -175,6 +175,27 @@ class AccountAdmin(admin.ModelAdmin):
     list_filter = ("market", "account_type", "normal_balance", "is_active", "created_at")
 
 
+@admin.register(UnitOfMeasure)
+class UnitOfMeasureAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "name", "symbol", "created_at")
+    search_fields = ("owner_email", "name", "symbol")
+    list_filter = ("market", "created_at")
+
+
+@admin.register(Godown)
+class GodownAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "name", "is_active", "created_at")
+    search_fields = ("owner_email", "name", "address")
+    list_filter = ("market", "is_active", "created_at")
+
+
+@admin.register(StockGroup)
+class StockGroupAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "name", "parent", "created_at")
+    search_fields = ("owner_email", "name", "parent__name")
+    list_filter = ("market", "created_at")
+
+
 class JournalLineInline(admin.TabularInline):
     model = JournalLine
     extra = 0
@@ -208,16 +229,52 @@ class VendorBillAdmin(admin.ModelAdmin):
 
 @admin.register(InventoryItem)
 class InventoryItemAdmin(admin.ModelAdmin):
-    list_display = ("market", "owner_email", "sku", "name", "category", "item_type", "unit", "sales_rate", "purchase_rate", "reorder_level", "track_inventory", "is_active")
-    search_fields = ("owner__username", "owner__email", "owner_email", "sku", "name", "category")
-    list_filter = ("market", "item_type", "track_inventory", "is_active", "created_at")
+    list_display = ("market", "owner_email", "sku", "name", "stock_group", "category", "item_type", "unit", "sales_rate", "purchase_rate", "reorder_level", "track_inventory", "is_active")
+    search_fields = ("owner__username", "owner__email", "owner_email", "sku", "name", "category", "stock_group__name")
+    list_filter = ("market", "stock_group", "item_type", "track_inventory", "is_active", "created_at")
 
 
 @admin.register(StockMovement)
 class StockMovementAdmin(admin.ModelAdmin):
-    list_display = ("market", "owner_email", "item", "movement_type", "movement_date", "quantity", "unit_cost", "reference", "created_at")
-    search_fields = ("owner__username", "owner__email", "owner_email", "item__name", "item__sku", "reference", "notes")
-    list_filter = ("market", "movement_type", "movement_date", "created_at")
+    list_display = ("market", "owner_email", "item", "godown", "movement_type", "movement_date", "quantity", "unit_cost", "reference", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "item__name", "item__sku", "godown__name", "reference", "notes")
+    list_filter = ("market", "godown", "movement_type", "movement_date", "created_at")
+
+
+class VoucherLedgerLineInline(admin.TabularInline):
+    model = VoucherLedgerLine
+    extra = 0
+    fields = ("account", "description", "debit", "credit")
+
+
+class VoucherInventoryLineInline(admin.TabularInline):
+    model = VoucherInventoryLine
+    extra = 0
+    fields = ("item", "godown", "description", "quantity", "rate", "amount", "stock_movement")
+    readonly_fields = ("stock_movement",)
+
+
+@admin.register(Voucher)
+class VoucherAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "voucher_type", "voucher_number", "voucher_date", "party_name", "total_amount", "journal_entry", "created_at")
+    search_fields = ("owner_email", "voucher_number", "party_name", "narration", "ledger_lines__account__name", "inventory_lines__item__name")
+    list_filter = ("market", "voucher_type", "voucher_date", "created_at")
+    readonly_fields = ("journal_entry", "created_at")
+    inlines = (VoucherLedgerLineInline, VoucherInventoryLineInline)
+
+
+@admin.register(StockCostLayer)
+class StockCostLayerAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "item", "godown", "layer_date", "original_quantity", "remaining_quantity", "unit_cost", "source_movement")
+    search_fields = ("owner_email", "item__name", "item__sku", "godown__name")
+    list_filter = ("market", "godown", "layer_date", "created_at")
+
+
+@admin.register(StockLayerConsumption)
+class StockLayerConsumptionAdmin(admin.ModelAdmin):
+    list_display = ("sale_line", "layer", "quantity", "unit_cost", "amount", "created_at")
+    search_fields = ("sale_line__item__name", "layer__item__name")
+    list_filter = ("created_at",)
 
 
 @admin.register(AuditLog)

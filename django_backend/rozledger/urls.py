@@ -33,6 +33,7 @@ urlpatterns = [
     path("dashboard/ai/", views.ai_assistant, name="ai_assistant"),
     path("dashboard/setup/", views.business_setup, name="business_setup"),
     path("dashboard/inventory/", views.inventory, name="inventory"),
+    path("dashboard/vouchers/new/", views.voucher_new, name="voucher_new"),
     path("dashboard/business-profile/", views.business_profile, name="business_profile"),
     path("dashboard/business-profile/logo/", views.business_profile_logo, name="business_profile_logo"),
     path("dashboard/clients/", views.create_client, name="create_client"),

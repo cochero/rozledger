@@ -18,6 +18,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.mail import send_mail
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
@@ -28,7 +29,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -48,12 +49,15 @@ DEFAULT_CHART = [
     ("1010", "Bank account", "asset", "debit"),
     ("1100", "Accounts receivable", "asset", "debit"),
     ("1200", "Tax receivable", "asset", "debit"),
+    ("1210", "Inventory asset", "asset", "debit"),
     ("2000", "Accounts payable", "liability", "credit"),
     ("2100", "Sales tax / GST payable", "liability", "credit"),
     ("3000", "Owner equity", "equity", "credit"),
     ("4000", "Service income", "revenue", "credit"),
     ("4100", "Other income", "revenue", "credit"),
+    ("4120", "Product sales", "revenue", "credit"),
     ("5000", "Cost of services", "expense", "debit"),
+    ("5010", "Cost of goods sold", "expense", "debit"),
     ("5100", "Office expenses", "expense", "debit"),
     ("5200", "Marketing expenses", "expense", "debit"),
     ("5300", "Travel expenses", "expense", "debit"),
@@ -285,6 +289,184 @@ def apply_business_type_accounts(request: HttpRequest, business_type: str) -> in
     return len(accounts)
 
 
+def ensure_default_inventory_masters(request: HttpRequest) -> tuple[UnitOfMeasure, Godown, StockGroup]:
+    email = current_account_email(request)
+    market = current_market(request)
+    unit, _ = UnitOfMeasure.objects.get_or_create(
+        market=market,
+        owner_email=email,
+        symbol="pcs",
+        defaults={"owner": request.user, "name": "Pieces"},
+    )
+    godown, _ = Godown.objects.get_or_create(
+        market=market,
+        owner_email=email,
+        name="Main location",
+        defaults={"owner": request.user, "address": ""},
+    )
+    stock_group, _ = StockGroup.objects.get_or_create(
+        market=market,
+        owner_email=email,
+        name="Primary",
+        defaults={"owner": request.user},
+    )
+    return unit, godown, stock_group
+
+
+def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
+    prefix = {
+        "sales": "SAL",
+        "purchase": "PUR",
+        "receipt": "RCT",
+        "payment": "PAY",
+        "contra": "CON",
+        "journal": "JRN",
+        "stock_journal": "STK",
+    }.get(voucher_type, "VCH")
+    count = Voucher.objects.filter(account_q(request), voucher_type=voucher_type).count() + 1
+    return f"{prefix}-{timezone.localdate():%Y%m}-{count:05d}"
+
+
+def create_voucher_with_lines(
+    request: HttpRequest,
+    *,
+    voucher_type: str,
+    party_name: str,
+    narration: str,
+    ledger_lines: list[dict[str, Any]],
+    inventory_lines: list[dict[str, Any]] | None = None,
+    voucher_date=None,
+) -> Voucher:
+    with transaction.atomic():
+        voucher_date = voucher_date or timezone.localdate()
+        total_debit = sum((decimal_value(line.get("debit")) for line in ledger_lines), Decimal("0")).quantize(Decimal("0.01"))
+        total_credit = sum((decimal_value(line.get("credit")) for line in ledger_lines), Decimal("0")).quantize(Decimal("0.01"))
+        if total_debit != total_credit:
+            raise ValueError("Voucher must balance before posting.")
+        voucher = Voucher.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            voucher_type=voucher_type,
+            voucher_number=next_voucher_number(request, voucher_type),
+            voucher_date=voucher_date,
+            party_name=party_name,
+            narration=narration,
+            total_amount=max(total_debit, total_credit),
+        )
+        journal = JournalEntry.objects.create(
+            market=voucher.market,
+            owner=request.user,
+            owner_email=voucher.owner_email,
+            entry_date=voucher_date,
+            memo=f"{voucher.get_voucher_type_display()} {voucher.voucher_number} - {party_name}",
+            source=f"voucher_{voucher_type}",
+            total_debit=total_debit,
+            total_credit=total_credit,
+        )
+        for line in ledger_lines:
+            account = line["account"]
+            description = clean_text(line.get("description"), max_length=240)
+            debit = decimal_value(line.get("debit"))
+            credit = decimal_value(line.get("credit"))
+            JournalLine.objects.create(entry=journal, account=account, description=description, debit=debit, credit=credit)
+            VoucherLedgerLine.objects.create(voucher=voucher, account=account, description=description, debit=debit, credit=credit)
+        voucher.journal_entry = journal
+        voucher.save(update_fields=["journal_entry"])
+        for line in inventory_lines or []:
+            post_voucher_inventory_line(request, voucher, line)
+        return voucher
+
+
+def post_voucher_inventory_line(request: HttpRequest, voucher: Voucher, line: dict[str, Any]) -> VoucherInventoryLine:
+    item = line["item"]
+    godown = line.get("godown")
+    quantity = decimal_value(line.get("quantity"))
+    rate = decimal_value(line.get("rate"))
+    amount = (quantity * rate).quantize(Decimal("0.01"))
+    movement_type = "purchase" if voucher.voucher_type == "purchase" else "sale" if voucher.voucher_type == "sales" else "adjustment"
+    movement = StockMovement.objects.create(
+        market=voucher.market,
+        owner=request.user,
+        owner_email=voucher.owner_email,
+        item=item,
+        godown=godown,
+        movement_type=movement_type,
+        movement_date=voucher.voucher_date,
+        quantity=quantity,
+        unit_cost=rate,
+        reference=voucher.voucher_number,
+        notes=voucher.narration,
+    )
+    voucher_line = VoucherInventoryLine.objects.create(
+        voucher=voucher,
+        item=item,
+        godown=godown,
+        description=clean_text(line.get("description"), item.name, 240),
+        quantity=quantity,
+        rate=rate,
+        amount=amount,
+        stock_movement=movement,
+    )
+    if voucher.voucher_type == "purchase":
+        StockCostLayer.objects.create(
+            market=voucher.market,
+            owner_email=voucher.owner_email,
+            item=item,
+            godown=godown,
+            source_line=voucher_line,
+            source_movement=movement,
+            layer_date=voucher.voucher_date,
+            original_quantity=quantity,
+            remaining_quantity=quantity,
+            unit_cost=rate,
+        )
+    elif voucher.voucher_type == "sales":
+        fifo_cost = consume_fifo_layers(voucher_line)
+        if fifo_cost > 0 and voucher.journal_entry:
+            cogs_account = account_by_code(request, "5010")
+            inventory_account = account_by_code(request, "1210")
+            description = f"FIFO cost for {item.name}"
+            JournalLine.objects.create(entry=voucher.journal_entry, account=cogs_account, description=description, debit=fifo_cost, credit=Decimal("0"))
+            JournalLine.objects.create(entry=voucher.journal_entry, account=inventory_account, description=description, debit=Decimal("0"), credit=fifo_cost)
+            VoucherLedgerLine.objects.create(voucher=voucher, account=cogs_account, description=description, debit=fifo_cost, credit=Decimal("0"))
+            VoucherLedgerLine.objects.create(voucher=voucher, account=inventory_account, description=description, debit=Decimal("0"), credit=fifo_cost)
+            voucher.journal_entry.total_debit = (voucher.journal_entry.total_debit + fifo_cost).quantize(Decimal("0.01"))
+            voucher.journal_entry.total_credit = (voucher.journal_entry.total_credit + fifo_cost).quantize(Decimal("0.01"))
+            voucher.journal_entry.save(update_fields=["total_debit", "total_credit"])
+    return voucher_line
+
+
+def consume_fifo_layers(sale_line: VoucherInventoryLine) -> Decimal:
+    required = sale_line.quantity
+    total_cost = Decimal("0")
+    layers = StockCostLayer.objects.filter(
+        market=sale_line.voucher.market,
+        owner_email=sale_line.voucher.owner_email,
+        item=sale_line.item,
+        remaining_quantity__gt=0,
+    ).order_by("layer_date", "created_at", "id")
+    if sale_line.godown_id:
+        layers = layers.filter(godown=sale_line.godown)
+    for layer in layers:
+        if required <= 0:
+            break
+        take = min(required, layer.remaining_quantity)
+        amount = (take * layer.unit_cost).quantize(Decimal("0.01"))
+        StockLayerConsumption.objects.create(sale_line=sale_line, layer=layer, quantity=take, unit_cost=layer.unit_cost, amount=amount)
+        layer.remaining_quantity = (layer.remaining_quantity - take).quantize(Decimal("0.01"))
+        layer.save(update_fields=["remaining_quantity"])
+        total_cost += amount
+        required -= take
+    if required > 0:
+        raise ValueError(f"Insufficient FIFO stock for {sale_line.item.name}. Short by {required}.")
+    return total_cost.quantize(Decimal("0.01"))
+
+
+def fifo_stock_value(item: InventoryItem) -> Decimal:
+    return sum((layer.remaining_value for layer in item.cost_layers.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
 def account_options(accounts, selected_id: str = "") -> str:
     return "".join(
         f'<option value="{account.id}" {"selected" if selected_id and str(account.id) == str(selected_id) else ""}>{escape(account.code)} - {escape(account.name)}</option>'
@@ -440,6 +622,18 @@ def inventory_item_options(items, selected_id: str = "") -> str:
         label = f"{item.sku + ' - ' if item.sku else ''}{item.name}"
         options.append(f'<option value="{item.id}" {"selected" if selected_id and str(item.id) == str(selected_id) else ""}>{escape(label)}</option>')
     return "".join(options)
+
+
+def godown_options(godowns, selected_id: str = "") -> str:
+    return "".join(
+        f'<option value="{godown.id}" {"selected" if selected_id and str(godown.id) == str(selected_id) else ""}>{escape(godown.name)}</option>'
+        for godown in godowns
+    )
+
+
+def voucher_type_options(selected: str = "sales") -> str:
+    options = [("sales", "Sales"), ("purchase", "Purchase")]
+    return "".join(f'<option value="{value}" {"selected" if selected == value else ""}>{label}</option>' for value, label in options)
 
 
 def stock_signed_quantity(movement: StockMovement) -> Decimal:
@@ -1054,6 +1248,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
         ("/dashboard/ai/", "AI", "AI assistant"),
+        ("/dashboard/vouchers/new/", "V", "Vouchers"),
         ("/dashboard/inventory/", "N", "Inventory"),
         ("/dashboard/reports/", "P", "Reports"),
         ("/dashboard/setup/", "T", "Business setup"),
@@ -1772,6 +1967,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button secondary" href="/dashboard/payments/new/">Record payment</a>
           <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
           <a class="button secondary" href="/dashboard/ai/">Open AI assistant</a>
+          <a class="button secondary" href="/dashboard/vouchers/new/">Post voucher</a>
           <a class="button secondary" href="/dashboard/inventory/">Manage inventory</a>
         </div>
       </section>
@@ -1780,9 +1976,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <a class="module-tile" href="/dashboard/invoices/new/"><span>02</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
         <a class="module-tile" href="/dashboard/payments/new/"><span>03</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
         <a class="module-tile" href="/dashboard/expenses/new/"><span>04</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
-        <a class="module-tile" href="/dashboard/inventory/"><span>05</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
-        <a class="module-tile" href="/dashboard/setup/"><span>06</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
-        <a class="module-tile" href="/dashboard/reports/"><span>07</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
+        <a class="module-tile" href="/dashboard/vouchers/new/"><span>05</span><strong>Voucher engine</strong><p>Post purchase and sales vouchers with FIFO stock costing.</p></a>
+        <a class="module-tile" href="/dashboard/inventory/"><span>06</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
+        <a class="module-tile" href="/dashboard/setup/"><span>07</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
+        <a class="module-tile" href="/dashboard/reports/"><span>08</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -2497,6 +2694,165 @@ def inventory(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Inventory", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def voucher_new(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    _unit, default_godown, default_group = ensure_default_inventory_masters(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    items = list(InventoryItem.objects.filter(account_q(request), is_active=True).order_by("name"))
+    godowns = list(Godown.objects.filter(account_q(request), is_active=True).order_by("name"))
+    recent_vouchers = Voucher.objects.filter(account_q(request)).prefetch_related("ledger_lines", "inventory_lines")[:10]
+    values = {
+        "voucher_type": clean_text(request.GET.get("type"), "sales", 30),
+        "voucher_date": f"{timezone.localdate():%Y-%m-%d}",
+        "party_name": "",
+        "item_id": "",
+        "item_name": "",
+        "godown_id": str(default_godown.id),
+        "quantity": "",
+        "rate": "",
+        "narration": "",
+    }
+    error = ""
+    message = ""
+    if values["voucher_type"] not in {"sales", "purchase"}:
+        values["voucher_type"] = "sales"
+
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        if values["voucher_type"] not in {"sales", "purchase"}:
+            values["voucher_type"] = "sales"
+        quantity = decimal_value(values["quantity"])
+        rate = decimal_value(values["rate"])
+        amount = (quantity * rate).quantize(Decimal("0.01"))
+        item = None
+        if values["item_id"]:
+            item = InventoryItem.objects.filter(account_q(request), id=values["item_id"], is_active=True).first()
+        if item is None and values["item_name"]:
+            item = InventoryItem.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                stock_group=default_group,
+                name=values["item_name"],
+                sku="",
+                category=default_group.name,
+                item_type="trading",
+                unit="pcs",
+                sales_rate=rate if values["voucher_type"] == "sales" else Decimal("0"),
+                purchase_rate=rate if values["voucher_type"] == "purchase" else Decimal("0"),
+                reorder_level=Decimal("0"),
+                track_inventory=True,
+            )
+            items.append(item)
+        godown = next((candidate for candidate in godowns if str(candidate.id) == values["godown_id"]), default_godown)
+        raw_date = values["voucher_date"]
+        voucher_date = timezone.localdate()
+        if raw_date:
+            try:
+                voucher_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError:
+                voucher_date = timezone.localdate()
+        if not values["party_name"]:
+            error = "Party name is required."
+        elif item is None:
+            error = "Select or create an inventory item."
+        elif quantity <= 0 or rate <= 0:
+            error = "Quantity and rate must be greater than zero."
+        else:
+            try:
+                if values["voucher_type"] == "purchase":
+                    ledger_lines = [
+                        {"account": account_by_code(request, "1210"), "description": f"Inventory purchase - {item.name}", "debit": amount, "credit": Decimal("0")},
+                        {"account": account_by_code(request, "2000"), "description": values["party_name"], "debit": Decimal("0"), "credit": amount},
+                    ]
+                else:
+                    ledger_lines = [
+                        {"account": account_by_code(request, "1100"), "description": values["party_name"], "debit": amount, "credit": Decimal("0")},
+                        {"account": account_by_code(request, "4120"), "description": f"Product sale - {item.name}", "debit": Decimal("0"), "credit": amount},
+                    ]
+                voucher = create_voucher_with_lines(
+                    request,
+                    voucher_type=values["voucher_type"],
+                    party_name=values["party_name"],
+                    narration=values["narration"],
+                    voucher_date=voucher_date,
+                    ledger_lines=ledger_lines,
+                    inventory_lines=[{"item": item, "godown": godown, "quantity": quantity, "rate": rate, "description": item.name}],
+                )
+                audit_log(request, "voucher.posted", "Voucher", voucher.id, f"Posted {voucher.get_voucher_type_display()} {voucher.voucher_number}")
+                message = f"{voucher.get_voucher_type_display()} voucher {voucher.voucher_number} posted."
+                values.update({"party_name": "", "quantity": "", "rate": "", "narration": "", "item_id": str(item.id)})
+            except ValueError as exc:
+                error = str(exc)
+
+    item_cards = []
+    for item in items[:12]:
+        quantity = stock_quantity(item)
+        item_cards.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(stock_status(item, quantity))}</span>
+                <h2>{escape(item.name)}</h2>
+                <p>{escape(format_quantity(quantity))} {escape(item.unit)} on hand<br />FIFO value {escape(money(fifo_stock_value(item), currency))}</p>
+              </div>
+            </article>
+            """
+        )
+    if not item_cards:
+        item_cards.append('<article class="dashboard-card empty-state compact-card"><span>Stock item</span><h2>No items yet</h2><p>Create an item from the voucher screen by entering item name.</p></article>')
+
+    voucher_rows = []
+    for voucher in recent_vouchers:
+        voucher_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(voucher.get_voucher_type_display())}</span>
+                <h2>{escape(voucher.voucher_number)}</h2>
+                <p>{escape(voucher.party_name or 'No party')} - {escape(money(voucher.total_amount, currency))}<br />{voucher.voucher_date:%d %b %Y}</p>
+              </div>
+            </article>
+            """
+        )
+    if not voucher_rows:
+        voucher_rows.append('<article class="dashboard-card empty-state compact-card"><span>Voucher</span><h2>No vouchers yet</h2><p>Post purchase and sales vouchers to build your accounting and FIFO stock ledger.</p></article>')
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    message_html = f'<p class="form-success">{escape(message)}</p>' if message else ""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Voucher engine</p>
+        <h1>Post accounting vouchers with FIFO stock.</h1>
+        <p>Use this Tally-style workflow for inventory purchases and sales. Purchase vouchers create FIFO layers; sales vouchers consume oldest stock and post COGS automatically.</p>
+        {error_html}{message_html}
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Voucher entry</p><h2>Sales or purchase voucher</h2></div>
+        <form method="post" class="dashboard-form voucher-form">
+          {csrf_input(request)}
+          <label>Voucher type<select name="voucher_type">{voucher_type_options(values['voucher_type'])}</select></label>
+          <label>Date<input name="voucher_date" type="date" value="{escape(values['voucher_date'])}" /></label>
+          <label>Party name<input name="party_name" value="{escape(values['party_name'])}" placeholder="Customer or supplier ledger" required /></label>
+          <label>Existing item<select name="item_id">{inventory_item_options(items, values['item_id'])}</select></label>
+          <label>New item name<input name="item_name" value="{escape(values['item_name'])}" placeholder="Create item if not in list" /></label>
+          <label>Godown/location<select name="godown_id">{godown_options(godowns, values['godown_id'])}</select></label>
+          <label>Quantity<input name="quantity" type="number" min="0.01" step="0.01" value="{escape(values['quantity'])}" required /></label>
+          <label>Rate<input name="rate" type="number" min="0.01" step="0.01" value="{escape(values['rate'])}" required /></label>
+          <label class="full-row">Narration<textarea name="narration" rows="2" placeholder="Optional voucher narration">{escape(values['narration'])}</textarea></label>
+          <button class="button primary" type="submit">Post voucher</button>
+        </form>
+      </section>
+      <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Stock valuation</p><h2>FIFO stock snapshot</h2></div><div class="dashboard-grid">{''.join(item_cards)}</div></section>
+      <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Day book</p><h2>Recent vouchers</h2></div><div class="dashboard-grid">{''.join(voucher_rows)}</div></section>
+    </main>
+    """
+    return page_shell("Voucher engine", body, request)
 
 
 @login_required

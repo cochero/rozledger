@@ -121,6 +121,16 @@ STOCK_MOVEMENT_CHOICES = [
     ("return", "Return"),
 ]
 
+VOUCHER_TYPE_CHOICES = [
+    ("sales", "Sales"),
+    ("purchase", "Purchase"),
+    ("receipt", "Receipt"),
+    ("payment", "Payment"),
+    ("contra", "Contra"),
+    ("journal", "Journal"),
+    ("stock_journal", "Stock journal"),
+]
+
 
 class Lead(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
@@ -308,6 +318,73 @@ class Account(models.Model):
         return f"{self.code} - {self.name}"
 
 
+class UnitOfMeasure(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="units_of_measure",
+    )
+    owner_email = models.EmailField(db_index=True)
+    name = models.CharField(max_length=60)
+    symbol = models.CharField(max_length=20)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ("market", "owner_email", "symbol")
+
+    def __str__(self) -> str:
+        return self.symbol
+
+
+class Godown(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="godowns",
+    )
+    owner_email = models.EmailField(db_index=True)
+    name = models.CharField(max_length=120)
+    address = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ("market", "owner_email", "name")
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class StockGroup(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="stock_groups",
+    )
+    owner_email = models.EmailField(db_index=True)
+    name = models.CharField(max_length=120)
+    parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ("market", "owner_email", "name")
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class JournalEntry(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(
@@ -419,6 +496,7 @@ class InventoryItem(models.Model):
         related_name="inventory_items",
     )
     owner_email = models.EmailField(db_index=True)
+    stock_group = models.ForeignKey(StockGroup, null=True, blank=True, on_delete=models.SET_NULL, related_name="items")
     sku = models.CharField(max_length=80, blank=True)
     name = models.CharField(max_length=180)
     category = models.CharField(max_length=120, blank=True)
@@ -438,6 +516,66 @@ class InventoryItem(models.Model):
         return self.name
 
 
+class Voucher(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="vouchers",
+    )
+    owner_email = models.EmailField(db_index=True)
+    voucher_type = models.CharField(max_length=30, choices=VOUCHER_TYPE_CHOICES)
+    voucher_number = models.CharField(max_length=60)
+    voucher_date = models.DateField(default=timezone.localdate)
+    party_name = models.CharField(max_length=180, blank=True)
+    narration = models.TextField(blank=True)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="vouchers")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-voucher_date", "-created_at"]
+        unique_together = ("market", "owner_email", "voucher_number")
+
+    def __str__(self) -> str:
+        return f"{self.voucher_number} - {self.get_voucher_type_display()}"
+
+
+class VoucherLedgerLine(models.Model):
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name="ledger_lines")
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="voucher_lines")
+    description = models.CharField(max_length=240, blank=True)
+    debit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    credit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        side = "Dr" if self.debit else "Cr"
+        amount = self.debit if self.debit else self.credit
+        return f"{self.account.code} {side} {amount}"
+
+
+class VoucherInventoryLine(models.Model):
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name="inventory_lines")
+    item = models.ForeignKey(InventoryItem, on_delete=models.PROTECT, related_name="voucher_lines")
+    godown = models.ForeignKey(Godown, null=True, blank=True, on_delete=models.SET_NULL, related_name="voucher_lines")
+    description = models.CharField(max_length=240, blank=True)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    rate = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    stock_movement = models.ForeignKey("StockMovement", null=True, blank=True, on_delete=models.SET_NULL, related_name="voucher_lines")
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.item.name} x {self.quantity}"
+
+
 class StockMovement(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(
@@ -449,6 +587,7 @@ class StockMovement(models.Model):
     )
     owner_email = models.EmailField(db_index=True)
     item = models.ForeignKey(InventoryItem, on_delete=models.CASCADE, related_name="movements")
+    godown = models.ForeignKey(Godown, null=True, blank=True, on_delete=models.SET_NULL, related_name="movements")
     movement_type = models.CharField(max_length=30, choices=STOCK_MOVEMENT_CHOICES)
     movement_date = models.DateField(default=timezone.localdate)
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
@@ -462,6 +601,45 @@ class StockMovement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.item.name} - {self.movement_type} - {self.quantity}"
+
+
+class StockCostLayer(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner_email = models.EmailField(db_index=True)
+    item = models.ForeignKey(InventoryItem, on_delete=models.CASCADE, related_name="cost_layers")
+    godown = models.ForeignKey(Godown, null=True, blank=True, on_delete=models.SET_NULL, related_name="cost_layers")
+    source_line = models.ForeignKey(VoucherInventoryLine, null=True, blank=True, on_delete=models.SET_NULL, related_name="cost_layers")
+    source_movement = models.ForeignKey(StockMovement, null=True, blank=True, on_delete=models.SET_NULL, related_name="cost_layers")
+    layer_date = models.DateField(default=timezone.localdate)
+    original_quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    remaining_quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["layer_date", "created_at", "id"]
+
+    @property
+    def remaining_value(self):
+        return self.remaining_quantity * self.unit_cost
+
+    def __str__(self) -> str:
+        return f"{self.item.name} FIFO {self.remaining_quantity} @ {self.unit_cost}"
+
+
+class StockLayerConsumption(models.Model):
+    sale_line = models.ForeignKey(VoucherInventoryLine, on_delete=models.CASCADE, related_name="fifo_consumptions")
+    layer = models.ForeignKey(StockCostLayer, on_delete=models.PROTECT, related_name="consumptions")
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.sale_line.item.name} consumed {self.quantity} @ {self.unit_cost}"
 
 
 class AuditLog(models.Model):

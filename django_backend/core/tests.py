@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
-from .models import InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
+from .models import InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, Voucher
 
 
 TEST_SETTINGS = {
@@ -752,6 +752,95 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(StockMovement.objects.filter(item=item).count(), 2)
         self.assertContains(movement_response, "6 pcs on hand")
         self.assertContains(movement_response, "INV-1")
+
+    def test_voucher_engine_posts_purchase_and_fifo_sales(self):
+        user = User.objects.create_user("fifo@example.com", "fifo@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+
+        first_purchase = self.client.post(
+            reverse("voucher_new"),
+            {
+                "voucher_type": "purchase",
+                "voucher_date": "2026-06-06",
+                "party_name": "Supplier One",
+                "item_name": "Widget",
+                "quantity": "10",
+                "rate": "100",
+                "narration": "First purchase",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(first_purchase.status_code, 200)
+        item = InventoryItem.objects.get(owner=user, name="Widget")
+        self.assertEqual(StockCostLayer.objects.filter(item=item).count(), 1)
+
+        second_purchase = self.client.post(
+            reverse("voucher_new"),
+            {
+                "voucher_type": "purchase",
+                "voucher_date": "2026-06-06",
+                "party_name": "Supplier Two",
+                "item_id": str(item.id),
+                "quantity": "5",
+                "rate": "120",
+                "narration": "Second purchase",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(second_purchase.status_code, 200)
+        self.assertEqual(StockCostLayer.objects.filter(item=item).count(), 2)
+
+        sale = self.client.post(
+            reverse("voucher_new"),
+            {
+                "voucher_type": "sales",
+                "voucher_date": "2026-06-06",
+                "party_name": "Retail Customer",
+                "item_id": str(item.id),
+                "quantity": "12",
+                "rate": "200",
+                "narration": "FIFO sale",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(sale.status_code, 200)
+        self.assertContains(sale, "Sales voucher")
+        layers = list(StockCostLayer.objects.filter(item=item).order_by("unit_cost"))
+        self.assertEqual(layers[0].remaining_quantity, Decimal("0.00"))
+        self.assertEqual(layers[1].remaining_quantity, Decimal("3.00"))
+        self.assertEqual(StockLayerConsumption.objects.filter(sale_line__item=item).count(), 2)
+        sales_voucher = Voucher.objects.filter(owner=user, voucher_type="sales").first()
+        self.assertIsNotNone(sales_voucher)
+        self.assertEqual(sales_voucher.total_amount, Decimal("2400.00"))
+        entry = sales_voucher.journal_entry
+        self.assertEqual(entry.total_debit, entry.total_credit)
+        self.assertTrue(entry.lines.filter(account__code="5010", debit=Decimal("1240.00")).exists())
+        self.assertTrue(entry.lines.filter(account__code="1210", credit=Decimal("1240.00")).exists())
+
+    def test_voucher_engine_rejects_fifo_sale_without_stock(self):
+        user = User.objects.create_user("fifo-short@example.com", "fifo-short@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        item = InventoryItem.objects.create(market="IN", owner=user, owner_email=user.email, name="No Stock Item", item_type="trading", unit="pcs", track_inventory=True)
+
+        response = self.client.post(
+            reverse("voucher_new"),
+            {
+                "voucher_type": "sales",
+                "voucher_date": "2026-06-06",
+                "party_name": "Retail Customer",
+                "item_id": str(item.id),
+                "quantity": "1",
+                "rate": "200",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Insufficient FIFO stock")
+        self.assertFalse(Voucher.objects.filter(owner=user, voucher_type="sales").exists())
 
     def test_ai_assistant_applies_setup_and_creates_invoice(self):
         user = User.objects.create_user("ai-setup@example.com", "ai-setup@example.com", "password-123456", first_name="AI Owner")
