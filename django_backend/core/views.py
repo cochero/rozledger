@@ -28,7 +28,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -206,8 +206,112 @@ def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
 
 
 def invoice_total_amount(invoice: Invoice) -> Decimal:
-    tax = invoice.amount_before_gst * invoice.gst_rate / Decimal("100") if invoice.include_gst else Decimal("0")
-    return (invoice.amount_before_gst + tax).quantize(Decimal("0.01"))
+    subtotal = invoice_subtotal(invoice)
+    tax = subtotal * invoice.gst_rate / Decimal("100") if invoice.include_gst else Decimal("0")
+    return (subtotal + tax).quantize(Decimal("0.01"))
+
+
+def invoice_subtotal(invoice: Invoice) -> Decimal:
+    items = list(invoice.line_items.all()) if getattr(invoice, "pk", None) else []
+    if items:
+        return sum((item.amount for item in items), Decimal("0")).quantize(Decimal("0.01"))
+    return invoice.amount_before_gst
+
+
+def invoice_items(invoice: Invoice):
+    items = list(invoice.line_items.all()) if getattr(invoice, "pk", None) else []
+    if items:
+        return items
+    return [type("FallbackInvoiceItem", (), {"description": invoice.service_name, "quantity": Decimal("1"), "rate": invoice.amount_before_gst, "amount": invoice.amount_before_gst})()]
+
+
+def format_quantity(value: Decimal) -> str:
+    quantity = value.quantize(Decimal("0.01"))
+    return f"{quantity.normalize():f}" if quantity == quantity.to_integral() else f"{quantity:f}"
+
+
+def parse_invoice_line_items(source: Any) -> list[dict[str, Decimal | str]]:
+    rows: list[dict[str, Decimal | str]] = []
+    if hasattr(source, "getlist"):
+        descriptions = source.getlist("item_description")
+        quantities = source.getlist("item_quantity")
+        rates = source.getlist("item_rate")
+        for index, description in enumerate(descriptions):
+            description = clean_text(description, max_length=240)
+            quantity = decimal_value(quantities[index] if index < len(quantities) else "1")
+            rate = decimal_value(rates[index] if index < len(rates) else "0")
+            if not description and rate <= 0:
+                continue
+            rows.append(
+                {
+                    "description": description or "Item",
+                    "quantity": quantity if quantity > 0 else Decimal("1"),
+                    "rate": rate if rate >= 0 else Decimal("0"),
+                }
+            )
+    else:
+        for raw_item in source or []:
+            if not isinstance(raw_item, dict):
+                continue
+            description = clean_text(raw_item.get("description"), max_length=240)
+            quantity = decimal_value(raw_item.get("quantity"))
+            rate = decimal_value(raw_item.get("rate"))
+            if not description and rate <= 0:
+                continue
+            rows.append(
+                {
+                    "description": description or "Item",
+                    "quantity": quantity if quantity > 0 else Decimal("1"),
+                    "rate": rate if rate >= 0 else Decimal("0"),
+                }
+            )
+    return rows
+
+
+def invoice_items_subtotal(rows: list[dict[str, Decimal | str]]) -> Decimal:
+    return sum((item["quantity"] * item["rate"] for item in rows), Decimal("0")).quantize(Decimal("0.01"))
+
+
+def save_invoice_line_items(invoice: Invoice, rows: list[dict[str, Decimal | str]]) -> None:
+    invoice.line_items.all().delete()
+    if rows:
+        InvoiceLineItem.objects.bulk_create(
+            InvoiceLineItem(
+                invoice=invoice,
+                description=str(row["description"]),
+                quantity=row["quantity"],
+                rate=row["rate"],
+            )
+            for row in rows
+        )
+
+
+def invoice_item_rows_html(rows: list[dict[str, Decimal | str]], minimum_rows: int = 5) -> str:
+    padded = rows + [{"description": "", "quantity": Decimal("1"), "rate": Decimal("0")}] * max(minimum_rows - len(rows), 0)
+    return "".join(
+        f"""
+        <div class="invoice-item-row">
+          <label><span>Item description</span><input name="item_description" value="{escape(str(row['description']))}" placeholder="Service, product or work completed" data-preview-field /></label>
+          <label><span>Qty</span><input name="item_quantity" type="number" min="0.01" step="0.01" value="{escape(format_quantity(row['quantity']))}" data-preview-field /></label>
+          <label><span>Rate</span><input name="item_rate" type="number" min="0" step="0.01" value="{escape(str(row['rate']))}" data-preview-field /></label>
+        </div>
+        """
+        for row in padded
+    )
+
+
+def invoice_print_rows(invoice: Invoice) -> str:
+    return "".join(
+        f"""
+          <tr>
+            <td><strong>{escape(item.description)}</strong></td>
+            <td>{escape(format_quantity(item.quantity))}</td>
+            <td>{escape(invoice_money(invoice, item.rate))}</td>
+            <td>{escape(invoice_money(invoice, item.amount))}</td>
+          </tr>
+        """
+        for item in invoice_items(invoice)
+    )
 
 
 def account_by_code(request: HttpRequest, code: str) -> Account:
@@ -406,6 +510,10 @@ def invoice_total_text(amount_before_gst: Decimal, gst_rate: Decimal, include_gs
 def build_invoice_text(invoice: Invoice) -> str:
     tax_label = invoice.tax_label or "GST"
     payment_label = "Payment link" if invoice_is_us(invoice) else "UPI/payment link"
+    items_text = "\n".join(
+        f"- {item.description}: {format_quantity(item.quantity)} x {invoice_money(invoice, item.rate)} = {invoice_money(invoice, item.amount)}"
+        for item in invoice_items(invoice)
+    )
     return "\n".join(
         [
             f"Invoice from {invoice.business_name}",
@@ -415,8 +523,9 @@ def build_invoice_text(invoice: Invoice) -> str:
             f"Client phone: {invoice.client_phone}" if invoice.client_phone else "",
             invoice.client_address,
             f"Client GSTIN: {invoice.client_gstin}" if invoice.client_gstin and not invoice_is_us(invoice) else "",
-            f"Service: {invoice.service_name}",
-            f"Amount: {money(invoice.amount_before_gst, invoice.currency_symbol)}",
+            "Items:",
+            items_text,
+            f"Subtotal: {money(invoice_subtotal(invoice), invoice.currency_symbol)}",
             f"{tax_label}: {invoice.gst_rate}%" if invoice.include_gst else f"{tax_label}: Not charged",
             f"Total: {invoice.total_text}",
             f"{payment_label}: {invoice.upi_link}" if invoice.upi_link else "",
@@ -464,7 +573,7 @@ def invoice_due_date(invoice: Invoice):
 def invoice_gst_amount(invoice: Invoice) -> Decimal:
     if not invoice.include_gst:
         return Decimal("0")
-    return (invoice.amount_before_gst * invoice.gst_rate / Decimal("100")).quantize(Decimal("0.01"))
+    return (invoice_subtotal(invoice) * invoice.gst_rate / Decimal("100")).quantize(Decimal("0.01"))
 
 
 def money(value: Decimal, currency_symbol: str = RUPEE_SYMBOL) -> str:
@@ -2113,23 +2222,30 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         "bank_details": profile.bank_details if profile else "",
         "thank_you_note": profile.thank_you_note if profile and profile.thank_you_note else "Thank you for your business.",
     }
+    item_rows: list[dict[str, Decimal | str]] = []
 
     if request.method == "POST":
         values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
         values["template"] = clean_invoice_template(request.POST.get("template"))
         values["accent_color"] = clean_accent_color(request.POST.get("accent_color"))
-        amount_before_gst = decimal_value(values["amount_before_gst"])
+        item_rows = parse_invoice_line_items(request.POST)
+        if not item_rows and values["service_name"]:
+            item_rows = [{"description": values["service_name"], "quantity": Decimal("1"), "rate": decimal_value(values["amount_before_gst"])}]
+        amount_before_gst = invoice_items_subtotal(item_rows)
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(values["gst_rate"]) if include_gst else Decimal("0")
         due_days_raw = digits_only(values["due_days"])
         due_days = int(due_days_raw or 0)
         logo_upload = request.FILES.get("business_logo")
         logo_error = valid_logo_upload(logo_upload)
+        service_name = clean_text(item_rows[0]["description"], "Service", 240) if item_rows else ""
+        values["service_name"] = service_name
+        values["amount_before_gst"] = str(amount_before_gst) if amount_before_gst > 0 else values["amount_before_gst"]
 
-        if not values["business_name"] or not values["client_name"] or not values["service_name"]:
-            error = "Business name, client name and service are required."
+        if not values["business_name"] or not values["client_name"] or not service_name:
+            error = "Business name, client name and at least one invoice item are required."
         elif amount_before_gst <= 0:
-            error = "Invoice amount must be greater than zero."
+            error = "Invoice item total must be greater than zero."
         elif logo_error:
             error = logo_error
         else:
@@ -2150,7 +2266,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     client_phone=values["client_phone"],
                     client_address=values["client_address"],
                     client_gstin=values["client_gstin"].upper(),
-                    service_name=values["service_name"],
+                    service_name=service_name,
                     include_gst=include_gst,
                     amount_before_gst=amount_before_gst,
                     gst_rate=gst_rate,
@@ -2167,6 +2283,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     invoice.business_logo = logo_upload
                 elif profile and profile.business_logo:
                     invoice.business_logo = profile.business_logo
+                save_invoice_line_items(invoice, item_rows)
                 invoice.invoice_text = build_invoice_text(invoice)
                 invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
                 save_business_profile_from_invoice(invoice, request.user)
@@ -2200,11 +2317,26 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" data-preview-field /></label>
             <label>Client full address<textarea name="client_address" rows="3" data-preview-field>{escape(values['client_address'])}</textarea></label>
             <label>{tax_id_label}<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" data-preview-field /></label>
-            <label>Service<input name="service_name" value="{escape(values['service_name'])}" required data-preview-field /></label>
             <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} data-preview-field /> {include_tax_label}</label>
-            <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{escape(values['amount_before_gst'])}" required data-preview-field /></label>
             <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required data-preview-field /></label>
             <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" data-preview-field /></label>
+            <input name="service_name" type="hidden" value="{escape(values['service_name'])}" />
+            <input name="amount_before_gst" type="hidden" value="{escape(values['amount_before_gst'])}" />
+            <div class="invoice-items-editor full-row">
+              <div class="invoice-items-heading">
+                <div>
+                  <span>Line items</span>
+                  <strong>Description, quantity and rate</strong>
+                </div>
+                <small>Leave unused rows blank.</small>
+              </div>
+              <div class="invoice-item-row invoice-item-head">
+                <span>Item</span>
+                <span>Qty</span>
+                <span>Rate</span>
+              </div>
+              {invoice_item_rows_html(item_rows)}
+            </div>
             <label class="full-row">{payment_link_label}<input name="upi_link" value="{escape(values['upi_link'])}" placeholder="{payment_placeholder}" data-preview-field /></label>
             <label class="full-row">Bank information<textarea name="bank_details" rows="4" placeholder="Bank name, account number, IFSC, account holder" data-preview-field>{escape(values['bank_details'])}</textarea></label>
             <label class="full-row">Thank you note<textarea name="thank_you_note" rows="3" data-preview-field>{escape(values['thank_you_note'])}</textarea></label>
@@ -2238,10 +2370,12 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 <div><span>Bill to</span><strong data-preview="client_name">{escape(values['client_name'] or 'Client name')}</strong><p data-preview="client_phone">{escape(values['client_phone'] or 'Client phone')}</p><p data-preview="client_address">{escape(values['client_address'] or 'Client address').replace(chr(10), '<br />')}</p></div>
                 <div><span>Payment</span><p data-preview="upi_link">{escape(values['upi_link'] or payment_link_label)}</p><p data-preview="bank_details">{escape(values['bank_details'] or 'Bank information').replace(chr(10), '<br />')}</p></div>
               </section>
-              <div class="invoice-preview-line">
-                <span data-preview="service_name">{escape(values['service_name'] or 'Service description')}</span>
-                <strong data-preview-total>{escape(invoice_total_text(decimal_value(values['amount_before_gst']), decimal_value(values['gst_rate']), values['include_gst'] == 'on', currency_symbol))}</strong>
-              </div>
+              <div class="invoice-preview-items" data-preview-items></div>
+              <section class="invoice-preview-totals">
+                <div><span>Subtotal</span><strong data-preview-subtotal>{escape(money(invoice_items_subtotal(item_rows), currency_symbol))}</strong></div>
+                <div><span>{escape(tax_label)}</span><strong data-preview-tax>{escape(money(invoice_items_subtotal(item_rows) * decimal_value(values['gst_rate']) / Decimal('100') if values['include_gst'] == 'on' else Decimal('0'), currency_symbol))}</strong></div>
+                <div class="preview-grand-total"><span>Total</span><strong data-preview-total>{escape(invoice_total_text(invoice_items_subtotal(item_rows), decimal_value(values['gst_rate']), values['include_gst'] == 'on', currency_symbol))}</strong></div>
+              </section>
               <p class="invoice-preview-note" data-preview="thank_you_note">{escape(values['thank_you_note'] or 'Thank you for your business.')}</p>
             </article>
           </aside>
@@ -2262,11 +2396,41 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
               target.innerHTML = value.replace(/\\n/g, '<br />');
             }};
             const totalText = () => {{
-              const amount = Number(form.elements.amount_before_gst.value || 0);
+              const amount = itemSubtotal();
               const includeTax = Boolean(form.elements.include_gst?.checked);
               const rate = includeTax ? Number(form.elements.gst_rate.value || 0) : 0;
               const total = amount + (amount * rate / 100);
               return `${{currency}} ${{total.toFixed(2)}}`;
+            }};
+            const moneyText = (value) => `${{currency}} ${{Number(value || 0).toFixed(2)}}`;
+            const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (char) => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}}[char]));
+            const itemRows = () => Array.from(form.querySelectorAll('.invoice-item-row:not(.invoice-item-head)'));
+            const itemSubtotal = () => itemRows().reduce((sum, row) => {{
+              const quantity = Number(row.querySelector('[name="item_quantity"]')?.value || 0);
+              const rate = Number(row.querySelector('[name="item_rate"]')?.value || 0);
+              return sum + (quantity * rate);
+            }}, 0);
+            const updateItems = () => {{
+              const target = doc.querySelector('[data-preview-items]');
+              if (!target) return;
+              const rows = itemRows().map((row) => {{
+                const description = row.querySelector('[name="item_description"]')?.value || '';
+                const quantity = Number(row.querySelector('[name="item_quantity"]')?.value || 0);
+                const rate = Number(row.querySelector('[name="item_rate"]')?.value || 0);
+                const amount = quantity * rate;
+                return {{ description, quantity, rate, amount }};
+              }}).filter((row) => row.description || row.amount > 0);
+              target.innerHTML = `
+                <div class="invoice-preview-item invoice-preview-item-head"><span>Description</span><span>Qty</span><span>Rate</span><span>Amount</span></div>
+                ${{(rows.length ? rows : [{{description: 'Service description', quantity: 1, rate: 0, amount: 0}}]).map((row) => `
+                  <div class="invoice-preview-item">
+                    <strong>${{escapeHtml(row.description || 'Item')}}</strong>
+                    <span>${{row.quantity || 1}}</span>
+                    <span>${{moneyText(row.rate)}}</span>
+                    <span>${{moneyText(row.amount)}}</span>
+                  </div>
+                `).join('')}}
+              `;
             }};
             const update = () => {{
               const template = form.elements.template.value || 'classic';
@@ -2281,12 +2445,20 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
               setHtml('client_name', 'Client name');
               setHtml('client_phone', 'Client phone');
               setHtml('client_address', 'Client address');
-              setHtml('service_name', 'Service description');
               setHtml('upi_link', {json.dumps(payment_link_label)});
               setHtml('bank_details', 'Bank information');
               setHtml('thank_you_note', 'Thank you for your business.');
               setHtml('due_days', '7');
+              updateItems();
+              const subtotal = itemSubtotal();
+              const includeTax = Boolean(form.elements.include_gst?.checked);
+              const rate = includeTax ? Number(form.elements.gst_rate.value || 0) : 0;
+              const tax = subtotal * rate / 100;
+              const subtotalEl = doc.querySelector('[data-preview-subtotal]');
+              const taxEl = doc.querySelector('[data-preview-tax]');
               const total = doc.querySelector('[data-preview-total]');
+              if (subtotalEl) subtotalEl.textContent = moneyText(subtotal);
+              if (taxEl) taxEl.textContent = includeTax ? moneyText(tax) : 'Not charged';
               if (total) total.textContent = totalText();
             }};
             const logoInput = form.elements.business_logo;
@@ -2333,7 +2505,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
     include_tax_label = "Add sales tax to this invoice" if us_invoice else "Include GST on this invoice"
     payment_link_label = "Payment link" if us_invoice else "UPI/payment link"
     if request.method == "POST":
-        amount_before_gst = decimal_value(request.POST.get("amount_before_gst"))
+        item_rows = parse_invoice_line_items(request.POST)
+        if not item_rows:
+            item_rows = [{"description": clean_text(request.POST.get("service_name"), invoice.service_name, 240), "quantity": Decimal("1"), "rate": decimal_value(request.POST.get("amount_before_gst"))}]
+        amount_before_gst = invoice_items_subtotal(item_rows)
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(request.POST.get("gst_rate")) if include_gst else Decimal("0")
         logo_upload = request.FILES.get("business_logo")
@@ -2350,7 +2525,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.client_phone = clean_text(request.POST.get("client_phone"), max_length=40)
             invoice.client_address = clean_text(request.POST.get("client_address"))
             invoice.client_gstin = clean_text(request.POST.get("client_gstin"), max_length=20).upper()
-            invoice.service_name = clean_text(request.POST.get("service_name"), invoice.service_name, 240)
+            invoice.service_name = clean_text(item_rows[0]["description"], invoice.service_name, 240)
             invoice.include_gst = include_gst
             invoice.amount_before_gst = amount_before_gst
             invoice.gst_rate = gst_rate
@@ -2366,10 +2541,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.thank_you_note = clean_text(request.POST.get("thank_you_note"))
             if logo_upload:
                 invoice.business_logo = logo_upload
-            invoice.invoice_text = clean_text(request.POST.get("invoice_text"), invoice.invoice_text)
-            if not invoice.invoice_text:
-                invoice.invoice_text = build_invoice_text(invoice)
             invoice.save()
+            save_invoice_line_items(invoice, item_rows)
+            invoice.invoice_text = build_invoice_text(invoice)
+            invoice.save(update_fields=["invoice_text", "updated_at"])
             save_business_profile_from_invoice(invoice, request.user)
             save_client_from_invoice(invoice, request.user)
             audit_log(request, "invoice.updated", "Invoice", invoice.id, f"Updated invoice for {invoice.client_name}")
@@ -2379,6 +2554,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         f'<option value="{value}" {"selected" if invoice.status == value else ""}>{label}</option>'
         for value, label in Invoice.STATUS_CHOICES
     )
+    edit_item_rows = [{"description": item.description, "quantity": item.quantity, "rate": item.rate} for item in invoice_items(invoice)]
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card">
@@ -2397,10 +2573,25 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
           <label>Client phone<input name="client_phone" value="{escape(invoice.client_phone)}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(invoice.client_address)}</textarea></label>
           <label>{tax_id_label}<input name="client_gstin" value="{escape(invoice.client_gstin)}" /></label>
-          <label>Service<input name="service_name" value="{escape(invoice.service_name)}" /></label>
           <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if invoice.include_gst else ''} /> {include_tax_label}</label>
-          <label>{amount_label}<input name="amount_before_gst" type="number" min="1" step="0.01" value="{invoice.amount_before_gst}" /></label>
           <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{invoice.gst_rate}" /></label>
+          <input name="service_name" type="hidden" value="{escape(invoice.service_name)}" />
+          <input name="amount_before_gst" type="hidden" value="{invoice_subtotal(invoice)}" />
+          <div class="invoice-items-editor full-row">
+            <div class="invoice-items-heading">
+              <div>
+                <span>Line items</span>
+                <strong>Description, quantity and rate</strong>
+              </div>
+              <small>Leave unused rows blank.</small>
+            </div>
+            <div class="invoice-item-row invoice-item-head">
+              <span>Item</span>
+              <span>Qty</span>
+              <span>Rate</span>
+            </div>
+            {invoice_item_rows_html(edit_item_rows)}
+          </div>
           <label>Total text<input name="total_text" value="{escape(invoice.total_text)}" /></label>
           <label>Status<select name="status">{status_options}</select></label>
           <label>{payment_link_label}<input name="upi_link" value="{escape(invoice.upi_link)}" /></label>
@@ -2566,6 +2757,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     us_invoice = invoice_is_us(invoice)
     invoice_title = "Invoice" if us_invoice else "Tax invoice"
     payment_link_label = "Payment link" if us_invoice else "UPI / payment link"
+    subtotal = invoice_subtotal(invoice)
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -2616,27 +2808,19 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
         <thead>
           <tr>
             <th>Description</th>
+            <th>Qty</th>
+            <th>Rate</th>
             <th>Amount</th>
-            <th>{escape(tax_label)}</th>
-            <th>Total</th>
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>
-              <strong>{escape(invoice.service_name)}</strong>
-              <span>{escape(invoice.client_name)}</span>
-            </td>
-            <td>{escape(invoice_money(invoice, invoice.amount_before_gst))}</td>
-            <td>{escape(invoice_money(invoice, gst_amount)) if invoice.include_gst else 'Not charged'}</td>
-            <td>{escape(total_text)}</td>
-          </tr>
+          {invoice_print_rows(invoice)}
         </tbody>
       </table>
       <section class="invoice-total-panel">
         <div>
           <span>Subtotal</span>
-          <strong>{escape(invoice_money(invoice, invoice.amount_before_gst))}</strong>
+          <strong>{escape(invoice_money(invoice, subtotal))}</strong>
         </div>
         <div>
           <span>{f'{tax_label} @ {invoice.gst_rate}%' if invoice.include_gst else tax_label}</span>
@@ -2700,6 +2884,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     due_date = invoice_due_date(invoice)
     accent = colors.HexColor(clean_accent_color(invoice.accent_color))
     us_invoice = invoice_is_us(invoice)
+    subtotal = invoice_subtotal(invoice)
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
     styles = getSampleStyleSheet()
@@ -2809,18 +2994,20 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         )
     )
     story.append(Spacer(1, 18))
+    line_table_rows = [[Paragraph("Description", label_style), Paragraph("Qty", label_style), Paragraph("Rate", label_style), Paragraph("Amount", label_style)]]
+    for item in invoice_items(invoice):
+        line_table_rows.append(
+            [
+                para(item.description),
+                para(format_quantity(item.quantity), amount_style),
+                para(invoice_money(invoice, item.rate), amount_style),
+                para(invoice_money(invoice, item.amount), amount_bold_style),
+            ]
+        )
     story.append(
         Table(
-            [
-                [Paragraph("Description", label_style), Paragraph("Amount", label_style), Paragraph(invoice_tax_label(invoice), label_style), Paragraph("Total", label_style)],
-                [
-                    para(f"{invoice.service_name}\n{invoice.client_name}"),
-                    para(invoice_money(invoice, invoice.amount_before_gst), amount_style),
-                    para(invoice_money(invoice, gst_amount) if invoice.include_gst else "Not charged", amount_style),
-                    para(invoice_total_display(invoice), amount_bold_style),
-                ],
-            ],
-            colWidths=[235, 88, 72, 85],
+            line_table_rows,
+            colWidths=[250, 58, 82, 90],
             style=TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), accent),
@@ -2837,7 +3024,7 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
     story.append(
         Table(
             [
-                [para("Subtotal", right_style), para(invoice_money(invoice, invoice.amount_before_gst), amount_bold_style)],
+                [para("Subtotal", right_style), para(invoice_money(invoice, subtotal), amount_bold_style)],
                 [para(f"{invoice_tax_label(invoice)} @ {invoice.gst_rate}%" if invoice.include_gst else invoice_tax_label(invoice), right_style), para(invoice_money(invoice, gst_amount) if invoice.include_gst else "Not charged", amount_bold_style)],
                 [para("Amount payable", right_bold_style), para(invoice_total_display(invoice), amount_bold_style)],
             ],
@@ -3098,7 +3285,10 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     if is_rate_limited(request, "invoice", limit=60 if request.user.is_authenticated else 20, identity=invoice_identity):
         return rate_limit_response()
     payload = json_payload(request)
-    amount_before_gst = decimal_value(payload.get("amount_before_gst"))
+    item_rows = parse_invoice_line_items(payload.get("items") if isinstance(payload.get("items"), list) else [])
+    if not item_rows:
+        item_rows = [{"description": clean_text(payload.get("service_name"), "Service", 240), "quantity": Decimal("1"), "rate": decimal_value(payload.get("amount_before_gst"))}]
+    amount_before_gst = invoice_items_subtotal(item_rows)
     include_gst = bool(payload.get("include_gst", True))
     gst_rate = decimal_value(payload.get("gst_rate")) if include_gst else Decimal("0")
     owner_email = clean_text(payload.get("owner_email"), max_length=254).lower()
@@ -3110,7 +3300,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Enter a valid email to save this invoice."}, status=400)
 
     if amount_before_gst <= 0:
-        return JsonResponse({"error": "Invoice amount must be greater than zero."}, status=400)
+        return JsonResponse({"error": "Invoice item total must be greater than zero."}, status=400)
 
     market = current_market(request)
     quota_used, quota_limit, quota_plan = invoice_quota_for_email(owner_email, market)
@@ -3136,7 +3326,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         client_phone=clean_text(payload.get("client_phone"), max_length=40),
         client_address=clean_text(payload.get("client_address")),
         client_gstin=clean_text(payload.get("client_gstin"), max_length=20).upper(),
-        service_name=clean_text(payload.get("service_name"), "Service", 240),
+        service_name=clean_text(item_rows[0]["description"], "Service", 240),
         include_gst=include_gst,
         amount_before_gst=amount_before_gst,
         gst_rate=gst_rate,
@@ -3149,6 +3339,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         thank_you_note=clean_text(payload.get("thank_you_note"), "Thank you for your business."),
         invoice_text=clean_text(payload.get("invoice_text")),
     )
+    save_invoice_line_items(invoice, item_rows)
     if not invoice.invoice_text:
         invoice.invoice_text = build_invoice_text(invoice)
         invoice.save(update_fields=["invoice_text", "updated_at"])

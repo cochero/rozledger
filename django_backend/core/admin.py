@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 @admin.register(Lead)
@@ -37,6 +37,12 @@ class LeadAdmin(admin.ModelAdmin):
     list_filter = ("market", "business_type", "source", "utm_source", "notification_sent", "created_at")
 
 
+class InvoiceLineItemInline(admin.TabularInline):
+    model = InvoiceLineItem
+    extra = 0
+    fields = ("description", "quantity", "rate")
+
+
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
@@ -56,6 +62,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     readonly_fields = ("public_token", "created_at")
     search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "client_name", "client_phone", "service_name", "public_token")
     list_filter = ("market", "status", "gst_rate", "created_at")
+    inlines = (InvoiceLineItemInline,)
 
 
 @admin.register(Client)

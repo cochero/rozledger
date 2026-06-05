@@ -221,6 +221,24 @@ class Invoice(models.Model):
         return f"{self.business_name} to {self.client_name}"
 
 
+class InvoiceLineItem(models.Model):
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="line_items")
+    description = models.CharField(max_length=240)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    rate = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def amount(self):
+        return self.quantity * self.rate
+
+    def __str__(self) -> str:
+        return f"{self.description} x {self.quantity}"
+
+
 class AffiliateClick(models.Model):
     offer_name = models.CharField(max_length=160)
     destination_url = models.URLField(max_length=1000, blank=True)

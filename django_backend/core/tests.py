@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
-from .models import Invoice, JournalEntry, Lead, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, VendorBill
 
 
 TEST_SETTINGS = {
@@ -478,6 +478,44 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.total_text, "₹ 1500.00")
         self.assertIn("GST: Not charged", invoice.invoice_text)
 
+    def test_dashboard_invoice_form_saves_quantity_rate_line_items(self):
+        user = User.objects.create_user("items@example.com", "items@example.com", "strong-password-123")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Line Item Business",
+                "client_name": "Line Item Client",
+                "item_description": ["Website setup", "Monthly support", ""],
+                "item_quantity": ["2", "3", "1"],
+                "item_rate": ["1500", "500", "0"],
+                "include_gst": "on",
+                "gst_rate": "18",
+                "due_days": "7",
+                "thank_you_note": "Thank you.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user)
+        self.assertEqual(invoice.service_name, "Website setup")
+        self.assertEqual(invoice.amount_before_gst, Decimal("4500.00"))
+        self.assertIn("5310.00", invoice.total_text)
+        self.assertEqual(InvoiceLineItem.objects.filter(invoice=invoice).count(), 2)
+        self.assertIn("2 x", invoice.invoice_text)
+        self.assertIn("Monthly support", invoice.invoice_text)
+
+        print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
+        self.assertContains(print_response, "Qty")
+        self.assertContains(print_response, "Rate")
+        self.assertContains(print_response, "Website setup")
+        self.assertContains(print_response, "Monthly support")
+        self.assertContains(print_response, "4500.00")
+        pdf_response = self.client.get(reverse("invoice_pdf", args=[invoice.public_token]))
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+
     def test_dot_com_dashboard_invoice_form_uses_us_tax_copy(self):
         user = User.objects.create_user("us-form@example.com", "us-form@example.com", "strong-password-123")
         self.client.force_login(user)
@@ -489,7 +527,8 @@ class AccountWorkflowTests(TestCase):
         self.assertNotContains(dashboard_response, "GSTIN")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sales tax rate %")
-        self.assertContains(response, "Amount before tax")
+        self.assertContains(response, "Line items")
+        self.assertContains(response, "Description, quantity and rate")
         self.assertContains(response, "Payment link")
         self.assertContains(response, "Client tax ID")
         self.assertNotContains(response, "Client GSTIN")
