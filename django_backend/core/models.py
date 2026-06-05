@@ -486,6 +486,46 @@ class VendorBill(models.Model):
         return f"{self.vendor_name} - {self.amount}"
 
 
+class ExpenseUploadDraft(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("posted", "Posted"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    public_token = models.CharField(max_length=48, unique=True, default=public_token, editable=False)
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="expense_upload_drafts",
+    )
+    owner_email = models.EmailField(db_index=True)
+    document = models.FileField(upload_to="expense_uploads/%Y/%m/")
+    original_filename = models.CharField(max_length=240, blank=True)
+    extracted_text = models.TextField(blank=True)
+    vendor_name = models.CharField(max_length=180, blank=True)
+    category = models.CharField(max_length=180, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    bill_date = models.DateField(default=timezone.localdate)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True)
+    bill_status = models.CharField(max_length=20, choices=BILL_STATUS_CHOICES, default="paid")
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="bank")
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    vendor_bill = models.ForeignKey(VendorBill, null=True, blank=True, on_delete=models.SET_NULL, related_name="upload_drafts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.vendor_name or self.original_filename} - {self.amount}"
+
+
 class InventoryItem(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
     owner = models.ForeignKey(

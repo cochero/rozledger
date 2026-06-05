@@ -29,7 +29,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -829,6 +829,52 @@ def post_two_line_entry(
     return entry
 
 
+def post_expense_bill(
+    request: HttpRequest,
+    *,
+    bill_date,
+    due_date=None,
+    vendor_name: str,
+    category: str,
+    amount: Decimal,
+    status: str,
+    payment_method: str,
+    expense_account: Account,
+    reference: str = "",
+    notes: str = "",
+    source_prefix: str = "",
+) -> VendorBill:
+    status = status if status in {"paid", "unpaid"} else "paid"
+    payment_method = payment_method if payment_method in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank"
+    credit_account = account_by_code(request, "2000" if status == "unpaid" else ("1000" if payment_method == "cash" else "1010"))
+    entry_source = f"{source_prefix}_vendor_bill" if source_prefix and status == "unpaid" else f"{source_prefix}_expense_paid" if source_prefix else "vendor_bill" if status == "unpaid" else "expense_paid"
+    entry = post_two_line_entry(
+        request,
+        entry_date=bill_date or timezone.localdate(),
+        memo=f"{'Vendor bill' if status == 'unpaid' else 'Expense paid'} - {vendor_name}",
+        source=entry_source,
+        debit_account=expense_account,
+        credit_account=credit_account,
+        amount=amount,
+        description=reference or notes,
+    )
+    return VendorBill.objects.create(
+        market=current_market(request),
+        owner=request.user,
+        owner_email=current_account_email(request),
+        journal_entry=entry,
+        bill_date=bill_date or timezone.localdate(),
+        due_date=due_date or None,
+        vendor_name=vendor_name,
+        category=category or expense_account.name,
+        amount=amount,
+        status=status,
+        payment_method=payment_method,
+        reference=reference,
+        notes=notes,
+    )
+
+
 def finance_summary_for_user(request: HttpRequest) -> dict[str, Decimal]:
     invoices = Invoice.objects.filter(account_q(request))
     bills = VendorBill.objects.filter(account_q(request))
@@ -1048,6 +1094,37 @@ def valid_logo_upload(upload) -> str:
     return ""
 
 
+def valid_expense_document_upload(upload) -> str:
+    if not upload:
+        return "Upload a bill photo or PDF."
+    allowed_types = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+    if getattr(upload, "content_type", "") not in allowed_types:
+        return "Upload a JPG, PNG, WebP, GIF or PDF bill."
+    if getattr(upload, "size", 0) > 8 * 1024 * 1024:
+        return "Bill upload must be 8 MB or smaller."
+    return ""
+
+
+def extract_expense_text_from_upload(upload) -> str:
+    # Placeholder for OCR provider integration. Filename text still gives a useful
+    # zero-cost first draft for mobile uploads named like airtel-1800-june.jpg.
+    name_text = Path(getattr(upload, "name", "")).stem.replace("_", " ").replace("-", " ")
+    return clean_text(name_text, max_length=1000)
+
+
+def expense_draft_from_text(request: HttpRequest, text: str) -> dict[str, Any]:
+    parsed = ai_parse_expense_prompt(request, text)
+    return {
+        "vendor_name": parsed["vendor_name"] if parsed["vendor_name"] != "Vendor" else "",
+        "category": parsed["category"],
+        "amount": parsed["amount"],
+        "bill_status": parsed["status"],
+        "payment_method": parsed["payment_method"],
+        "reference": "",
+        "notes": f"Extracted draft from upload: {text}" if text else "Please verify the uploaded bill details before posting.",
+    }
+
+
 def invoice_number(invoice: Invoice) -> str:
     return f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}"
 
@@ -1247,6 +1324,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/invoices/new/", "I", "Create invoice"),
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
+        ("/dashboard/expenses/upload/", "U", "Upload bill"),
         ("/dashboard/ai/", "AI", "AI assistant"),
         ("/dashboard/vouchers/new/", "V", "Vouchers"),
         ("/dashboard/inventory/", "N", "Inventory"),
@@ -1966,6 +2044,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
           <a class="button secondary" href="/dashboard/payments/new/">Record payment</a>
           <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
+          <a class="button secondary" href="/dashboard/expenses/upload/">Upload bill photo</a>
           <a class="button secondary" href="/dashboard/ai/">Open AI assistant</a>
           <a class="button secondary" href="/dashboard/vouchers/new/">Post voucher</a>
           <a class="button secondary" href="/dashboard/inventory/">Manage inventory</a>
@@ -2069,6 +2148,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         </div>
         <div class="dashboard-actions section-actions">
           <a class="button primary" href="/dashboard/expenses/new/">Record expense or bill</a>
+          <a class="button secondary" href="/dashboard/expenses/upload/">Upload bill photo</a>
         </div>
         <div class="dashboard-grid">{''.join(bill_rows)}</div>
       </section>
@@ -2223,33 +2303,18 @@ def ai_assistant(request: HttpRequest) -> HttpResponse:
         if amount <= 0:
             error = "AI expense needs an amount greater than zero."
         else:
-            status = status if status in {"paid", "unpaid"} else "paid"
-            payment_method = payment_method if payment_method in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank"
-            credit_account = account_by_code(request, "2000" if status == "unpaid" else ("1000" if payment_method == "cash" else "1010"))
-            entry = post_two_line_entry(
+            bill = post_expense_bill(
                 request,
-                entry_date=timezone.localdate(),
-                memo=f"{'Vendor bill' if status == 'unpaid' else 'Expense paid'} - {vendor_name}",
-                source="ai_vendor_bill" if status == "unpaid" else "ai_expense_paid",
-                debit_account=expense_account,
-                credit_account=credit_account,
-                amount=amount,
-                description="Created by AI assistant",
-            )
-            bill = VendorBill.objects.create(
-                market=current_market(request),
-                owner=request.user,
-                owner_email=current_account_email(request),
-                journal_entry=entry,
                 bill_date=timezone.localdate(),
-                due_date=None,
                 vendor_name=vendor_name,
-                category=category or expense_account.name,
+                category=category,
                 amount=amount,
                 status=status,
                 payment_method=payment_method,
+                expense_account=expense_account,
                 reference="AI assistant",
                 notes=prompt,
+                source_prefix="ai",
             )
             audit_log(request, "ai.expense_created", "VendorBill", bill.id, f"AI recorded {status} expense for {bill.vendor_name}")
             message = f"Expense recorded for {vendor_name}: {money(amount, currency)}."
@@ -3398,29 +3463,16 @@ def expense_new(request: HttpRequest) -> HttpResponse:
         elif expense_account is None:
             error = "Choose an expense account."
         else:
-            credit_account = account_by_code(request, "2000" if status == "unpaid" else ("1000" if values["payment_method"] == "cash" else "1010"))
-            entry = post_two_line_entry(
+            bill = post_expense_bill(
                 request,
-                entry_date=values["bill_date"] or timezone.localdate(),
-                memo=f"{'Vendor bill' if status == 'unpaid' else 'Expense paid'} - {values['vendor_name']}",
-                source="vendor_bill" if status == "unpaid" else "expense_paid",
-                debit_account=expense_account,
-                credit_account=credit_account,
-                amount=amount,
-                description=values["reference"] or values["notes"],
-            )
-            bill = VendorBill.objects.create(
-                market=current_market(request),
-                owner=request.user,
-                owner_email=current_account_email(request),
-                journal_entry=entry,
                 bill_date=values["bill_date"] or timezone.localdate(),
                 due_date=values["due_date"] or None,
                 vendor_name=values["vendor_name"],
                 category=values["category"] or expense_account.name,
                 amount=amount,
                 status=status,
-                payment_method=values["payment_method"] if values["payment_method"] in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank",
+                payment_method=values["payment_method"],
+                expense_account=expense_account,
                 reference=values["reference"],
                 notes=values["notes"],
             )
@@ -3457,6 +3509,168 @@ def expense_new(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Record expense or bill", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def expense_upload(request: HttpRequest, token: str | None = None) -> HttpResponse:
+    ensure_default_chart(request)
+    expense_accounts = list(Account.objects.filter(account_q(request), is_active=True, account_type="expense"))
+    default_account = next((account for account in expense_accounts if account.code == "5100"), expense_accounts[0] if expense_accounts else None)
+    draft = None
+    error = ""
+    message = ""
+    if token:
+        draft = ExpenseUploadDraft.objects.filter(public_token=token, owner_email__iexact=current_account_email(request), market=current_market(request)).first()
+        if draft is None:
+            raise Http404("Expense upload draft not found")
+
+    if request.method == "POST" and request.POST.get("action") == "upload":
+        upload = request.FILES.get("document")
+        upload_error = valid_expense_document_upload(upload)
+        if upload_error:
+            error = upload_error
+        else:
+            extracted_text = extract_expense_text_from_upload(upload)
+            parsed = expense_draft_from_text(request, extracted_text)
+            draft = ExpenseUploadDraft.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                document=upload,
+                original_filename=clean_text(getattr(upload, "name", ""), max_length=240),
+                extracted_text=extracted_text,
+                vendor_name=parsed["vendor_name"],
+                category=parsed["category"],
+                amount=parsed["amount"],
+                bill_date=timezone.localdate(),
+                bill_status=parsed["bill_status"],
+                payment_method=parsed["payment_method"],
+                reference=parsed["reference"],
+                notes=parsed["notes"],
+            )
+            audit_log(request, "expense_upload.created", "ExpenseUploadDraft", draft.id, f"Uploaded bill draft {draft.original_filename}")
+            return redirect("expense_upload_review", token=draft.public_token)
+
+    if request.method == "POST" and request.POST.get("action") == "post" and draft:
+        values = {
+            "vendor_name": clean_text(request.POST.get("vendor_name"), max_length=180),
+            "category": clean_text(request.POST.get("category"), max_length=180),
+            "amount": decimal_value(request.POST.get("amount")),
+            "bill_date": clean_text(request.POST.get("bill_date"), max_length=20),
+            "due_date": clean_text(request.POST.get("due_date"), max_length=20),
+            "bill_status": clean_text(request.POST.get("bill_status"), "paid", 20),
+            "payment_method": clean_text(request.POST.get("payment_method"), "bank", 20),
+            "expense_account": clean_text(request.POST.get("expense_account"), max_length=20),
+            "reference": clean_text(request.POST.get("reference"), max_length=120),
+            "notes": clean_text(request.POST.get("notes")),
+            "confirm": clean_text(request.POST.get("confirm"), max_length=20),
+        }
+        expense_account = Account.objects.filter(account_q(request), id=values["expense_account"], account_type="expense").first() or default_account
+        try:
+            bill_date = datetime.strptime(values["bill_date"], "%Y-%m-%d").date() if values["bill_date"] else timezone.localdate()
+        except ValueError:
+            bill_date = timezone.localdate()
+        try:
+            due_date = datetime.strptime(values["due_date"], "%Y-%m-%d").date() if values["due_date"] else None
+        except ValueError:
+            due_date = None
+        if values["confirm"].lower() != "yes":
+            error = "Type YES in the confirmation box before posting this uploaded bill."
+        elif not values["vendor_name"]:
+            error = "Verify the vendor name before posting."
+        elif values["amount"] <= 0:
+            error = "Verify the bill amount before posting."
+        elif expense_account is None:
+            error = "Choose an expense account."
+        else:
+            bill = post_expense_bill(
+                request,
+                bill_date=bill_date,
+                due_date=due_date,
+                vendor_name=values["vendor_name"],
+                category=values["category"] or expense_account.name,
+                amount=values["amount"],
+                status=values["bill_status"],
+                payment_method=values["payment_method"],
+                expense_account=expense_account,
+                reference=values["reference"] or f"Upload {draft.id}",
+                notes=values["notes"],
+                source_prefix="upload",
+            )
+            draft.vendor_name = values["vendor_name"]
+            draft.category = values["category"] or expense_account.name
+            draft.amount = values["amount"]
+            draft.bill_date = bill_date
+            draft.due_date = due_date
+            draft.bill_status = values["bill_status"] if values["bill_status"] in {"paid", "unpaid"} else "paid"
+            draft.payment_method = values["payment_method"]
+            draft.reference = values["reference"]
+            draft.notes = values["notes"]
+            draft.status = "posted"
+            draft.vendor_bill = bill
+            draft.save()
+            audit_log(request, "expense_upload.posted", "VendorBill", bill.id, f"Posted uploaded bill for {bill.vendor_name}")
+            return redirect("/dashboard/#payables")
+
+    if draft:
+        account_id = str(default_account.id if default_account else "")
+        error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+        body = f"""
+        <main class="account-shell wide-form">
+          <section class="account-card finance-form-card">
+            <p class="eyebrow">Bill upload verification</p>
+            <h1>Verify before posting</h1>
+            <p class="account-copy">RozLedger created a draft from the uploaded file. Please verify every field, type YES, then post it. Nothing is posted until you confirm.</p>
+            {error_html}
+            <div class="selected-invoice-panel">
+              <span>Uploaded document</span>
+              <strong>{escape(draft.original_filename or 'Bill upload')}</strong>
+              <p>Extracted text: {escape(draft.extracted_text or 'No OCR text available yet. Please complete the fields manually.')}</p>
+            </div>
+            <form method="post" class="account-form invoice-server-form">
+              {csrf_input(request)}
+              <input type="hidden" name="action" value="post" />
+              <label>Vendor name<input name="vendor_name" value="{escape(draft.vendor_name)}" required /></label>
+              <label>Category<input name="category" value="{escape(draft.category or 'Office expenses')}" /></label>
+              <label>Expense account<select name="expense_account">{account_options(expense_accounts, account_id)}</select></label>
+              <label>Amount<input name="amount" type="number" min="0.01" step="0.01" value="{escape(str(draft.amount or ''))}" required /></label>
+              <label>Bill date<input name="bill_date" type="date" value="{draft.bill_date:%Y-%m-%d}" /></label>
+              <label>Due date<input name="due_date" type="date" value="{draft.due_date.strftime('%Y-%m-%d') if draft.due_date else ''}" /></label>
+              <label>Status<select name="bill_status">{''.join(f'<option value="{value}" {"selected" if draft.bill_status == value else ""}>{label}</option>' for value, label in [("paid", "Paid now"), ("unpaid", "Unpaid vendor bill")])}</select></label>
+              <label>Payment method<select name="payment_method">{payment_method_options(draft.payment_method)}</select></label>
+              <label>Reference<input name="reference" value="{escape(draft.reference)}" placeholder="Bill number or payment reference" /></label>
+              <label class="full-row">Notes<textarea name="notes" rows="3">{escape(draft.notes)}</textarea></label>
+              <label class="full-row">Verification question: did you check vendor, amount, date and account?<input name="confirm" placeholder="Type YES to post" required /></label>
+              <div class="dashboard-actions">
+                <button class="button primary" type="submit">Confirm and post expense</button>
+                <a class="button secondary" href="/dashboard/expenses/upload/">Upload another bill</a>
+                <a class="button ghost" href="/dashboard/#payables">Cancel</a>
+              </div>
+            </form>
+          </section>
+        </main>
+        """
+        return page_shell("Verify bill upload", body, request)
+
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Mobile bill upload</p>
+        <h1>Upload bill photo</h1>
+        <p class="account-copy">Take a photo from your phone or upload a PDF. RozLedger will create a draft and ask you to verify before posting the expense or vendor bill.</p>
+        {error_html}
+        <form method="post" class="account-form" enctype="multipart/form-data">
+          {csrf_input(request)}
+          <input type="hidden" name="action" value="upload" />
+          <label>Bill photo or PDF<input name="document" type="file" accept="image/*,application/pdf" capture="environment" required /></label>
+          <button class="button primary" type="submit">Upload and create draft</button>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Upload bill photo", body, request)
 
 
 @login_required

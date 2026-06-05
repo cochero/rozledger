@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
-from .models import InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, Voucher
+from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, Voucher
 
 
 TEST_SETTINGS = {
@@ -1157,6 +1157,78 @@ class AccountWorkflowTests(TestCase):
         dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
         self.assertContains(dashboard_response, "Accounts payable")
         self.assertContains(dashboard_response, "₹ 750.00")
+
+    def test_customer_uploads_bill_photo_then_confirms_posting(self):
+        user = User.objects.create_user("upload-expense@example.com", "upload-expense@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+
+        upload_response = self.client.post(
+            reverse("expense_upload"),
+            {
+                "action": "upload",
+                "document": SimpleUploadedFile(
+                    "airtel-1800-internet.jpg",
+                    b"fake-image-content",
+                    content_type="image/jpeg",
+                ),
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(upload_response.status_code, 302)
+        draft = ExpenseUploadDraft.objects.get(owner=user)
+        self.assertIn("airtel", draft.extracted_text.lower())
+        review_response = self.client.get(reverse("expense_upload_review", args=[draft.public_token]), HTTP_HOST="rozledger.in")
+        self.assertContains(review_response, "Verify before posting")
+        self.assertContains(review_response, "Type YES to post")
+
+        blocked = self.client.post(
+            reverse("expense_upload_review", args=[draft.public_token]),
+            {
+                "action": "post",
+                "vendor_name": "Airtel",
+                "category": "Internet",
+                "expense_account": str(Account.objects.get(owner=user, market="IN", code="5100").id),
+                "amount": "1800",
+                "bill_date": "2026-06-06",
+                "bill_status": "paid",
+                "payment_method": "bank",
+                "reference": "BILL-UP-1",
+                "notes": "Uploaded from phone",
+                "confirm": "no",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(blocked.status_code, 200)
+        self.assertContains(blocked, "Type YES")
+        self.assertFalse(VendorBill.objects.filter(owner=user, vendor_name="Airtel").exists())
+
+        posted = self.client.post(
+            reverse("expense_upload_review", args=[draft.public_token]),
+            {
+                "action": "post",
+                "vendor_name": "Airtel",
+                "category": "Internet",
+                "expense_account": str(Account.objects.get(owner=user, market="IN", code="5100").id),
+                "amount": "1800",
+                "bill_date": "2026-06-06",
+                "bill_status": "paid",
+                "payment_method": "bank",
+                "reference": "BILL-UP-1",
+                "notes": "Uploaded from phone",
+                "confirm": "YES",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(posted.status_code, 302)
+        bill = VendorBill.objects.get(owner=user, vendor_name="Airtel")
+        self.assertEqual(bill.amount, Decimal("1800.00"))
+        self.assertEqual(bill.journal_entry.source, "upload_expense_paid")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, "posted")
+        self.assertEqual(draft.vendor_bill, bill)
 
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")

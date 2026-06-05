@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -225,6 +225,14 @@ class VendorBillAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "notes")
     list_filter = ("market", "status", "bill_date", "due_date", "created_at")
     readonly_fields = ("journal_entry", "created_at")
+
+
+@admin.register(ExpenseUploadDraft)
+class ExpenseUploadDraftAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "vendor_name", "amount", "bill_status", "status", "original_filename", "vendor_bill", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "original_filename", "extracted_text")
+    list_filter = ("market", "status", "bill_status", "payment_method", "created_at")
+    readonly_fields = ("public_token", "vendor_bill", "created_at")
 
 
 @admin.register(InventoryItem)
