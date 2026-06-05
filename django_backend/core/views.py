@@ -28,7 +28,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -342,6 +342,35 @@ def is_rate_limited(request: HttpRequest, scope: str, limit: int, window_seconds
 
 def rate_limit_response() -> JsonResponse:
     return JsonResponse({"error": "Too many requests. Please try again in a few minutes."}, status=429)
+
+
+def rate_limited_page(request: HttpRequest) -> HttpResponse:
+    body = """
+    <main class="account-shell">
+      <section class="account-card">
+        <p class="eyebrow">Security</p>
+        <h1>Too many attempts</h1>
+        <p class="account-copy">Please wait a few minutes and try again.</p>
+        <a class="button secondary" href="/">Back to RozLedger</a>
+      </section>
+    </main>
+    """
+    return page_shell("Too many attempts", body, request)
+
+
+def audit_log(request: HttpRequest, action: str, object_type: str, object_id: str = "", summary: str = "") -> None:
+    if not request.user.is_authenticated:
+        return
+    AuditLog.objects.create(
+        market=current_market(request),
+        owner=request.user,
+        owner_email=current_account_email(request),
+        action=action[:80],
+        object_type=object_type[:80],
+        object_id=str(object_id or "")[:80],
+        summary=summary[:240],
+        ip_address=client_ip(request)[:80],
+    )
 
 
 def same_origin_request(request: HttpRequest) -> bool:
@@ -945,6 +974,11 @@ def register_view(request: HttpRequest) -> HttpResponse:
     email = clean_text(request.POST.get("email"), max_length=254).lower()
     password = clean_text(request.POST.get("password"), max_length=256)
 
+    if is_rate_limited(request, "register_ip", limit=8, window_seconds=900):
+        return rate_limited_page(request)
+    if email and is_rate_limited(request, "register_email", limit=3, window_seconds=3600, identity=email):
+        return rate_limited_page(request)
+
     if "@" not in email or len(password) < 8:
         return auth_form(request, "register", "Enter a valid email and a password with at least 8 characters.")
     if not registration_captcha_valid(request):
@@ -967,6 +1001,10 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
     email = clean_text(request.POST.get("email"), max_length=254).lower()
     password = clean_text(request.POST.get("password"), max_length=256)
+    if is_rate_limited(request, "login_ip", limit=20, window_seconds=900):
+        return rate_limited_page(request)
+    if email and is_rate_limited(request, "login_email", limit=8, window_seconds=900, identity=email):
+        return rate_limited_page(request)
     user = authenticate(request, username=email, password=password)
     if user is None:
         return auth_form(request, "login", "Email or password is incorrect.")
@@ -987,6 +1025,10 @@ def password_reset_view(request: HttpRequest) -> HttpResponse:
         return password_reset_form(request)
 
     email = clean_text(request.POST.get("email"), max_length=254).lower()
+    if is_rate_limited(request, "password_reset_ip", limit=6, window_seconds=900):
+        return rate_limited_page(request)
+    if email and is_rate_limited(request, "password_reset_email", limit=3, window_seconds=3600, identity=email):
+        return rate_limited_page(request)
     if not is_valid_email(email):
         return password_reset_form(request, error="Enter a valid account email.")
 
@@ -1512,6 +1554,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
             if logo_upload:
                 profile.business_logo = logo_upload
                 profile.save(update_fields=["business_logo", "updated_at"])
+            audit_log(request, "business_profile.saved", "BusinessProfile", profile.id, f"Saved business profile for {profile.business_name}")
             return redirect("/dashboard/?profile=saved")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
@@ -1874,6 +1917,7 @@ def payment_new(request: HttpRequest) -> HttpResponse:
             if receipt.invoice:
                 receipt.invoice.status = "paid"
                 receipt.invoice.save(update_fields=["status", "updated_at"])
+            audit_log(request, "payment_receipt.created", "PaymentReceipt", receipt.id, f"Recorded payment from {receipt.payer_name} for {receipt.amount}")
             return redirect("/dashboard/#receipts")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
@@ -1986,7 +2030,7 @@ def expense_new(request: HttpRequest) -> HttpResponse:
                 amount=amount,
                 description=values["reference"] or values["notes"],
             )
-            VendorBill.objects.create(
+            bill = VendorBill.objects.create(
                 market=current_market(request),
                 owner=request.user,
                 owner_email=current_account_email(request),
@@ -2001,6 +2045,7 @@ def expense_new(request: HttpRequest) -> HttpResponse:
                 reference=values["reference"],
                 notes=values["notes"],
             )
+            audit_log(request, "vendor_bill.created", "VendorBill", bill.id, f"Recorded {status} bill for {bill.vendor_name} amount {bill.amount}")
             return redirect("/dashboard/#payables")
 
     status_options = "".join(f'<option value="{value}" {"selected" if values["status"] == value else ""}>{label}</option>' for value, label in [("paid", "Paid now"), ("unpaid", "Unpaid vendor bill")])
@@ -2126,6 +2171,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
                 save_business_profile_from_invoice(invoice, request.user)
                 save_client_from_invoice(invoice, request.user)
+                audit_log(request, "invoice.created", "Invoice", invoice.id, f"Created invoice for {invoice.client_name} amount {invoice.total_text}")
                 return redirect(f"/dashboard/?invoice=created#invoices")
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
@@ -2326,7 +2372,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.save()
             save_business_profile_from_invoice(invoice, request.user)
             save_client_from_invoice(invoice, request.user)
-        return redirect("/dashboard/")
+            audit_log(request, "invoice.updated", "Invoice", invoice.id, f"Updated invoice for {invoice.client_name}")
+            return redirect("/dashboard/")
 
     status_options = "".join(
         f'<option value="{value}" {"selected" if invoice.status == value else ""}>{label}</option>'
@@ -2384,13 +2431,16 @@ def invoice_status(request: HttpRequest, invoice_id: int) -> HttpResponse:
     if status in dict(Invoice.STATUS_CHOICES):
         invoice.status = status
         invoice.save(update_fields=["status", "updated_at"])
+        audit_log(request, "invoice.status_changed", "Invoice", invoice.id, f"Changed invoice status to {status}")
     return redirect("/dashboard/")
 
 
 @login_required
 @require_POST
 def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
-    owned_invoice(request, invoice_id).delete()
+    invoice = owned_invoice(request, invoice_id)
+    audit_log(request, "invoice.deleted", "Invoice", invoice.id, f"Deleted invoice for {invoice.client_name}")
+    invoice.delete()
     return redirect("/dashboard/")
 
 
@@ -2483,6 +2533,7 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
     subscription.paused_at = None
     subscription.cancelled_at = None
     subscription.save(update_fields=["plan", "status", "requested_at", "paused_at", "cancelled_at", "updated_at"])
+    audit_log(request, "subscription.requested", "PlanSubscription", subscription.id, f"Requested {subscription.plan} activation")
     send_mail(
         "RozLedger Pro activation requested",
         "\n".join(

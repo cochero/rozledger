@@ -359,6 +359,30 @@ class VendorBill(models.Model):
         return f"{self.vendor_name} - {self.amount}"
 
 
+class AuditLog(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_logs",
+    )
+    owner_email = models.EmailField(db_index=True)
+    action = models.CharField(max_length=80, db_index=True)
+    object_type = models.CharField(max_length=80)
+    object_id = models.CharField(max_length=80, blank=True)
+    summary = models.CharField(max_length=240)
+    ip_address = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.action} - {self.summary}"
+
+
 class PlanSubscription(models.Model):
     PLAN_CHOICES = [
         ("free", "Free"),

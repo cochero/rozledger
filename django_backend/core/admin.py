@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
 
 
 @admin.register(Lead)
@@ -197,6 +197,20 @@ class VendorBillAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "notes")
     list_filter = ("market", "status", "bill_date", "due_date", "created_at")
     readonly_fields = ("journal_entry", "created_at")
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "action", "object_type", "object_id", "summary", "ip_address", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "action", "object_type", "object_id", "summary", "ip_address")
+    list_filter = ("market", "action", "object_type", "created_at")
+    readonly_fields = ("market", "owner", "owner_email", "action", "object_type", "object_id", "summary", "ip_address", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 class PaymentGatewayConfigForm(forms.ModelForm):

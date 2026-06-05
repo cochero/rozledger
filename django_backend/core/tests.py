@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
-from .models import Account, BusinessProfile, Client as SavedClient
+from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
 from .models import Invoice, JournalEntry, Lead, PaymentReceipt, PlanSubscription, VendorBill
 
 
@@ -650,6 +650,62 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(invoice_form, "invoice-live-preview")
         self.assertContains(invoice_form, "/dashboard/business-profile/logo/")
         self.assertContains(invoice_form, "Profile Business")
+
+    def test_business_profile_save_writes_audit_log(self):
+        user = User.objects.create_user("audit-profile@example.com", "audit-profile@example.com", "password-123456")
+        self.client.force_login(user)
+
+        self.client.post(
+            reverse("business_profile"),
+            {"business_name": "Audit Business", "template": "classic", "accent_color": "#126b4f"},
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertTrue(AuditLog.objects.filter(owner=user, action="business_profile.saved", object_type="BusinessProfile").exists())
+
+    def test_cross_user_invoice_edit_is_blocked(self):
+        owner = User.objects.create_user("secure-owner@example.com", "secure-owner@example.com", "password-123456")
+        attacker = User.objects.create_user("secure-attacker@example.com", "secure-attacker@example.com", "password-123456")
+        invoice = Invoice.objects.create(
+            owner=owner,
+            owner_email=owner.email,
+            market="IN",
+            business_name="Secure Business",
+            client_name="Secure Client",
+            service_name="Secure Service",
+            include_gst=False,
+            amount_before_gst=Decimal("100.00"),
+            gst_rate=Decimal("0"),
+            total_text="₹ 100.00",
+            upi_link="",
+            invoice_text="Invoice text",
+        )
+        self.client.force_login(attacker)
+
+        response = self.client.get(reverse("invoice_edit", args=[invoice.id]), HTTP_HOST="rozledger.in")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_login_rate_limit_blocks_repeated_attempts(self):
+        cache.clear()
+        for index in range(9):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "rate-limit@example.com", "password": f"wrong-{index}"},
+                HTTP_HOST="rozledger.in",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Too many attempts")
+
+    @override_settings(DEBUG=False, SECURE_SSL_REDIRECT=False, ALLOWED_HOSTS=["testserver"])
+    def test_security_headers_are_present(self):
+        response = self.client.get("/api/health", secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Frame-Options"], "DENY")
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response["Referrer-Policy"], "same-origin")
 
     def test_customer_can_add_custom_account(self):
         user = User.objects.create_user("account@example.com", "account@example.com", "password-123456")
