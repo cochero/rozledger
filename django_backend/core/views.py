@@ -462,6 +462,147 @@ def stock_status(item: InventoryItem, quantity: Decimal) -> str:
     return "In stock"
 
 
+def extract_amount(text: str) -> Decimal:
+    match = re.search(r"(?:rs\.?|inr|usd|\$|\u20b9)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)", text, re.IGNORECASE)
+    return decimal_value(match.group(1).replace(",", "")) if match else Decimal("0")
+
+
+def detect_business_type(text: str) -> str:
+    lowered = text.lower()
+    keyword_map = {
+        "manufacturing": ["manufactur", "factory", "raw material", "finished goods", "production"],
+        "travel": ["travel", "tour", "ticket", "hotel booking", "visa"],
+        "trading": ["trading", "retail", "shop", "store", "wholesale", "product", "ecommerce"],
+        "restaurant": ["restaurant", "cafe", "food", "catering", "kitchen"],
+        "construction": ["construction", "contractor", "site", "interior", "civil"],
+        "education": ["education", "coaching", "tuition", "school", "training"],
+        "healthcare": ["clinic", "health", "doctor", "medical", "wellness"],
+        "professional": ["accountant", "lawyer", "consultant", "architect", "firm"],
+        "service": ["service", "freelancer", "agency", "repair", "maintenance"],
+    }
+    for business_type, keywords in keyword_map.items():
+        if any(keyword in lowered for keyword in keywords):
+            return business_type
+    return "other"
+
+
+def expense_account_for_text(request: HttpRequest, text: str) -> Account:
+    ensure_default_chart(request)
+    lowered = text.lower()
+    code = "5100"
+    if any(keyword in lowered for keyword in ["software", "subscription", "hosting", "domain"]):
+        code = "5400"
+    elif any(keyword in lowered for keyword in ["travel", "fuel", "taxi", "flight", "hotel"]):
+        code = "5300"
+    elif any(keyword in lowered for keyword in ["marketing", "advertising", "facebook", "google ads", "promotion"]):
+        code = "5200"
+    elif any(keyword in lowered for keyword in ["subcontract", "contractor", "labour", "labor"]):
+        code = "5500"
+    try:
+        return account_by_code(request, code)
+    except Account.DoesNotExist:
+        return account_by_code(request, "5100")
+
+
+def ai_parse_invoice_prompt(prompt: str) -> dict[str, Any]:
+    text = clean_text(prompt, max_length=1000)
+    client_name = "Client"
+    client_match = re.search(r"(?:for|to)\s+([^,\.]+?)(?:\s+(?:for|with)\s+|,|$)", text, re.IGNORECASE)
+    if client_match:
+        client_name = clean_text(client_match.group(1), "Client", 180)
+    quantity = Decimal("1")
+    quantity_match = re.search(r"\b(\d+(?:\.\d+)?)\s+(?:x\s+)?([A-Za-z][^,@]*)", text)
+    if quantity_match:
+        quantity = decimal_value(quantity_match.group(1)) or Decimal("1")
+        description = clean_text(quantity_match.group(2), "Service", 240)
+    else:
+        description_match = re.search(r"(?:for|of)\s+([^,@]+)", text, re.IGNORECASE)
+        description = clean_text(description_match.group(1) if description_match else "Service", "Service", 240)
+    rate_match = re.search(r"(?:at|rate|each|for)\s+(?:rs\.?|inr|usd|\$|\u20b9)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)", text, re.IGNORECASE)
+    amount = extract_amount(text)
+    rate = decimal_value(rate_match.group(1).replace(",", "")) if rate_match else amount
+    if rate <= 0:
+        rate = Decimal("1")
+    due_match = re.search(r"due\s+(?:in\s+)?(\d+)\s+day", text, re.IGNORECASE)
+    gst_match = re.search(r"(?:gst|tax)\s*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    return {
+        "client_name": client_name,
+        "description": description,
+        "quantity": quantity,
+        "rate": rate,
+        "due_days": int(due_match.group(1)) if due_match else 7,
+        "gst_rate": decimal_value(gst_match.group(1)) if gst_match else Decimal("18"),
+    }
+
+
+def ai_parse_expense_prompt(request: HttpRequest, prompt: str) -> dict[str, Any]:
+    text = clean_text(prompt, max_length=1000)
+    vendor = "Vendor"
+    vendor_match = re.search(r"(?:to|from|paid\s+to)\s+([^,\.]+?)(?:\s+for\s+|,|$)", text, re.IGNORECASE)
+    if vendor_match:
+        vendor = clean_text(vendor_match.group(1), "Vendor", 180)
+    category_match = re.search(r"\bfor\s+([^,\.]+)", text, re.IGNORECASE)
+    category = clean_text(category_match.group(1) if category_match else expense_account_for_text(request, text).name, "Office expenses", 180)
+    status = "unpaid" if any(keyword in text.lower() for keyword in ["bill", "unpaid", "pay later", "due"]) else "paid"
+    method = "cash" if "cash" in text.lower() else "upi" if "upi" in text.lower() else "card" if "card" in text.lower() else "bank"
+    account = expense_account_for_text(request, f"{category} {text}")
+    return {
+        "vendor_name": vendor,
+        "category": category,
+        "amount": extract_amount(text),
+        "status": status,
+        "payment_method": method,
+        "expense_account": account,
+    }
+
+
+def ai_parse_payment_prompt(prompt: str) -> dict[str, Any]:
+    text = clean_text(prompt, max_length=1000)
+    payer = ""
+    payer_match = re.search(r"(?:from|by)\s+([^,\.]+)", text, re.IGNORECASE)
+    if payer_match:
+        payer = clean_text(payer_match.group(1), max_length=180)
+    method = "cash" if "cash" in text.lower() else "upi" if "upi" in text.lower() else "card" if "card" in text.lower() else "bank"
+    return {"payer_name": payer, "amount": extract_amount(text), "method": method}
+
+
+def ai_match_payment_invoices(request: HttpRequest, payer_name: str, amount: Decimal):
+    invoices = list(Invoice.objects.filter(account_q(request)).exclude(status="paid").order_by("-created_at")[:50])
+    matches = []
+    lowered_payer = payer_name.lower()
+    for invoice in invoices:
+        score = 0
+        if amount > 0 and invoice_total_amount(invoice) == amount:
+            score += 4
+        if lowered_payer and lowered_payer in invoice.client_name.lower():
+            score += 3
+        if score:
+            matches.append((score, invoice))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return [invoice for _score, invoice in matches[:5]]
+
+
+def ai_dashboard_summary(request: HttpRequest) -> list[str]:
+    finance = finance_summary_for_user(request)
+    totals = journal_totals_for_user(request)
+    open_invoices = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
+    overdue_invoices = sum(1 for invoice in Invoice.objects.filter(account_q(request)).exclude(status="paid") if invoice_due_date(invoice).date() < timezone.localdate())
+    low_stock = 0
+    for item in InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements"):
+        quantity = stock_quantity(item)
+        if item.track_inventory and quantity <= item.reorder_level:
+            low_stock += 1
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    profit = totals["income"] - totals["expenses"]
+    return [
+        f"Receivables are {money(finance['accounts_receivable'], currency)} across {open_invoices} open invoice(s).",
+        f"Payables are {money(finance['accounts_payable'], currency)}. Keep vendor bills updated before cash planning.",
+        f"Current profit from posted entries is {money(profit, currency)}.",
+        f"{overdue_invoices} invoice(s) appear overdue based on due date.",
+        f"{low_stock} inventory item(s) are at or below reorder level.",
+    ]
+
+
 def account_by_code(request: HttpRequest, code: str) -> Account:
     ensure_default_chart(request)
     return Account.objects.get(account_q(request), code=code)
@@ -912,6 +1053,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/invoices/new/", "I", "Create invoice"),
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
+        ("/dashboard/ai/", "AI", "AI assistant"),
         ("/dashboard/inventory/", "N", "Inventory"),
         ("/dashboard/reports/", "P", "Reports"),
         ("/dashboard/setup/", "T", "Business setup"),
@@ -1629,16 +1771,18 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
           <a class="button secondary" href="/dashboard/payments/new/">Record payment</a>
           <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
+          <a class="button secondary" href="/dashboard/ai/">Open AI assistant</a>
           <a class="button secondary" href="/dashboard/inventory/">Manage inventory</a>
         </div>
       </section>
       <section class="dashboard-module-grid" aria-label="Daily workflow">
-        <a class="module-tile" href="/dashboard/invoices/new/"><span>01</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
-        <a class="module-tile" href="/dashboard/payments/new/"><span>02</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
-        <a class="module-tile" href="/dashboard/expenses/new/"><span>03</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
-        <a class="module-tile" href="/dashboard/inventory/"><span>04</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
-        <a class="module-tile" href="/dashboard/setup/"><span>05</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
-        <a class="module-tile" href="/dashboard/reports/"><span>06</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
+        <a class="module-tile" href="/dashboard/ai/"><span>01</span><strong>AI assistant</strong><p>Create invoices, categorize expenses, match payments and summarize your books.</p></a>
+        <a class="module-tile" href="/dashboard/invoices/new/"><span>02</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
+        <a class="module-tile" href="/dashboard/payments/new/"><span>03</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
+        <a class="module-tile" href="/dashboard/expenses/new/"><span>04</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
+        <a class="module-tile" href="/dashboard/inventory/"><span>05</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
+        <a class="module-tile" href="/dashboard/setup/"><span>06</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
+        <a class="module-tile" href="/dashboard/reports/"><span>07</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -1785,6 +1929,324 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Dashboard", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def ai_assistant(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    profile = get_business_profile(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    message = ""
+    error = ""
+    suggestion_html = ""
+    prompt = clean_text(request.POST.get("prompt"), max_length=1000) if request.method == "POST" else ""
+    action = clean_text(request.POST.get("action"), "analyze", 30) if request.method == "POST" else "analyze"
+
+    if request.method == "POST" and action == "apply_setup":
+        business_type = clean_text(request.POST.get("business_type"), "service", 30)
+        if business_type not in BUSINESS_TYPE_PRESETS:
+            business_type = "other"
+        if profile:
+            profile.business_type = business_type
+            profile.owner = request.user
+            profile.save(update_fields=["business_type", "owner", "updated_at"])
+        else:
+            profile = BusinessProfile.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                business_type=business_type,
+                business_name=request.user.first_name or current_account_email(request).split("@", 1)[0],
+            )
+        added = apply_business_type_accounts(request, business_type)
+        audit_log(request, "ai.setup_applied", "BusinessProfile", profile.id, f"AI applied {business_type_preset(business_type)['label']} setup")
+        message = f"AI setup applied for {business_type_preset(business_type)['label']}. {added} account(s) added."
+
+    elif request.method == "POST" and action == "create_invoice":
+        parsed = {
+            "client_name": clean_text(request.POST.get("client_name"), "Client", 180),
+            "description": clean_text(request.POST.get("description"), "Service", 240),
+            "quantity": decimal_value(request.POST.get("quantity")) or Decimal("1"),
+            "rate": decimal_value(request.POST.get("rate")),
+            "due_days": int(digits_only(clean_text(request.POST.get("due_days"), "7", 4)) or 7),
+            "gst_rate": decimal_value(request.POST.get("gst_rate")),
+        }
+        subtotal = (parsed["quantity"] * parsed["rate"]).quantize(Decimal("0.01"))
+        include_tax = parsed["gst_rate"] > 0
+        if subtotal <= 0:
+            error = "AI invoice needs a quantity and rate greater than zero."
+        else:
+            quota_used, quota_limit, quota_plan = invoice_quota_for_email(current_account_email(request), current_market(request))
+            if quota_used >= quota_limit:
+                error = invoice_quota_message(quota_used, quota_limit, quota_plan)
+            else:
+                tax_label = "Sales tax" if is_us_host(request) else "GST"
+                invoice = Invoice.objects.create(
+                    market=current_market(request),
+                    owner=request.user,
+                    owner_email=current_account_email(request),
+                    template=profile.template if profile else "classic",
+                    accent_color=profile.accent_color if profile else "#126b4f",
+                    business_name=profile.business_name if profile else request.user.first_name or "Your business",
+                    business_phone=profile.business_phone if profile else "",
+                    business_address=profile.business_address if profile else "",
+                    client_name=parsed["client_name"],
+                    client_phone="",
+                    client_address="",
+                    client_gstin="",
+                    service_name=parsed["description"],
+                    include_gst=include_tax,
+                    amount_before_gst=subtotal,
+                    gst_rate=parsed["gst_rate"] if include_tax else Decimal("0"),
+                    tax_label=tax_label,
+                    currency_symbol=currency,
+                    due_days=parsed["due_days"],
+                    total_text=invoice_total_text(subtotal, parsed["gst_rate"], include_tax, currency),
+                    upi_link=profile.upi_link if profile else "",
+                    bank_details=profile.bank_details if profile else "",
+                    thank_you_note=profile.thank_you_note if profile else "Thank you for your business.",
+                    invoice_text="",
+                )
+                save_invoice_line_items(invoice, [{"description": parsed["description"], "quantity": parsed["quantity"], "rate": parsed["rate"]}])
+                invoice.invoice_text = build_invoice_text(invoice)
+                invoice.save(update_fields=["invoice_text", "updated_at"])
+                save_client_from_invoice(invoice, request.user)
+                audit_log(request, "ai.invoice_created", "Invoice", invoice.id, f"AI created invoice for {invoice.client_name}")
+                message = f"Invoice {invoice_number(invoice)} created for {invoice.client_name}."
+
+    elif request.method == "POST" and action == "record_expense":
+        amount = decimal_value(request.POST.get("amount"))
+        vendor_name = clean_text(request.POST.get("vendor_name"), "Vendor", 180)
+        category = clean_text(request.POST.get("category"), "Office expenses", 180)
+        status = clean_text(request.POST.get("status"), "paid", 20)
+        payment_method = clean_text(request.POST.get("payment_method"), "bank", 20)
+        account_id = clean_text(request.POST.get("expense_account"), max_length=20)
+        expense_account = Account.objects.filter(account_q(request), id=account_id, account_type="expense").first() or expense_account_for_text(request, category)
+        if amount <= 0:
+            error = "AI expense needs an amount greater than zero."
+        else:
+            status = status if status in {"paid", "unpaid"} else "paid"
+            payment_method = payment_method if payment_method in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank"
+            credit_account = account_by_code(request, "2000" if status == "unpaid" else ("1000" if payment_method == "cash" else "1010"))
+            entry = post_two_line_entry(
+                request,
+                entry_date=timezone.localdate(),
+                memo=f"{'Vendor bill' if status == 'unpaid' else 'Expense paid'} - {vendor_name}",
+                source="ai_vendor_bill" if status == "unpaid" else "ai_expense_paid",
+                debit_account=expense_account,
+                credit_account=credit_account,
+                amount=amount,
+                description="Created by AI assistant",
+            )
+            bill = VendorBill.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                journal_entry=entry,
+                bill_date=timezone.localdate(),
+                due_date=None,
+                vendor_name=vendor_name,
+                category=category or expense_account.name,
+                amount=amount,
+                status=status,
+                payment_method=payment_method,
+                reference="AI assistant",
+                notes=prompt,
+            )
+            audit_log(request, "ai.expense_created", "VendorBill", bill.id, f"AI recorded {status} expense for {bill.vendor_name}")
+            message = f"Expense recorded for {vendor_name}: {money(amount, currency)}."
+
+    elif request.method == "POST" and action == "record_payment":
+        invoice_id = clean_text(request.POST.get("invoice_id"), max_length=20)
+        try:
+            invoice = owned_invoice(request, int(invoice_id))
+        except (ValueError, Http404):
+            invoice = None
+        amount = decimal_value(request.POST.get("amount"))
+        if invoice and amount <= 0:
+            amount = invoice_total_amount(invoice)
+        method = clean_text(request.POST.get("method"), "bank", 20)
+        if invoice is None:
+            error = "Select a valid invoice before AI records payment."
+        elif amount <= 0:
+            error = "Payment amount must be greater than zero."
+        else:
+            method = method if method in {"bank", "cash", "upi", "card", "check", "paypal", "stripe", "other"} else "bank"
+            debit_account = account_by_code(request, "1000" if method == "cash" else "1010")
+            credit_account = account_by_code(request, "4000")
+            entry = post_two_line_entry(
+                request,
+                entry_date=timezone.localdate(),
+                memo=f"Payment received from {invoice.client_name}",
+                source="ai_payment_received",
+                debit_account=debit_account,
+                credit_account=credit_account,
+                amount=amount,
+                description=f"Matched by AI to {invoice_number(invoice)}",
+            )
+            receipt = PaymentReceipt.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                invoice=invoice,
+                journal_entry=entry,
+                payment_date=timezone.localdate(),
+                payer_name=invoice.client_name,
+                amount=amount,
+                method=method,
+                reference=f"AI match {invoice_number(invoice)}",
+                notes=prompt,
+            )
+            invoice.status = "paid"
+            invoice.save(update_fields=["status", "updated_at"])
+            audit_log(request, "ai.payment_matched", "PaymentReceipt", receipt.id, f"AI matched payment to {invoice_number(invoice)}")
+            message = f"Payment matched and posted to {invoice_number(invoice)}."
+
+    if request.method == "POST" and action == "analyze":
+        lowered = prompt.lower()
+        if any(keyword in lowered for keyword in ["setup", "business type", "i run", "we run", "start", "profile"]):
+            business_type = detect_business_type(prompt)
+            preset = business_type_preset(business_type)
+            suggestion_html = f"""
+            <article class="ai-suggestion-card">
+              <span>AI setup assistant</span>
+              <h2>{escape(preset['label'])}</h2>
+              <p>{escape(preset['summary'])}</p>
+              <form method="post" class="inline-form">
+                {csrf_input(request)}
+                <input type="hidden" name="action" value="apply_setup" />
+                <input type="hidden" name="business_type" value="{escape(business_type)}" />
+                <button class="button primary" type="submit">Apply this setup</button>
+              </form>
+            </article>
+            """
+        elif any(keyword in lowered for keyword in ["invoice", "bill customer", "create bill"]):
+            parsed = ai_parse_invoice_prompt(prompt)
+            subtotal = (parsed["quantity"] * parsed["rate"]).quantize(Decimal("0.01"))
+            total = invoice_total_text(subtotal, parsed["gst_rate"], parsed["gst_rate"] > 0, currency)
+            suggestion_html = f"""
+            <article class="ai-suggestion-card">
+              <span>AI invoice creator</span>
+              <h2>{escape(parsed['client_name'])}</h2>
+              <p>{escape(parsed['description'])}: {escape(format_quantity(parsed['quantity']))} x {escape(money(parsed['rate'], currency))}. Estimated total {escape(total)}.</p>
+              <form method="post" class="ai-approval-form">
+                {csrf_input(request)}
+                <input type="hidden" name="action" value="create_invoice" />
+                <input type="hidden" name="client_name" value="{escape(parsed['client_name'])}" />
+                <input type="hidden" name="description" value="{escape(parsed['description'])}" />
+                <input type="hidden" name="quantity" value="{escape(format_quantity(parsed['quantity']))}" />
+                <input type="hidden" name="rate" value="{escape(str(parsed['rate']))}" />
+                <input type="hidden" name="due_days" value="{escape(str(parsed['due_days']))}" />
+                <input type="hidden" name="gst_rate" value="{escape(str(parsed['gst_rate']))}" />
+                <button class="button primary" type="submit">Create invoice</button>
+                <a class="button secondary" href="/dashboard/invoices/new/">Edit in invoice builder</a>
+              </form>
+            </article>
+            """
+        elif any(keyword in lowered for keyword in ["expense", "paid", "bill from", "vendor", "purchase"]):
+            parsed = ai_parse_expense_prompt(request, prompt)
+            suggestion_html = f"""
+            <article class="ai-suggestion-card">
+              <span>AI expense categorizer</span>
+              <h2>{escape(parsed['vendor_name'])}</h2>
+              <p>Category: {escape(parsed['category'])}. Account: {escape(parsed['expense_account'].code)} - {escape(parsed['expense_account'].name)}. Amount: {escape(money(parsed['amount'], currency))}.</p>
+              <form method="post" class="ai-approval-form">
+                {csrf_input(request)}
+                <input type="hidden" name="action" value="record_expense" />
+                <input type="hidden" name="vendor_name" value="{escape(parsed['vendor_name'])}" />
+                <input type="hidden" name="category" value="{escape(parsed['category'])}" />
+                <input type="hidden" name="amount" value="{escape(str(parsed['amount']))}" />
+                <input type="hidden" name="status" value="{escape(parsed['status'])}" />
+                <input type="hidden" name="payment_method" value="{escape(parsed['payment_method'])}" />
+                <input type="hidden" name="expense_account" value="{escape(str(parsed['expense_account'].id))}" />
+                <input type="hidden" name="prompt" value="{escape(prompt)}" />
+                <button class="button primary" type="submit">Record expense</button>
+                <a class="button secondary" href="/dashboard/expenses/new/">Edit expense form</a>
+              </form>
+            </article>
+            """
+        elif any(keyword in lowered for keyword in ["received", "payment", "paid by", "collected"]):
+            parsed = ai_parse_payment_prompt(prompt)
+            matches = ai_match_payment_invoices(request, parsed["payer_name"], parsed["amount"])
+            if matches:
+                match_rows = []
+                for invoice in matches:
+                    match_rows.append(
+                        f"""
+                        <form method="post" class="ai-match-row">
+                          {csrf_input(request)}
+                          <input type="hidden" name="action" value="record_payment" />
+                          <input type="hidden" name="invoice_id" value="{invoice.id}" />
+                          <input type="hidden" name="amount" value="{escape(str(parsed['amount'] or invoice_total_amount(invoice)))}" />
+                          <input type="hidden" name="method" value="{escape(parsed['method'])}" />
+                          <input type="hidden" name="prompt" value="{escape(prompt)}" />
+                          <div><strong>{escape(invoice_number(invoice))}</strong><p>{escape(invoice.client_name)} - {escape(invoice_total_display(invoice))}</p></div>
+                          <button class="button primary" type="submit">Post payment</button>
+                        </form>
+                        """
+                    )
+                suggestion_html = f"""
+                <article class="ai-suggestion-card">
+                  <span>AI payment matching</span>
+                  <h2>Possible invoice matches</h2>
+                  <p>Detected payer {escape(parsed['payer_name'] or 'unknown')} and amount {escape(money(parsed['amount'], currency))}.</p>
+                  <div class="ai-match-list">{''.join(match_rows)}</div>
+                </article>
+                """
+            else:
+                suggestion_html = '<article class="ai-suggestion-card"><span>AI payment matching</span><h2>No matching open invoice found</h2><p>Try including customer name and exact amount, or use the payment form.</p><a class="button secondary" href="/dashboard/payments/new/">Open payment form</a></article>'
+        else:
+            summary_items = "".join(f"<li>{escape(item)}</li>" for item in ai_dashboard_summary(request))
+            suggestion_html = f"""
+            <article class="ai-suggestion-card">
+              <span>AI dashboard summary</span>
+              <h2>Business summary</h2>
+              <ul>{summary_items}</ul>
+            </article>
+            """
+
+    summary_items = "".join(f"<li>{escape(item)}</li>" for item in ai_dashboard_summary(request))
+    message_html = f'<p class="form-success">{escape(message)}</p>' if message else ""
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    examples = [
+        "I run a travel agency. Set up my accounts.",
+        "Create invoice for ABC Travels, 3 Dubai tour packages at 25000 each, GST 18, due in 7 days.",
+        "Paid 1800 to Airtel for internet by bank.",
+        "Received 5000 from John by UPI.",
+        "Show my business summary.",
+    ]
+    example_html = "".join(f"<button type=\"submit\" name=\"prompt\" value=\"{escape(example)}\">{escape(example)}</button>" for example in examples)
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero ai-hero">
+        <p class="eyebrow">RozLedger AI</p>
+        <h1>Ask, review, approve.</h1>
+        <p>Use plain English for setup, invoices, expenses, summaries and payment matching. AI suggestions are never posted until you approve them.</p>
+        {message_html}{error_html}
+        <form method="post" class="ai-command-form">
+          {csrf_input(request)}
+          <input type="hidden" name="action" value="analyze" />
+          <label>What do you want RozLedger AI to do?<textarea name="prompt" rows="4" placeholder="Type a command like: create invoice for ABC, 2 services at 5000 each">{escape(prompt)}</textarea></label>
+          <button class="button primary" type="submit">Analyze</button>
+        </form>
+        <form method="post" class="ai-example-grid">
+          {csrf_input(request)}
+          <input type="hidden" name="action" value="analyze" />
+          {example_html}
+        </form>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Suggestion</p><h2>AI result</h2></div>
+        {suggestion_html or '<article class="ai-suggestion-card"><span>Ready</span><h2>Enter a command above</h2><p>RozLedger AI can set up business defaults, draft invoices, categorize expenses, explain dashboard numbers and match payments to invoices.</p></article>'}
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Live summary</p><h2>Current business health</h2></div>
+        <article class="ai-suggestion-card"><ul>{summary_items}</ul></article>
+      </section>
+    </main>
+    """
+    return page_shell("AI assistant", body, request)
 
 
 @login_required

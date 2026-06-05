@@ -1531,6 +1531,92 @@ textarea {
   color: var(--muted);
 }
 
+.ai-command-form {
+  display: grid;
+  gap: 12px;
+  max-width: 900px;
+}
+
+.ai-command-form textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.ai-example-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 980px;
+  margin-top: 14px;
+}
+
+.ai-example-grid button {
+  border: 1px solid rgba(18, 107, 79, 0.2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--green-dark);
+  background: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ai-suggestion-card {
+  max-width: 980px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(23, 33, 31, 0.035);
+}
+
+.ai-suggestion-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ai-suggestion-card h2 {
+  margin-bottom: 8px;
+  font-size: clamp(24px, 3vw, 36px);
+}
+
+.ai-suggestion-card p,
+.ai-suggestion-card li {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.ai-approval-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ai-match-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ai-match-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8faf8;
+}
+
+.ai-match-row p {
+  margin: 3px 0 0;
+}
+
 .setup-form {
   max-width: 760px;
 }

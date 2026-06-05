@@ -753,6 +753,106 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(movement_response, "6 pcs on hand")
         self.assertContains(movement_response, "INV-1")
 
+    def test_ai_assistant_applies_setup_and_creates_invoice(self):
+        user = User.objects.create_user("ai-setup@example.com", "ai-setup@example.com", "password-123456", first_name="AI Owner")
+        self.client.force_login(user)
+
+        analyze = self.client.post(reverse("ai_assistant"), {"action": "analyze", "prompt": "I run a travel agency. Set up my accounts."}, HTTP_HOST="rozledger.in")
+        self.assertEqual(analyze.status_code, 200)
+        self.assertContains(analyze, "AI setup assistant")
+        self.assertContains(analyze, "Travel &amp; tour operator")
+
+        apply = self.client.post(reverse("ai_assistant"), {"action": "apply_setup", "business_type": "travel"}, HTTP_HOST="rozledger.in")
+        self.assertEqual(apply.status_code, 200)
+        self.assertEqual(BusinessProfile.objects.get(owner=user).business_type, "travel")
+        self.assertTrue(Account.objects.filter(owner=user, code="4130", name="Travel package income").exists())
+
+        invoice = self.client.post(
+            reverse("ai_assistant"),
+            {
+                "action": "create_invoice",
+                "client_name": "ABC Travels",
+                "description": "Dubai tour package",
+                "quantity": "3",
+                "rate": "25000",
+                "due_days": "7",
+                "gst_rate": "18",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(invoice.status_code, 200)
+        saved = Invoice.objects.get(owner=user, client_name="ABC Travels")
+        self.assertEqual(saved.amount_before_gst, Decimal("75000.00"))
+        self.assertEqual(saved.line_items.count(), 1)
+        self.assertContains(invoice, "created for ABC Travels")
+
+    def test_ai_assistant_records_expense_and_matches_payment(self):
+        user = User.objects.create_user("ai-flow@example.com", "ai-flow@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+
+        expense = self.client.post(
+            reverse("ai_assistant"),
+            {
+                "action": "record_expense",
+                "vendor_name": "Airtel",
+                "category": "internet",
+                "amount": "1800",
+                "status": "paid",
+                "payment_method": "bank",
+                "expense_account": str(Account.objects.get(owner=user, market="US", code="5100").id),
+                "prompt": "Paid 1800 to Airtel for internet by bank.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(expense.status_code, 200)
+        bill = VendorBill.objects.get(owner=user, vendor_name="Airtel")
+        self.assertEqual(bill.amount, Decimal("1800.00"))
+        self.assertEqual(bill.journal_entry.source, "ai_expense_paid")
+
+        invoice = Invoice.objects.create(
+            owner=user,
+            owner_email=user.email,
+            market="US",
+            business_name="AI Business",
+            client_name="John Smith",
+            service_name="Consulting",
+            include_gst=False,
+            amount_before_gst=Decimal("5000.00"),
+            gst_rate=Decimal("0"),
+            tax_label="Sales tax",
+            currency_symbol="$",
+            total_text="$ 5000.00",
+            upi_link="",
+            invoice_text="Invoice text",
+        )
+        analyze_payment = self.client.post(reverse("ai_assistant"), {"action": "analyze", "prompt": "Received 5000 from John by bank."}, HTTP_HOST="rozledger.com")
+        self.assertContains(analyze_payment, "Possible invoice matches")
+        self.assertContains(analyze_payment, f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}")
+
+        payment = self.client.post(
+            reverse("ai_assistant"),
+            {"action": "record_payment", "invoice_id": str(invoice.id), "amount": "5000", "method": "bank", "prompt": "Received 5000 from John by bank."},
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(payment.status_code, 200)
+        receipt = PaymentReceipt.objects.get(owner=user, invoice=invoice)
+        self.assertEqual(receipt.amount, Decimal("5000.00"))
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "paid")
+
+    def test_ai_assistant_shows_dashboard_summary(self):
+        user = User.objects.create_user("ai-summary@example.com", "ai-summary@example.com", "password-123456")
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("ai_assistant"), HTTP_HOST="rozledger.in")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Live summary")
+        self.assertContains(response, "AI dashboard summary", count=0)
+        self.assertContains(response, "Receivables are")
+
     def test_business_profile_save_writes_audit_log(self):
         user = User.objects.create_user("audit-profile@example.com", "audit-profile@example.com", "password-123456")
         self.client.force_login(user)
