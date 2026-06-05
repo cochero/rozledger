@@ -90,6 +90,37 @@ BILL_STATUS_CHOICES = [
     ("paid", "Paid"),
 ]
 
+BUSINESS_TYPE_CHOICES = [
+    ("service", "Service business"),
+    ("trading", "Trading / retail"),
+    ("manufacturing", "Manufacturing"),
+    ("travel", "Travel & tour operator"),
+    ("professional", "Professional firm"),
+    ("construction", "Construction / contractor"),
+    ("restaurant", "Restaurant / food service"),
+    ("education", "Education / coaching"),
+    ("healthcare", "Healthcare / clinic"),
+    ("other", "Other business"),
+]
+
+INVENTORY_ITEM_TYPE_CHOICES = [
+    ("service", "Service"),
+    ("trading", "Trading item"),
+    ("raw_material", "Raw material"),
+    ("finished_goods", "Finished goods"),
+    ("package", "Travel/package item"),
+    ("consumable", "Consumable"),
+]
+
+STOCK_MOVEMENT_CHOICES = [
+    ("opening", "Opening balance"),
+    ("purchase", "Purchase / inward"),
+    ("sale", "Sale / outward"),
+    ("adjustment", "Adjustment"),
+    ("production", "Production"),
+    ("return", "Return"),
+]
+
 
 class Lead(models.Model):
     market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
@@ -153,6 +184,7 @@ class BusinessProfile(models.Model):
         related_name="business_profiles",
     )
     owner_email = models.EmailField(db_index=True)
+    business_type = models.CharField(max_length=30, choices=BUSINESS_TYPE_CHOICES, default="service")
     business_name = models.CharField(max_length=180)
     business_logo = models.FileField(upload_to="business_logos/%Y/%m/", blank=True)
     business_phone = models.CharField(max_length=40, blank=True)
@@ -375,6 +407,61 @@ class VendorBill(models.Model):
 
     def __str__(self) -> str:
         return f"{self.vendor_name} - {self.amount}"
+
+
+class InventoryItem(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="inventory_items",
+    )
+    owner_email = models.EmailField(db_index=True)
+    sku = models.CharField(max_length=80, blank=True)
+    name = models.CharField(max_length=180)
+    category = models.CharField(max_length=120, blank=True)
+    item_type = models.CharField(max_length=30, choices=INVENTORY_ITEM_TYPE_CHOICES, default="trading")
+    unit = models.CharField(max_length=30, default="pcs")
+    sales_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    purchase_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reorder_level = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    track_inventory = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class StockMovement(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="stock_movements",
+    )
+    owner_email = models.EmailField(db_index=True)
+    item = models.ForeignKey(InventoryItem, on_delete=models.CASCADE, related_name="movements")
+    movement_type = models.CharField(max_length=30, choices=STOCK_MOVEMENT_CHOICES)
+    movement_date = models.DateField(default=timezone.localdate)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-movement_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.item.name} - {self.movement_type} - {self.quantity}"
 
 
 class AuditLog(models.Model):

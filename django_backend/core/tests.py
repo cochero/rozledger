@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
-from .models import Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, VendorBill
+from .models import InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
 
 
 TEST_SETTINGS = {
@@ -653,6 +653,7 @@ class AccountWorkflowTests(TestCase):
         response = self.client.post(
             reverse("business_profile"),
             {
+                "business_type": "trading",
                 "business_name": "Profile Business",
                 "business_phone": "+91 95160 22222",
                 "business_address": "Profile Street\nKochi",
@@ -674,6 +675,7 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 302)
         profile = BusinessProfile.objects.get(owner=user, market="IN")
         self.assertEqual(profile.business_name, "Profile Business")
+        self.assertEqual(profile.business_type, "trading")
         self.assertEqual(profile.gstin, "32ABCDE1234F1Z5")
         self.assertEqual(profile.template, "service")
         self.assertTrue(profile.business_logo.name)
@@ -689,6 +691,67 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(invoice_form, "invoice-live-preview")
         self.assertContains(invoice_form, "/dashboard/business-profile/logo/")
         self.assertContains(invoice_form, "Profile Business")
+
+    def test_business_setup_applies_type_specific_accounts(self):
+        user = User.objects.create_user("setup@example.com", "setup@example.com", "password-123456", first_name="Setup Owner")
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("business_setup"), {"business_type": "manufacturing"}, HTTP_HOST="rozledger.in")
+
+        self.assertEqual(response.status_code, 200)
+        profile = BusinessProfile.objects.get(owner=user, market="IN")
+        self.assertEqual(profile.business_type, "manufacturing")
+        self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1220", name="Raw material inventory").exists())
+        self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1230", name="Finished goods inventory").exists())
+        self.assertContains(response, "Manufacturing")
+        self.assertContains(response, "Raw materials")
+
+    def test_inventory_page_creates_item_and_stock_movement(self):
+        user = User.objects.create_user("inventory@example.com", "inventory@example.com", "password-123456")
+        self.client.force_login(user)
+
+        item_response = self.client.post(
+            reverse("inventory"),
+            {
+                "action": "item",
+                "name": "Premium Widget",
+                "sku": "PW-001",
+                "item_type": "trading",
+                "category": "Widgets",
+                "unit": "pcs",
+                "sales_rate": "250",
+                "purchase_rate": "150",
+                "opening_quantity": "10",
+                "reorder_level": "3",
+                "track_inventory": "on",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(item_response.status_code, 200)
+        item = InventoryItem.objects.get(owner=user, sku="PW-001")
+        self.assertEqual(item.name, "Premium Widget")
+        self.assertEqual(StockMovement.objects.filter(item=item, movement_type="opening").count(), 1)
+        self.assertContains(item_response, "10 pcs on hand")
+
+        movement_response = self.client.post(
+            reverse("inventory"),
+            {
+                "action": "movement",
+                "item_id": str(item.id),
+                "movement_type": "sale",
+                "movement_date": "2026-06-05",
+                "quantity": "4",
+                "unit_cost": "150",
+                "reference": "INV-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(movement_response.status_code, 200)
+        self.assertEqual(StockMovement.objects.filter(item=item).count(), 2)
+        self.assertContains(movement_response, "6 pcs on hand")
+        self.assertContains(movement_response, "INV-1")
 
     def test_business_profile_save_writes_audit_log(self):
         user = User.objects.create_user("audit-profile@example.com", "audit-profile@example.com", "password-123456")

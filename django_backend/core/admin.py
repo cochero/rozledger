@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
 
 
 @admin.register(Lead)
@@ -74,9 +74,9 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(BusinessProfile)
 class BusinessProfileAdmin(admin.ModelAdmin):
-    list_display = ("market", "business_name", "owner", "owner_email", "business_phone", "gstin", "updated_at")
+    list_display = ("market", "business_name", "business_type", "owner", "owner_email", "business_phone", "gstin", "updated_at")
     search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "business_address", "gstin")
-    list_filter = ("market", "updated_at", "created_at")
+    list_filter = ("market", "business_type", "updated_at", "created_at")
 
 
 @admin.register(PlanSubscription)
@@ -204,6 +204,20 @@ class VendorBillAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "notes")
     list_filter = ("market", "status", "bill_date", "due_date", "created_at")
     readonly_fields = ("journal_entry", "created_at")
+
+
+@admin.register(InventoryItem)
+class InventoryItemAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "sku", "name", "category", "item_type", "unit", "sales_rate", "purchase_rate", "reorder_level", "track_inventory", "is_active")
+    search_fields = ("owner__username", "owner__email", "owner_email", "sku", "name", "category")
+    list_filter = ("market", "item_type", "track_inventory", "is_active", "created_at")
+
+
+@admin.register(StockMovement)
+class StockMovementAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "item", "movement_type", "movement_date", "quantity", "unit_cost", "reference", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "item__name", "item__sku", "reference", "notes")
+    list_filter = ("market", "movement_type", "movement_date", "created_at")
 
 
 @admin.register(AuditLog)

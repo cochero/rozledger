@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from html import escape
@@ -28,7 +28,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, VendorBill
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockMovement, VendorBill
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -59,6 +59,89 @@ DEFAULT_CHART = [
     ("5300", "Travel expenses", "expense", "debit"),
     ("5400", "Software subscriptions", "expense", "debit"),
 ]
+
+BUSINESS_TYPE_PRESETS = {
+    "service": {
+        "label": "Service business",
+        "summary": "Best for freelancers, agencies, repairs, contractors and local service teams.",
+        "requirements": ["Business profile", "Client records", "Service invoice templates", "Payment tracking", "Expense categories", "Profit & loss"],
+        "sales": ["Consulting", "Installation", "Repair", "Maintenance", "Retainer", "Project milestone"],
+        "inventory": ["Optional consumables", "Tools/equipment tracking"],
+        "accounts": [("4110", "Service retainers", "revenue", "credit"), ("5500", "Subcontractor costs", "expense", "debit")],
+    },
+    "trading": {
+        "label": "Trading / retail",
+        "summary": "For shops, distributors, ecommerce sellers and wholesale businesses.",
+        "requirements": ["Product catalog", "Purchase bills", "Sales invoices", "Stock inward/outward", "Low stock alerts", "Gross margin review"],
+        "sales": ["Product sale", "Wholesale order", "Delivery charge", "Discount", "Return"],
+        "inventory": ["Trading goods", "Opening stock", "Purchase receipts", "Sales issue", "Stock adjustment"],
+        "accounts": [("1210", "Inventory asset", "asset", "debit"), ("5010", "Cost of goods sold", "expense", "debit"), ("4120", "Product sales", "revenue", "credit")],
+    },
+    "manufacturing": {
+        "label": "Manufacturing",
+        "summary": "For businesses that buy raw material and produce finished goods.",
+        "requirements": ["Raw material master", "Finished goods master", "Production stock movement", "Vendor bills", "Cost tracking", "Inventory valuation"],
+        "sales": ["Finished goods sale", "Job work", "Scrap sale", "Freight recovery"],
+        "inventory": ["Raw materials", "Work in progress", "Finished goods", "Production issue", "Production receipt"],
+        "accounts": [("1220", "Raw material inventory", "asset", "debit"), ("1230", "Finished goods inventory", "asset", "debit"), ("5020", "Manufacturing cost", "expense", "debit")],
+    },
+    "travel": {
+        "label": "Travel & tour operator",
+        "summary": "For package tours, ticketing, hotel bookings, transport and travel agencies.",
+        "requirements": ["Package/service catalog", "Customer advance tracking", "Supplier payable tracking", "Itinerary notes", "Commission income", "Payment reminders"],
+        "sales": ["Tour package", "Ticketing fee", "Hotel booking", "Transport", "Visa assistance", "Commission"],
+        "inventory": ["Packages as non-stock items", "Vendor commitments", "Optional ticket inventory"],
+        "accounts": [("2110", "Customer advances", "liability", "credit"), ("4130", "Travel package income", "revenue", "credit"), ("5030", "Supplier travel costs", "expense", "debit")],
+    },
+    "professional": {
+        "label": "Professional firm",
+        "summary": "For accountants, consultants, lawyers, architects and other professional practices.",
+        "requirements": ["Client records", "Matter/project billing", "Recurring retainers", "Expense recovery", "Receivables ageing", "Tax-ready records"],
+        "sales": ["Professional fee", "Retainer", "Filing charge", "Reimbursement", "Advisory package"],
+        "inventory": ["Non-stock service catalog"],
+        "accounts": [("4140", "Professional fees", "revenue", "credit"), ("5510", "Client reimbursable expenses", "expense", "debit")],
+    },
+    "construction": {
+        "label": "Construction / contractor",
+        "summary": "For contractors, site work, interior projects and milestone billing.",
+        "requirements": ["Project/customer records", "Milestone invoices", "Material purchase tracking", "Vendor bills", "Retention notes", "Cash summary"],
+        "sales": ["Milestone billing", "Labour charge", "Material recovery", "Site supervision"],
+        "inventory": ["Construction materials", "Site consumables", "Tools"],
+        "accounts": [("1240", "Site materials", "asset", "debit"), ("4150", "Contract income", "revenue", "credit"), ("5040", "Site labour and material cost", "expense", "debit")],
+    },
+    "restaurant": {
+        "label": "Restaurant / food service",
+        "summary": "For cafes, restaurants, catering and cloud kitchens.",
+        "requirements": ["Menu/service items", "Ingredient stock", "Vendor purchases", "Daily sales", "Expense tracking", "Cash/bank summary"],
+        "sales": ["Food sales", "Catering order", "Delivery charge", "Event package"],
+        "inventory": ["Ingredients", "Packaging", "Finished/menu items", "Wastage adjustment"],
+        "accounts": [("1250", "Food inventory", "asset", "debit"), ("4160", "Food sales", "revenue", "credit"), ("5050", "Food cost", "expense", "debit")],
+    },
+    "education": {
+        "label": "Education / coaching",
+        "summary": "For tutors, coaching centers, training providers and workshops.",
+        "requirements": ["Student/customer records", "Course fee invoices", "Batch/service catalog", "Payment reminders", "Expense tracking"],
+        "sales": ["Course fee", "Monthly tuition", "Workshop", "Study material"],
+        "inventory": ["Books/materials", "Non-stock courses"],
+        "accounts": [("4170", "Course fee income", "revenue", "credit"), ("5520", "Teaching material expense", "expense", "debit")],
+    },
+    "healthcare": {
+        "label": "Healthcare / clinic",
+        "summary": "For clinics, wellness centers and healthcare service providers.",
+        "requirements": ["Patient/customer records", "Service invoice", "Consumable inventory", "Expense tracking", "Receipt records"],
+        "sales": ["Consultation", "Procedure", "Medicine/consumable", "Package"],
+        "inventory": ["Consumables", "Medicines", "Clinic supplies"],
+        "accounts": [("4180", "Consultation income", "revenue", "credit"), ("5060", "Medical consumables cost", "expense", "debit")],
+    },
+    "other": {
+        "label": "Other business",
+        "summary": "A balanced starter setup for businesses that need invoices, expenses, accounts and optional inventory.",
+        "requirements": ["Business profile", "Client/vendor records", "Invoices", "Payments", "Expenses", "Reports"],
+        "sales": ["Service", "Product", "Project", "Package"],
+        "inventory": ["Optional stock items"],
+        "accounts": [],
+    },
+}
 
 
 def clean_text(value: Any, fallback: str = "", max_length: int = 2000) -> str:
@@ -163,6 +246,43 @@ def ensure_default_chart(request: HttpRequest) -> None:
             )
     if accounts:
         Account.objects.bulk_create(accounts)
+
+
+def business_type_options(selected: str = "service") -> str:
+    return "".join(
+        f'<option value="{escape(key)}" {"selected" if selected == key else ""}>{escape(preset["label"])}</option>'
+        for key, preset in BUSINESS_TYPE_PRESETS.items()
+    )
+
+
+def business_type_preset(key: str) -> dict[str, Any]:
+    return BUSINESS_TYPE_PRESETS.get(key) or BUSINESS_TYPE_PRESETS["other"]
+
+
+def apply_business_type_accounts(request: HttpRequest, business_type: str) -> int:
+    ensure_default_chart(request)
+    preset = business_type_preset(business_type)
+    email = current_account_email(request)
+    market = current_market(request)
+    existing_codes = set(Account.objects.filter(account_q(request)).values_list("code", flat=True))
+    accounts = []
+    for code, name, account_type, normal_balance in preset["accounts"]:
+        if code in existing_codes:
+            continue
+        accounts.append(
+            Account(
+                market=market,
+                owner=request.user,
+                owner_email=email,
+                code=code,
+                name=name,
+                account_type=account_type,
+                normal_balance=normal_balance,
+            )
+        )
+    if accounts:
+        Account.objects.bulk_create(accounts)
+    return len(accounts)
 
 
 def account_options(accounts, selected_id: str = "") -> str:
@@ -314,6 +434,34 @@ def invoice_print_rows(invoice: Invoice) -> str:
     )
 
 
+def inventory_item_options(items, selected_id: str = "") -> str:
+    options = ['<option value="">Select inventory item</option>']
+    for item in items:
+        label = f"{item.sku + ' - ' if item.sku else ''}{item.name}"
+        options.append(f'<option value="{item.id}" {"selected" if selected_id and str(item.id) == str(selected_id) else ""}>{escape(label)}</option>')
+    return "".join(options)
+
+
+def stock_signed_quantity(movement: StockMovement) -> Decimal:
+    if movement.movement_type in {"sale"}:
+        return -movement.quantity
+    return movement.quantity
+
+
+def stock_quantity(item: InventoryItem) -> Decimal:
+    return sum((stock_signed_quantity(movement) for movement in item.movements.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
+def stock_status(item: InventoryItem, quantity: Decimal) -> str:
+    if not item.track_inventory:
+        return "Not tracked"
+    if quantity <= 0:
+        return "Out of stock"
+    if item.reorder_level and quantity <= item.reorder_level:
+        return "Low stock"
+    return "In stock"
+
+
 def account_by_code(request: HttpRequest, code: str) -> Account:
     ensure_default_chart(request)
     return Account.objects.get(account_q(request), code=code)
@@ -398,6 +546,9 @@ def save_business_profile_from_invoice(invoice: Invoice, owner=None) -> None:
         "template": invoice.template,
         "accent_color": invoice.accent_color,
     }
+    existing = BusinessProfile.objects.filter(market=invoice.market, owner_email=invoice.owner_email).first()
+    if existing:
+        defaults["business_type"] = existing.business_type
     if invoice.business_logo:
         defaults["business_logo"] = invoice.business_logo
     BusinessProfile.objects.update_or_create(market=invoice.market, owner_email=invoice.owner_email, defaults=defaults)
@@ -761,7 +912,9 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/invoices/new/", "I", "Create invoice"),
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
+        ("/dashboard/inventory/", "N", "Inventory"),
         ("/dashboard/reports/", "P", "Reports"),
+        ("/dashboard/setup/", "T", "Business setup"),
         ("/dashboard/business-profile/", "S", "Business profile"),
         ("/dashboard/#invoices", "C", "Customers"),
         ("/dashboard/#accounting", "A", "Chart of accounts"),
@@ -1228,6 +1381,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     finance_summary = finance_summary_for_user(request)
     payment_receipts = PaymentReceipt.objects.filter(account_q(request))[:8]
     vendor_bills = VendorBill.objects.filter(account_q(request))[:8]
+    inventory_items = list(InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements")[:8])
+    stock_snapshots = [(item, stock_quantity(item)) for item in inventory_items]
+    low_stock_count = sum(1 for item, quantity in stock_snapshots if item.track_inventory and quantity <= item.reorder_level)
 
     invoice_rows = []
     for invoice in invoices:
@@ -1302,6 +1458,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <div>
             <span>Business profile</span>
             <h2>{escape(business_profile.business_name)}</h2>
+            <p>Type: {escape(business_profile.get_business_type_display())}</p>
             {f'<p>Phone: {escape(business_profile.business_phone)}</p>' if business_profile.business_phone else ''}
             <p>{escape(business_profile.business_address or 'No address saved yet').replace(chr(10), '<br />')}</p>
             {f'<p>{escape(business_profile.bank_details).replace(chr(10), "<br />")}</p>' if business_profile.bank_details else ''}
@@ -1435,6 +1592,31 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             """
         )
 
+    inventory_rows = []
+    for item, quantity in stock_snapshots:
+        status = stock_status(item, quantity)
+        inventory_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(status)}</span>
+                <h2>{escape(item.name)}</h2>
+                <p>{escape(item.sku or item.get_item_type_display())}<br />Stock: {escape(format_quantity(quantity))} {escape(item.unit)} / Reorder: {escape(format_quantity(item.reorder_level))}</p>
+              </div>
+            </article>
+            """
+        )
+    if not inventory_rows:
+        inventory_rows.append(
+            """
+            <article class="dashboard-card empty-state compact-card">
+              <span>Inventory</span>
+              <h2>No inventory items yet</h2>
+              <p>Add products, raw materials, finished goods, travel packages or service catalog items.</p>
+            </article>
+            """
+        )
+
     display_name = request.user.first_name or email
     body = f"""
     <main class="dashboard-shell">
@@ -1447,14 +1629,16 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
           <a class="button secondary" href="/dashboard/payments/new/">Record payment</a>
           <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
+          <a class="button secondary" href="/dashboard/inventory/">Manage inventory</a>
         </div>
       </section>
       <section class="dashboard-module-grid" aria-label="Daily workflow">
         <a class="module-tile" href="/dashboard/invoices/new/"><span>01</span><strong>Create invoice</strong><p>Bill customers with saved business and client details.</p></a>
         <a class="module-tile" href="/dashboard/payments/new/"><span>02</span><strong>Collect payment</strong><p>Select customer and invoice, then post the receipt.</p></a>
         <a class="module-tile" href="/dashboard/expenses/new/"><span>03</span><strong>Record expense</strong><p>Track paid expenses and unpaid vendor bills.</p></a>
-        <a class="module-tile" href="/dashboard/reports/"><span>04</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
-        <a class="module-tile" href="/dashboard/business-profile/"><span>05</span><strong>Business profile</strong><p>Save company details, tax ID, bank info and invoice branding.</p></a>
+        <a class="module-tile" href="/dashboard/inventory/"><span>04</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
+        <a class="module-tile" href="/dashboard/setup/"><span>05</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
+        <a class="module-tile" href="/dashboard/reports/"><span>06</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -1464,6 +1648,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <div><span>Monthly invoices</span><strong>{quota_used}/{quota_limit}</strong></div>
         <div><span>Accounts receivable</span><strong>{escape(money(finance_summary['accounts_receivable'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
         <div><span>Accounts payable</span><strong>{escape(money(finance_summary['accounts_payable'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
+        <div><span>Inventory items</span><strong>{InventoryItem.objects.filter(account_q(request), is_active=True).count()}</strong></div>
+        <div><span>Low stock</span><strong>{low_stock_count}</strong></div>
         <div><span>Income</span><strong>{escape(money(accounting_totals['income'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
         <div><span>Expenses</span><strong>{escape(money(accounting_totals['expenses'], '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</strong></div>
       </section>
@@ -1545,6 +1731,17 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         </div>
         <div class="dashboard-grid">{''.join(bill_rows)}</div>
       </section>
+      <section class="dashboard-section" id="inventory">
+        <div class="section-head">
+          <p class="eyebrow">Inventory</p>
+          <h2>Products, services and stock</h2>
+          <p>Use inventory for trading goods, raw materials, finished goods, consumables, travel packages and repeatable service catalog items.</p>
+        </div>
+        <div class="dashboard-actions section-actions">
+          <a class="button primary" href="/dashboard/inventory/">Manage inventory</a>
+        </div>
+        <div class="dashboard-grid">{''.join(inventory_rows)}</div>
+      </section>
       <section class="dashboard-section">
         <div class="section-head">
           <p class="eyebrow">Accounting</p>
@@ -1591,6 +1788,256 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def business_setup(request: HttpRequest) -> HttpResponse:
+    profile = get_business_profile(request)
+    selected_type = profile.business_type if profile else "service"
+    message = ""
+    if request.method == "POST":
+        selected_type = clean_text(request.POST.get("business_type"), "service", 30)
+        if selected_type not in BUSINESS_TYPE_PRESETS:
+            selected_type = "other"
+        if profile:
+            profile.business_type = selected_type
+            profile.owner = request.user
+            profile.save(update_fields=["business_type", "owner", "updated_at"])
+        else:
+            profile = BusinessProfile.objects.create(
+                market=current_market(request),
+                owner=request.user,
+                owner_email=current_account_email(request),
+                business_type=selected_type,
+                business_name=request.user.first_name or current_account_email(request).split("@", 1)[0],
+            )
+        added = apply_business_type_accounts(request, selected_type)
+        audit_log(request, "business_setup.applied", "BusinessProfile", profile.id, f"Applied {business_type_preset(selected_type)['label']} setup")
+        message = f"Business setup applied. {added} account(s) added to your chart."
+
+    preset = business_type_preset(selected_type)
+    preset_cards = []
+    for key, candidate in BUSINESS_TYPE_PRESETS.items():
+        preset_cards.append(
+            f"""
+            <article class="setup-preset-card {'selected' if key == selected_type else ''}">
+              <span>{escape(candidate['label'])}</span>
+              <p>{escape(candidate['summary'])}</p>
+            </article>
+            """
+        )
+    requirement_items = "".join(f"<li>{escape(item)}</li>" for item in preset["requirements"])
+    sales_items = "".join(f"<li>{escape(item)}</li>" for item in preset["sales"])
+    inventory_items_html = "".join(f"<li>{escape(item)}</li>" for item in preset["inventory"])
+    account_items = "".join(f"<li>{escape(code)} - {escape(name)}</li>" for code, name, _account_type, _normal in preset["accounts"]) or "<li>Default chart of accounts only</li>"
+    message_html = f'<p class="form-success">{escape(message)}</p>' if message else ""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Business setup</p>
+        <h1>Start with the right modules.</h1>
+        <p>Choose the closest business type. RozLedger will show the basic requirements and add useful accounting heads without disturbing existing accounts.</p>
+        {message_html}
+        <form method="post" class="dashboard-form setup-form">
+          {csrf_input(request)}
+          <label>Business type<select name="business_type">{business_type_options(selected_type)}</select></label>
+          <button class="button primary" type="submit">Apply setup</button>
+          <a class="button secondary" href="/dashboard/business-profile/">Edit business profile</a>
+        </form>
+      </section>
+      <section class="setup-preset-grid">{''.join(preset_cards)}</section>
+      <section class="setup-detail-grid">
+        <article>
+          <span>Required basics</span>
+          <h2>{escape(preset['label'])}</h2>
+          <ul>{requirement_items}</ul>
+        </article>
+        <article>
+          <span>Common invoice/service types</span>
+          <h2>Sales setup</h2>
+          <ul>{sales_items}</ul>
+        </article>
+        <article>
+          <span>Inventory setup</span>
+          <h2>What to track</h2>
+          <ul>{inventory_items_html}</ul>
+        </article>
+        <article>
+          <span>Accounts added</span>
+          <h2>Chart of accounts</h2>
+          <ul>{account_items}</ul>
+        </article>
+      </section>
+    </main>
+    """
+    return page_shell("Business setup", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def inventory(request: HttpRequest) -> HttpResponse:
+    error = ""
+    message = ""
+    if request.method == "POST":
+        action = clean_text(request.POST.get("action"), max_length=30)
+        if action == "item":
+            name = clean_text(request.POST.get("name"), max_length=180)
+            if not name:
+                error = "Item name is required."
+            else:
+                item_type = clean_text(request.POST.get("item_type"), "trading", 30)
+                if item_type not in dict(InventoryItem._meta.get_field("item_type").choices):
+                    item_type = "trading"
+                item = InventoryItem.objects.create(
+                    market=current_market(request),
+                    owner=request.user,
+                    owner_email=current_account_email(request),
+                    sku=clean_text(request.POST.get("sku"), max_length=80),
+                    name=name,
+                    category=clean_text(request.POST.get("category"), max_length=120),
+                    item_type=item_type,
+                    unit=clean_text(request.POST.get("unit"), "pcs", 30),
+                    sales_rate=decimal_value(request.POST.get("sales_rate")),
+                    purchase_rate=decimal_value(request.POST.get("purchase_rate")),
+                    reorder_level=decimal_value(request.POST.get("reorder_level")),
+                    track_inventory=request.POST.get("track_inventory") == "on",
+                )
+                opening_quantity = decimal_value(request.POST.get("opening_quantity"))
+                if item.track_inventory and opening_quantity > 0:
+                    StockMovement.objects.create(
+                        market=item.market,
+                        owner=request.user,
+                        owner_email=item.owner_email,
+                        item=item,
+                        movement_type="opening",
+                        quantity=opening_quantity,
+                        unit_cost=item.purchase_rate,
+                        reference="Opening stock",
+                    )
+                audit_log(request, "inventory.item_created", "InventoryItem", item.id, f"Created inventory item {item.name}")
+                message = "Inventory item saved."
+        elif action == "movement":
+            item_id = clean_text(request.POST.get("item_id"), max_length=20)
+            try:
+                item = InventoryItem.objects.get(id=item_id, **{"owner_email": current_account_email(request), "market": current_market(request)})
+            except InventoryItem.DoesNotExist:
+                error = "Select a valid inventory item."
+            else:
+                quantity = decimal_value(request.POST.get("quantity"))
+                if quantity <= 0:
+                    error = "Movement quantity must be greater than zero."
+                else:
+                    movement_type = clean_text(request.POST.get("movement_type"), "purchase", 30)
+                    if movement_type not in dict(StockMovement._meta.get_field("movement_type").choices):
+                        movement_type = "purchase"
+                    raw_date = clean_text(request.POST.get("movement_date"), max_length=20)
+                    movement_date = timezone.localdate()
+                    if raw_date:
+                        try:
+                            movement_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                        except ValueError:
+                            movement_date = timezone.localdate()
+                    movement = StockMovement.objects.create(
+                        market=current_market(request),
+                        owner=request.user,
+                        owner_email=current_account_email(request),
+                        item=item,
+                        movement_type=movement_type,
+                        movement_date=movement_date,
+                        quantity=quantity,
+                        unit_cost=decimal_value(request.POST.get("unit_cost")),
+                        reference=clean_text(request.POST.get("reference"), max_length=120),
+                        notes=clean_text(request.POST.get("notes")),
+                    )
+                    audit_log(request, "inventory.stock_movement", "StockMovement", movement.id, f"Posted {movement.get_movement_type_display()} for {item.name}")
+                    message = "Stock movement posted."
+
+    items = list(InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements"))
+    movements = StockMovement.objects.filter(account_q(request)).select_related("item")[:20]
+    item_rows = []
+    for item in items:
+        quantity = stock_quantity(item)
+        item_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{escape(stock_status(item, quantity))}</span>
+                <h2>{escape(item.name)}</h2>
+                <p>{escape(item.sku or item.get_item_type_display())}<br />{escape(format_quantity(quantity))} {escape(item.unit)} on hand</p>
+                <p>Sale: {escape(money(item.sales_rate, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} / Purchase: {escape(money(item.purchase_rate, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</p>
+              </div>
+            </article>
+            """
+        )
+    if not item_rows:
+        item_rows.append('<article class="dashboard-card empty-state compact-card"><span>Inventory</span><h2>No items yet</h2><p>Create your first product, service, raw material, finished good or package item.</p></article>')
+    movement_rows = []
+    for movement in movements:
+        movement_rows.append(
+            f"""
+            <article class="dashboard-card compact-card">
+              <div>
+                <span>{movement.movement_date:%d %b %Y}</span>
+                <h2>{escape(movement.item.name)}</h2>
+                <p>{escape(movement.get_movement_type_display())}: {escape(format_quantity(movement.quantity))} {escape(movement.item.unit)}<br />{escape(movement.reference or 'No reference')}</p>
+              </div>
+            </article>
+            """
+        )
+    if not movement_rows:
+        movement_rows.append('<article class="dashboard-card empty-state compact-card"><span>Stock ledger</span><h2>No stock movement yet</h2><p>Opening stock, purchases, sales, production and adjustments will appear here.</p></article>')
+
+    item_type_options = "".join(f'<option value="{value}">{escape(label)}</option>' for value, label in InventoryItem._meta.get_field("item_type").choices)
+    movement_type_options = "".join(f'<option value="{value}">{escape(label)}</option>' for value, label in StockMovement._meta.get_field("movement_type").choices)
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    message_html = f'<p class="form-success">{escape(message)}</p>' if message else ""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Inventory</p>
+        <h1>Products, services and stock ledger.</h1>
+        <p>Track trading goods, raw materials, finished goods, consumables, travel packages and repeatable services from one place.</p>
+        {error_html}{message_html}
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Item master</p><h2>Add product or service</h2></div>
+        <form method="post" class="dashboard-form inventory-form">
+          {csrf_input(request)}
+          <input type="hidden" name="action" value="item" />
+          <label>Name<input name="name" placeholder="Product, raw material, finished good or service" required /></label>
+          <label>SKU/code<input name="sku" placeholder="Optional item code" /></label>
+          <label>Type<select name="item_type">{item_type_options}</select></label>
+          <label>Category<input name="category" placeholder="Materials, finished goods, packages" /></label>
+          <label>Unit<input name="unit" value="pcs" placeholder="pcs, kg, hour, package" /></label>
+          <label>Sales rate<input name="sales_rate" type="number" min="0" step="0.01" /></label>
+          <label>Purchase rate<input name="purchase_rate" type="number" min="0" step="0.01" /></label>
+          <label>Opening quantity<input name="opening_quantity" type="number" min="0" step="0.01" /></label>
+          <label>Reorder level<input name="reorder_level" type="number" min="0" step="0.01" /></label>
+          <label class="checkbox-row"><input name="track_inventory" type="checkbox" checked /> Track stock quantity</label>
+          <button class="button primary" type="submit">Save item</button>
+        </form>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Stock movement</p><h2>Post inward, outward or adjustment</h2></div>
+        <form method="post" class="dashboard-form inventory-form">
+          {csrf_input(request)}
+          <input type="hidden" name="action" value="movement" />
+          <label>Item<select name="item_id">{inventory_item_options(items)}</select></label>
+          <label>Movement<select name="movement_type">{movement_type_options}</select></label>
+          <label>Date<input name="movement_date" type="date" value="{timezone.localdate():%Y-%m-%d}" /></label>
+          <label>Quantity<input name="quantity" type="number" min="0.01" step="0.01" required /></label>
+          <label>Unit cost<input name="unit_cost" type="number" min="0" step="0.01" /></label>
+          <label>Reference<input name="reference" placeholder="Invoice, bill, production batch or note" /></label>
+          <label class="full-row">Notes<textarea name="notes" rows="2"></textarea></label>
+          <button class="button primary" type="submit">Post movement</button>
+        </form>
+      </section>
+      <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Current stock</p><h2>Inventory items</h2></div><div class="dashboard-grid">{''.join(item_rows)}</div></section>
+      <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Stock ledger</p><h2>Recent movements</h2></div><div class="dashboard-grid">{''.join(movement_rows)}</div></section>
+    </main>
+    """
+    return page_shell("Inventory", body, request)
+
+
+@login_required
 @require_POST
 def create_client(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
@@ -1622,6 +2069,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
     payment_label = "Payment link" if us_market else "UPI/payment link"
     payment_placeholder = "Stripe, Square, PayPal, Venmo, Cash App or payment note" if us_market else "UPI link or payment note"
     values = {
+        "business_type": profile.business_type if profile else "service",
         "business_name": profile.business_name if profile else request.user.first_name or "",
         "business_phone": profile.business_phone if profile else "",
         "business_address": profile.business_address if profile else "",
@@ -1635,6 +2083,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
     error = ""
     if request.method == "POST":
         values = {
+            "business_type": clean_text(request.POST.get("business_type"), "service", 30),
             "business_name": clean_text(request.POST.get("business_name"), max_length=180),
             "business_phone": clean_text(request.POST.get("business_phone"), max_length=40),
             "business_address": clean_text(request.POST.get("business_address")),
@@ -1647,6 +2096,8 @@ def business_profile(request: HttpRequest) -> HttpResponse:
         }
         logo_upload = request.FILES.get("business_logo")
         logo_error = valid_logo_upload(logo_upload)
+        if values["business_type"] not in BUSINESS_TYPE_PRESETS:
+            values["business_type"] = "other"
         if not values["business_name"]:
             error = "Business name is required."
         elif logo_error:
@@ -1677,6 +2128,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
         {error_html}
         <form method="post" class="account-form invoice-server-form" enctype="multipart/form-data">
           {csrf_input(request)}
+          <label class="full-row">Business type<select name="business_type">{business_type_options(values['business_type'])}</select></label>
           <label>Business name<input name="business_name" value="{escape(values['business_name'])}" placeholder="Your company or trade name" required /></label>
           <label>Business phone<input name="business_phone" value="{escape(values['business_phone'])}" placeholder="Phone or WhatsApp number" /></label>
           <label class="full-row">Business full address<textarea name="business_address" rows="3" placeholder="Registered or billing address">{escape(values['business_address'])}</textarea></label>
