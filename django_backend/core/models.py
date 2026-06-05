@@ -124,6 +124,7 @@ STOCK_MOVEMENT_CHOICES = [
 VOUCHER_TYPE_CHOICES = [
     ("sales", "Sales"),
     ("purchase", "Purchase"),
+    ("expense", "Expense"),
     ("receipt", "Receipt"),
     ("payment", "Payment"),
     ("contra", "Contra"),

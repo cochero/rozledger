@@ -842,6 +842,75 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(response, "Insufficient FIFO stock")
         self.assertFalse(Voucher.objects.filter(owner=user, voucher_type="sales").exists())
 
+    def test_voucher_engine_posts_accounting_voucher_types(self):
+        user = User.objects.create_user("vouchers@example.com", "vouchers@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        bank = Account.objects.get(owner=user, market="IN", code="1010")
+        cash = Account.objects.get(owner=user, market="IN", code="1000")
+        receivable = Account.objects.get(owner=user, market="IN", code="1100")
+        payable = Account.objects.get(owner=user, market="IN", code="2000")
+        equity = Account.objects.get(owner=user, market="IN", code="3000")
+
+        cases = [
+            ("expense", "Airtel", "500.00", expense, bank, [(expense.code, "500.00", "0.00"), (bank.code, "0.00", "500.00")]),
+            ("payment", "Supplier Payment", "750.00", payable, bank, [(payable.code, "750.00", "0.00"), (bank.code, "0.00", "750.00")]),
+            ("receipt", "Customer Receipt", "1000.00", receivable, cash, [(cash.code, "1000.00", "0.00"), (receivable.code, "0.00", "1000.00")]),
+            ("contra", "Cash Deposit", "300.00", cash, bank, [(cash.code, "300.00", "0.00"), (bank.code, "0.00", "300.00")]),
+            ("journal", "Owner Adjustment", "200.00", expense, equity, [(expense.code, "200.00", "0.00"), (equity.code, "0.00", "200.00")]),
+        ]
+
+        for voucher_type, party_name, amount, primary, secondary, expected_lines in cases:
+            with self.subTest(voucher_type=voucher_type):
+                response = self.client.post(
+                    reverse("voucher_new"),
+                    {
+                        "voucher_type": voucher_type,
+                        "voucher_date": "2026-06-06",
+                        "party_name": party_name,
+                        "amount": amount,
+                        "primary_account": str(primary.id),
+                        "secondary_account": str(secondary.id),
+                        "narration": f"{voucher_type} posting",
+                    },
+                    HTTP_HOST="rozledger.in",
+                )
+                self.assertEqual(response.status_code, 200)
+                voucher = Voucher.objects.get(owner=user, voucher_type=voucher_type)
+                self.assertEqual(voucher.total_amount, Decimal(amount))
+                self.assertEqual(voucher.journal_entry.total_debit, Decimal(amount))
+                self.assertEqual(voucher.journal_entry.total_credit, Decimal(amount))
+                for account_code, debit, credit in expected_lines:
+                    self.assertTrue(
+                        voucher.journal_entry.lines.filter(account__code=account_code, debit=Decimal(debit), credit=Decimal(credit)).exists(),
+                        f"Missing {voucher_type} line for {account_code}",
+                    )
+
+    def test_voucher_engine_rejects_receipt_with_non_cash_second_ledger(self):
+        user = User.objects.create_user("receipt-guard@example.com", "receipt-guard@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        receivable = Account.objects.get(owner=user, market="IN", code="1100")
+        revenue = Account.objects.get(owner=user, market="IN", code="4000")
+
+        response = self.client.post(
+            reverse("voucher_new"),
+            {
+                "voucher_type": "receipt",
+                "voucher_date": "2026-06-06",
+                "party_name": "Customer Receipt",
+                "amount": "1000",
+                "primary_account": str(receivable.id),
+                "secondary_account": str(revenue.id),
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Receipt second ledger must be Cash or Bank.")
+        self.assertFalse(Voucher.objects.filter(owner=user, voucher_type="receipt").exists())
+
     def test_ai_assistant_applies_setup_and_creates_invoice(self):
         user = User.objects.create_user("ai-setup@example.com", "ai-setup@example.com", "password-123456", first_name="AI Owner")
         self.client.force_login(user)

@@ -317,6 +317,7 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
     prefix = {
         "sales": "SAL",
         "purchase": "PUR",
+        "expense": "EXP",
         "receipt": "RCT",
         "payment": "PAY",
         "contra": "CON",
@@ -325,6 +326,16 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
     }.get(voucher_type, "VCH")
     count = Voucher.objects.filter(account_q(request), voucher_type=voucher_type).count() + 1
     return f"{prefix}-{timezone.localdate():%Y%m}-{count:05d}"
+
+
+def parse_form_date(value: str):
+    value = clean_text(value, max_length=20)
+    if not value:
+        return timezone.localdate()
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return timezone.localdate()
 
 
 def create_voucher_with_lines(
@@ -472,6 +483,10 @@ def account_options(accounts, selected_id: str = "") -> str:
         f'<option value="{account.id}" {"selected" if selected_id and str(account.id) == str(selected_id) else ""}>{escape(account.code)} - {escape(account.name)}</option>'
         for account in accounts
     )
+
+
+def account_options_with_blank(accounts, selected_id: str = "", label: str = "Select ledger") -> str:
+    return f'<option value="">{escape(label)}</option>' + account_options(accounts, selected_id)
 
 
 def invoice_options(invoices, selected_id: str = "") -> str:
@@ -632,7 +647,15 @@ def godown_options(godowns, selected_id: str = "") -> str:
 
 
 def voucher_type_options(selected: str = "sales") -> str:
-    options = [("sales", "Sales"), ("purchase", "Purchase")]
+    options = [
+        ("sales", "Sales"),
+        ("purchase", "Purchase"),
+        ("expense", "Expense"),
+        ("receipt", "Receipt"),
+        ("payment", "Payment"),
+        ("contra", "Contra"),
+        ("journal", "Journal"),
+    ]
     return "".join(f'<option value="{value}" {"selected" if selected == value else ""}>{label}</option>' for value, label in options)
 
 
@@ -2769,6 +2792,8 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
     currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
     items = list(InventoryItem.objects.filter(account_q(request), is_active=True).order_by("name"))
     godowns = list(Godown.objects.filter(account_q(request), is_active=True).order_by("name"))
+    accounts = list(Account.objects.filter(account_q(request), is_active=True).order_by("code"))
+    bank_cash_accounts = [account for account in accounts if account.code in {"1000", "1010"}]
     recent_vouchers = Voucher.objects.filter(account_q(request)).prefetch_related("ledger_lines", "inventory_lines")[:10]
     values = {
         "voucher_type": clean_text(request.GET.get("type"), "sales", 30),
@@ -2780,23 +2805,31 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
         "quantity": "",
         "rate": "",
         "narration": "",
+        "amount": "",
+        "primary_account": "",
+        "secondary_account": "",
     }
     error = ""
     message = ""
-    if values["voucher_type"] not in {"sales", "purchase"}:
+    allowed_vouchers = {"sales", "purchase", "expense", "receipt", "payment", "contra", "journal"}
+    if values["voucher_type"] not in allowed_vouchers:
         values["voucher_type"] = "sales"
 
     if request.method == "POST":
         values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
-        if values["voucher_type"] not in {"sales", "purchase"}:
+        if values["voucher_type"] not in allowed_vouchers:
             values["voucher_type"] = "sales"
+        voucher_date = parse_form_date(values["voucher_date"])
+        amount_value = decimal_value(values["amount"])
+        primary_account = next((account for account in accounts if str(account.id) == values["primary_account"]), None)
+        secondary_account = next((account for account in accounts if str(account.id) == values["secondary_account"]), None)
         quantity = decimal_value(values["quantity"])
         rate = decimal_value(values["rate"])
         amount = (quantity * rate).quantize(Decimal("0.01"))
         item = None
-        if values["item_id"]:
+        if values["voucher_type"] in {"sales", "purchase"} and values["item_id"]:
             item = InventoryItem.objects.filter(account_q(request), id=values["item_id"], is_active=True).first()
-        if item is None and values["item_name"]:
+        if values["voucher_type"] in {"sales", "purchase"} and item is None and values["item_name"]:
             item = InventoryItem.objects.create(
                 market=current_market(request),
                 owner=request.user,
@@ -2814,19 +2847,22 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
             )
             items.append(item)
         godown = next((candidate for candidate in godowns if str(candidate.id) == values["godown_id"]), default_godown)
-        raw_date = values["voucher_date"]
-        voucher_date = timezone.localdate()
-        if raw_date:
-            try:
-                voucher_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
-            except ValueError:
-                voucher_date = timezone.localdate()
         if not values["party_name"]:
             error = "Party name is required."
-        elif item is None:
+        elif values["voucher_type"] in {"sales", "purchase"} and item is None:
             error = "Select or create an inventory item."
-        elif quantity <= 0 or rate <= 0:
+        elif values["voucher_type"] in {"sales", "purchase"} and (quantity <= 0 or rate <= 0):
             error = "Quantity and rate must be greater than zero."
+        elif values["voucher_type"] not in {"sales", "purchase"} and amount_value <= 0:
+            error = "Voucher amount must be greater than zero."
+        elif values["voucher_type"] not in {"sales", "purchase"} and primary_account is None:
+            error = "Choose the main ledger account."
+        elif values["voucher_type"] in {"contra", "journal"} and secondary_account is None:
+            error = "Choose the second ledger account."
+        elif values["voucher_type"] in {"contra", "journal"} and primary_account and secondary_account and primary_account.id == secondary_account.id:
+            error = "Debit and credit accounts must be different."
+        elif values["voucher_type"] == "receipt" and secondary_account and secondary_account.code not in {"1000", "1010"}:
+            error = "Receipt second ledger must be Cash or Bank."
         else:
             try:
                 if values["voucher_type"] == "purchase":
@@ -2834,10 +2870,39 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
                         {"account": account_by_code(request, "1210"), "description": f"Inventory purchase - {item.name}", "debit": amount, "credit": Decimal("0")},
                         {"account": account_by_code(request, "2000"), "description": values["party_name"], "debit": Decimal("0"), "credit": amount},
                     ]
-                else:
+                elif values["voucher_type"] == "sales":
                     ledger_lines = [
                         {"account": account_by_code(request, "1100"), "description": values["party_name"], "debit": amount, "credit": Decimal("0")},
                         {"account": account_by_code(request, "4120"), "description": f"Product sale - {item.name}", "debit": Decimal("0"), "credit": amount},
+                    ]
+                elif values["voucher_type"] == "expense":
+                    secondary_account = secondary_account or next((account for account in bank_cash_accounts if account.code == "1010"), None) or account_by_code(request, "1010")
+                    ledger_lines = [
+                        {"account": primary_account, "description": values["party_name"], "debit": amount_value, "credit": Decimal("0")},
+                        {"account": secondary_account, "description": values["party_name"], "debit": Decimal("0"), "credit": amount_value},
+                    ]
+                elif values["voucher_type"] == "payment":
+                    secondary_account = secondary_account or next((account for account in bank_cash_accounts if account.code == "1010"), None) or account_by_code(request, "1010")
+                    ledger_lines = [
+                        {"account": primary_account, "description": values["party_name"], "debit": amount_value, "credit": Decimal("0")},
+                        {"account": secondary_account, "description": values["party_name"], "debit": Decimal("0"), "credit": amount_value},
+                    ]
+                elif values["voucher_type"] == "receipt":
+                    cash_or_bank = secondary_account if secondary_account and secondary_account.code in {"1000", "1010"} else None
+                    cash_or_bank = cash_or_bank or next((account for account in bank_cash_accounts if account.code == "1010"), None) or account_by_code(request, "1010")
+                    ledger_lines = [
+                        {"account": cash_or_bank, "description": values["party_name"], "debit": amount_value, "credit": Decimal("0")},
+                        {"account": primary_account, "description": values["party_name"], "debit": Decimal("0"), "credit": amount_value},
+                    ]
+                elif values["voucher_type"] == "contra":
+                    ledger_lines = [
+                        {"account": primary_account, "description": "Contra transfer in", "debit": amount_value, "credit": Decimal("0")},
+                        {"account": secondary_account, "description": "Contra transfer out", "debit": Decimal("0"), "credit": amount_value},
+                    ]
+                else:
+                    ledger_lines = [
+                        {"account": primary_account, "description": values["narration"], "debit": amount_value, "credit": Decimal("0")},
+                        {"account": secondary_account, "description": values["narration"], "debit": Decimal("0"), "credit": amount_value},
                     ]
                 voucher = create_voucher_with_lines(
                     request,
@@ -2846,11 +2911,11 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
                     narration=values["narration"],
                     voucher_date=voucher_date,
                     ledger_lines=ledger_lines,
-                    inventory_lines=[{"item": item, "godown": godown, "quantity": quantity, "rate": rate, "description": item.name}],
+                    inventory_lines=[{"item": item, "godown": godown, "quantity": quantity, "rate": rate, "description": item.name}] if values["voucher_type"] in {"sales", "purchase"} else [],
                 )
                 audit_log(request, "voucher.posted", "Voucher", voucher.id, f"Posted {voucher.get_voucher_type_display()} {voucher.voucher_number}")
                 message = f"{voucher.get_voucher_type_display()} voucher {voucher.voucher_number} posted."
-                values.update({"party_name": "", "quantity": "", "rate": "", "narration": "", "item_id": str(item.id)})
+                values.update({"party_name": "", "quantity": "", "rate": "", "amount": "", "narration": "", "item_id": str(item.id) if item else ""})
             except ValueError as exc:
                 error = str(exc)
 
@@ -2893,22 +2958,27 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
         <p class="eyebrow">Voucher engine</p>
-        <h1>Post accounting vouchers with FIFO stock.</h1>
-        <p>Use this Tally-style workflow for inventory purchases and sales. Purchase vouchers create FIFO layers; sales vouchers consume oldest stock and post COGS automatically.</p>
+        <h1>Post vouchers with clean accounting control.</h1>
+        <p>Record sales, purchases, expenses, payments, receipts, contra transfers and journals from one screen. Stock vouchers update FIFO inventory; accounting vouchers post balanced ledger entries.</p>
         {error_html}{message_html}
       </section>
       <section class="dashboard-section">
-        <div class="section-head"><p class="eyebrow">Voucher entry</p><h2>Sales or purchase voucher</h2></div>
-        <form method="post" class="dashboard-form voucher-form">
+        <div class="section-head"><p class="eyebrow">Voucher entry</p><h2>Day book posting</h2></div>
+        <form method="post" class="dashboard-form voucher-form" data-voucher-form>
           {csrf_input(request)}
           <label>Voucher type<select name="voucher_type">{voucher_type_options(values['voucher_type'])}</select></label>
           <label>Date<input name="voucher_date" type="date" value="{escape(values['voucher_date'])}" /></label>
-          <label>Party name<input name="party_name" value="{escape(values['party_name'])}" placeholder="Customer or supplier ledger" required /></label>
-          <label>Existing item<select name="item_id">{inventory_item_options(items, values['item_id'])}</select></label>
-          <label>New item name<input name="item_name" value="{escape(values['item_name'])}" placeholder="Create item if not in list" /></label>
-          <label>Godown/location<select name="godown_id">{godown_options(godowns, values['godown_id'])}</select></label>
-          <label>Quantity<input name="quantity" type="number" min="0.01" step="0.01" value="{escape(values['quantity'])}" required /></label>
-          <label>Rate<input name="rate" type="number" min="0.01" step="0.01" value="{escape(values['rate'])}" required /></label>
+          <label>Party name<input name="party_name" value="{escape(values['party_name'])}" placeholder="Customer, supplier or narration party" required /></label>
+          <label data-ledger-field>Amount<input name="amount" type="number" min="0.01" step="0.01" value="{escape(values['amount'])}" placeholder="Voucher amount" /></label>
+          <label data-ledger-field>Main ledger<select name="primary_account">{account_options_with_blank(accounts, values['primary_account'], 'Select debit or receipt credit ledger')}</select></label>
+          <label data-ledger-field>Cash/bank or second ledger<select name="secondary_account">{account_options_with_blank(accounts, values['secondary_account'], 'Optional for expense, payment or receipt')}</select></label>
+          <p class="form-hint full-row" data-ledger-field>Expense and payment: debit the main ledger and credit Cash/Bank. Receipt: debit Cash/Bank and credit the main ledger. Contra and journal require both ledgers.</p>
+          <label data-stock-field>Existing item<select name="item_id">{inventory_item_options(items, values['item_id'])}</select></label>
+          <label data-stock-field>New item name<input name="item_name" value="{escape(values['item_name'])}" placeholder="Create item if not in list" /></label>
+          <label data-stock-field>Godown/location<select name="godown_id">{godown_options(godowns, values['godown_id'])}</select></label>
+          <label data-stock-field>Quantity<input name="quantity" type="number" min="0.01" step="0.01" value="{escape(values['quantity'])}" placeholder="For sales/purchase stock" /></label>
+          <label data-stock-field>Rate<input name="rate" type="number" min="0.01" step="0.01" value="{escape(values['rate'])}" placeholder="For sales/purchase stock" /></label>
+          <p class="form-hint full-row" data-stock-field>Sales and purchase vouchers use item, godown, quantity and rate. Purchase adds FIFO stock; sales consumes FIFO stock and posts cost of goods sold.</p>
           <label class="full-row">Narration<textarea name="narration" rows="2" placeholder="Optional voucher narration">{escape(values['narration'])}</textarea></label>
           <button class="button primary" type="submit">Post voucher</button>
         </form>
@@ -2916,6 +2986,22 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
       <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Stock valuation</p><h2>FIFO stock snapshot</h2></div><div class="dashboard-grid">{''.join(item_cards)}</div></section>
       <section class="dashboard-section"><div class="section-head"><p class="eyebrow">Day book</p><h2>Recent vouchers</h2></div><div class="dashboard-grid">{''.join(voucher_rows)}</div></section>
     </main>
+    <script>
+      (() => {{
+        const form = document.querySelector("[data-voucher-form]");
+        if (!form) return;
+        const typeField = form.querySelector('[name="voucher_type"]');
+        const stockFields = form.querySelectorAll("[data-stock-field]");
+        const ledgerFields = form.querySelectorAll("[data-ledger-field]");
+        const syncVoucherFields = () => {{
+          const stockVoucher = ["sales", "purchase"].includes(typeField.value);
+          stockFields.forEach((field) => {{ field.hidden = !stockVoucher; }});
+          ledgerFields.forEach((field) => {{ field.hidden = stockVoucher; }});
+        }};
+        typeField.addEventListener("change", syncVoucherFields);
+        syncVoucherFields();
+      }})();
+    </script>
     """
     return page_shell("Voucher engine", body, request)
 
