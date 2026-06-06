@@ -1292,6 +1292,9 @@ class AccountWorkflowTests(TestCase):
         self.assertIsNotNone(receipt.voucher)
         self.assertEqual(receipt.voucher.voucher_type, "receipt")
         self.assertEqual(receipt.voucher.journal_entry_id, receipt.journal_entry_id)
+        receipt_pdf = self.client.get(reverse("receipt_pdf", args=[receipt.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(receipt_pdf.status_code, 200)
+        self.assertEqual(receipt_pdf["Content-Type"], "application/pdf")
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "paid")
         entry = receipt.journal_entry
@@ -1489,6 +1492,12 @@ class AccountWorkflowTests(TestCase):
         draft.refresh_from_db()
         self.assertEqual(draft.status, "posted")
         self.assertEqual(draft.vendor_bill, bill)
+        detail_response = self.client.get(reverse("vendor_bill_detail", args=[bill.id]), HTTP_HOST="rozledger.in")
+        self.assertContains(detail_response, "Uploaded bill preview")
+        self.assertContains(detail_response, "airtel-1800-internet.jpg")
+        attachment_response = self.client.get(reverse("vendor_bill_attachment", args=[bill.id, draft.id]), HTTP_HOST="rozledger.in")
+        self.assertEqual(attachment_response.status_code, 200)
+        self.assertEqual(attachment_response["Content-Type"], "image/jpeg")
 
     def test_customer_can_pay_selected_vendor_bill_with_payment_voucher(self):
         user = User.objects.create_user("pay-bill@example.com", "pay-bill@example.com", "password-123456")
@@ -1707,6 +1716,59 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(response, "500.00")
         dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
         self.assertContains(dashboard_response, "/dashboard/ledger/vendors/?vendor=Ledger+Vendor")
+
+    def test_search_audit_and_reconciliation_pages(self):
+        user = User.objects.create_user("ops-pages@example.com", "ops-pages@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        invoice_response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Ops Business",
+                "client_name": "Ops Client",
+                "item_description": ["Operations support"],
+                "item_quantity": ["1"],
+                "item_rate": ["100"],
+                "gst_rate": "0",
+                "due_days": "7",
+                "thank_you_note": "Thanks.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(invoice_response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user, client_name="Ops Client")
+        self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Ops Client",
+                "amount": "100.00",
+                "method": "bank",
+                "reference": "OPS-PAY-1",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        search_response = self.client.get(f"{reverse('global_search')}?q=Ops&type=all", HTTP_HOST="rozledger.com")
+        self.assertEqual(search_response.status_code, 200)
+        self.assertContains(search_response, "Find records")
+        self.assertContains(search_response, "Ops Client")
+        self.assertContains(search_response, "OPS-PAY-1")
+
+        audit_response = self.client.get(f"{reverse('audit_trail')}?q=invoice", HTTP_HOST="rozledger.com")
+        self.assertEqual(audit_response.status_code, 200)
+        self.assertContains(audit_response, "Audit trail")
+        self.assertContains(audit_response, "invoice.created")
+
+        reconciliation_response = self.client.get(
+            f"{reverse('reconciliation')}?account=1010&statement_balance=100.00",
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(reconciliation_response.status_code, 200)
+        self.assertContains(reconciliation_response, "Bank and cash reconciliation")
+        self.assertContains(reconciliation_response, "$ 100.00")
+        self.assertContains(reconciliation_response, "$ 0.00")
 
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")
