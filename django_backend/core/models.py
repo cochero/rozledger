@@ -131,6 +131,8 @@ VOUCHER_TYPE_CHOICES = [
     ("expense", "Expense"),
     ("receipt", "Receipt"),
     ("credit_note", "Credit note"),
+    ("debit_note", "Debit note"),
+    ("reversal", "Reversal"),
     ("payment", "Payment"),
     ("contra", "Contra"),
     ("journal", "Journal"),
@@ -556,6 +558,71 @@ class VendorBillPayment(models.Model):
         return f"{self.vendor_name} - {self.amount}"
 
 
+class VendorDebitNote(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="vendor_debit_notes",
+    )
+    owner_email = models.EmailField(db_index=True)
+    bill = models.ForeignKey(VendorBill, on_delete=models.CASCADE, related_name="debit_notes")
+    voucher = models.ForeignKey("Voucher", null=True, blank=True, on_delete=models.SET_NULL, related_name="vendor_debit_notes")
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="vendor_debit_notes")
+    debit_note_number = models.CharField(max_length=60)
+    debit_date = models.DateField(default=timezone.localdate)
+    vendor_name = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=240)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-debit_date", "-created_at"]
+        unique_together = ("market", "owner_email", "debit_note_number")
+
+    def __str__(self) -> str:
+        return f"{self.debit_note_number} - {self.vendor_name}"
+
+
+class PaymentReversal(models.Model):
+    REVERSAL_TYPE_CHOICES = [
+        ("customer_receipt", "Customer receipt"),
+        ("vendor_payment", "Vendor payment"),
+    ]
+
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="payment_reversals",
+    )
+    owner_email = models.EmailField(db_index=True)
+    reversal_type = models.CharField(max_length=30, choices=REVERSAL_TYPE_CHOICES)
+    reversal_number = models.CharField(max_length=60)
+    reversal_date = models.DateField(default=timezone.localdate)
+    customer_receipt = models.ForeignKey(PaymentReceipt, null=True, blank=True, on_delete=models.CASCADE, related_name="reversals")
+    vendor_payment = models.ForeignKey(VendorBillPayment, null=True, blank=True, on_delete=models.CASCADE, related_name="reversals")
+    voucher = models.ForeignKey("Voucher", null=True, blank=True, on_delete=models.SET_NULL, related_name="payment_reversals")
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="payment_reversals")
+    party_name = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=240)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-reversal_date", "-created_at"]
+        unique_together = ("market", "owner_email", "reversal_number")
+
+    def __str__(self) -> str:
+        return f"{self.reversal_number} - {self.party_name}"
+
+
 class ExpenseUploadDraft(models.Model):
     STATUS_CHOICES = [
         ("draft", "Draft"),
@@ -774,6 +841,47 @@ class AuditLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} - {self.summary}"
+
+
+class ReconciliationSession(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="reconciliation_sessions",
+    )
+    owner_email = models.EmailField(db_index=True)
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="reconciliation_sessions")
+    statement_date = models.DateField(default=timezone.localdate)
+    date_from = models.DateField(null=True, blank=True)
+    date_to = models.DateField(null=True, blank=True)
+    statement_balance = models.DecimalField(max_digits=12, decimal_places=2)
+    ledger_balance = models.DecimalField(max_digits=12, decimal_places=2)
+    difference = models.DecimalField(max_digits=12, decimal_places=2)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-statement_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.account.code} reconciliation {self.statement_date}"
+
+
+class ReconciliationLine(models.Model):
+    session = models.ForeignKey(ReconciliationSession, on_delete=models.CASCADE, related_name="lines")
+    journal_line = models.ForeignKey(JournalLine, on_delete=models.CASCADE, related_name="reconciliation_lines")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        unique_together = ("session", "journal_line")
+
+    def __str__(self) -> str:
+        return f"{self.session_id} - {self.journal_line_id}"
 
 
 class PlanSubscription(models.Model):

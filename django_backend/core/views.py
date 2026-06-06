@@ -29,7 +29,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -320,6 +320,8 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
         "expense": "EXP",
         "receipt": "RCT",
         "credit_note": "CRN",
+        "debit_note": "DBN",
+        "reversal": "REV",
         "payment": "PAY",
         "contra": "CON",
         "journal": "JRN",
@@ -332,6 +334,16 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
 def next_credit_note_number(request: HttpRequest) -> str:
     count = CustomerCreditNote.objects.filter(account_q(request)).count() + 1
     return f"CN-{timezone.localdate():%Y%m}-{count:05d}"
+
+
+def next_debit_note_number(request: HttpRequest) -> str:
+    count = VendorDebitNote.objects.filter(account_q(request)).count() + 1
+    return f"DN-{timezone.localdate():%Y%m}-{count:05d}"
+
+
+def next_reversal_number(request: HttpRequest) -> str:
+    count = PaymentReversal.objects.filter(account_q(request)).count() + 1
+    return f"RV-{timezone.localdate():%Y%m}-{count:05d}"
 
 
 def parse_form_date(value: str):
@@ -618,6 +630,7 @@ def customer_statement_names(request: HttpRequest) -> list[str]:
 def vendor_statement_names(request: HttpRequest) -> list[str]:
     names = set(VendorBill.objects.filter(account_q(request)).values_list("vendor_name", flat=True))
     names.update(VendorBillPayment.objects.filter(account_q(request)).values_list("vendor_name", flat=True))
+    names.update(VendorDebitNote.objects.filter(account_q(request)).values_list("vendor_name", flat=True))
     return sorted(name for name in names if name)
 
 
@@ -701,6 +714,12 @@ def vendor_statement_entries(request: HttpRequest, vendor_name: str) -> tuple[li
         .select_related("bill", "voucher")
         .order_by("payment_date", "created_at", "id")
     )
+    debit_notes = list(
+        VendorDebitNote.objects.filter(account_q(request))
+        .filter(Q(bill_id__in=bill_ids) | Q(vendor_name__iexact=vendor_name))
+        .select_related("bill", "voucher")
+        .order_by("debit_date", "created_at", "id")
+    )
     events: list[dict[str, Any]] = []
     for bill in bills:
         events.append(
@@ -728,6 +747,19 @@ def vendor_statement_entries(request: HttpRequest, vendor_name: str) -> tuple[li
                 "link": f"/dashboard/expenses/pay/?bill={payment.bill_id}",
             }
         )
+    for debit_note in debit_notes:
+        events.append(
+            {
+                "date": debit_note.debit_date,
+                "sort": debit_note.created_at,
+                "kind": "Debit note",
+                "reference": debit_note.debit_note_number,
+                "description": debit_note.bill.reference if debit_note.bill and debit_note.bill.reference else debit_note.reason,
+                "debit": debit_note.amount,
+                "credit": Decimal("0"),
+                "link": f"/dashboard/debit-notes/{debit_note.id}/",
+            }
+        )
     events.sort(key=lambda event: (event["date"], event["sort"], event["kind"]))
     balance = Decimal("0")
     total_debit = Decimal("0")
@@ -747,6 +779,7 @@ def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
     return {
         "assets": sum((line.debit - line.credit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="asset")), Decimal("0")),
         "liabilities": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="liability")), Decimal("0")),
+        "equity": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="equity")), Decimal("0")),
         "income": sum((line.credit - line.debit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="revenue")), Decimal("0")),
         "expenses": sum((line.debit - line.credit for line in JournalLine.objects.filter(entry__in=entries, account__account_type="expense")), Decimal("0")),
     }
@@ -759,7 +792,9 @@ def invoice_total_amount(invoice: Invoice) -> Decimal:
 
 
 def invoice_amount_received(invoice: Invoice) -> Decimal:
-    return sum((payment.amount for payment in invoice.payments.all()), Decimal("0")).quantize(Decimal("0.01"))
+    received = sum((payment.amount for payment in invoice.payments.all()), Decimal("0"))
+    reversed_amount = sum((reversal.amount for reversal in PaymentReversal.objects.filter(customer_receipt__invoice=invoice)), Decimal("0"))
+    return max(received - reversed_amount, Decimal("0")).quantize(Decimal("0.01"))
 
 
 def invoice_amount_credited(invoice: Invoice) -> Decimal:
@@ -858,20 +893,25 @@ def invoice_items_subtotal(rows: list[dict[str, Decimal | str]]) -> Decimal:
 def vendor_bill_amount_paid(bill: VendorBill) -> Decimal:
     payments = list(bill.payments.all()) if getattr(bill, "pk", None) else []
     if payments:
-        return sum((payment.amount for payment in payments), Decimal("0")).quantize(Decimal("0.01"))
+        paid = sum((payment.amount for payment in payments), Decimal("0"))
+        reversed_amount = sum((reversal.amount for reversal in PaymentReversal.objects.filter(vendor_payment__bill=bill)), Decimal("0"))
+        return max(paid - reversed_amount, Decimal("0")).quantize(Decimal("0.01"))
     return bill.amount if bill.status == "paid" else Decimal("0")
 
 
+def vendor_bill_amount_debited(bill: VendorBill) -> Decimal:
+    return sum((debit_note.amount for debit_note in bill.debit_notes.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
 def vendor_bill_outstanding_amount(bill: VendorBill) -> Decimal:
-    if bill.status == "paid":
-        return Decimal("0.00")
-    balance = bill.amount - vendor_bill_amount_paid(bill)
+    balance = bill.amount - vendor_bill_amount_paid(bill) - vendor_bill_amount_debited(bill)
     return max(balance, Decimal("0")).quantize(Decimal("0.01"))
 
 
 def update_vendor_bill_payment_status(bill: VendorBill) -> None:
     paid = vendor_bill_amount_paid(bill)
-    outstanding = max(bill.amount - paid, Decimal("0")).quantize(Decimal("0.01"))
+    debited = vendor_bill_amount_debited(bill)
+    outstanding = max(bill.amount - paid - debited, Decimal("0")).quantize(Decimal("0.01"))
     if outstanding <= 0 and bill.amount > 0:
         bill.status = "paid"
     elif paid > 0:
@@ -1426,14 +1466,177 @@ def post_vendor_bill_payment(
     return voucher
 
 
+def vendor_bill_expense_account(request: HttpRequest, bill: VendorBill) -> Account:
+    if bill.voucher_id:
+        expense_line = bill.voucher.ledger_lines.select_related("account").filter(debit__gt=0, account__account_type="expense").first()
+        if expense_line:
+            return expense_line.account
+    return account_by_code(request, "5100")
+
+
+def post_vendor_debit_note(
+    request: HttpRequest,
+    *,
+    bill: VendorBill,
+    debit_date,
+    amount: Decimal,
+    reason: str,
+    notes: str = "",
+) -> VendorDebitNote:
+    amount = amount.quantize(Decimal("0.01"))
+    debit_date = debit_date or timezone.localdate()
+    outstanding = vendor_bill_outstanding_amount(bill)
+    if outstanding <= 0:
+        raise ValueError("This vendor bill has no outstanding balance to adjust.")
+    if amount <= 0:
+        raise ValueError("Debit note amount must be greater than zero.")
+    if amount > outstanding:
+        raise ValueError(f"Debit note cannot exceed the outstanding vendor bill balance of {outstanding}.")
+    with transaction.atomic():
+        voucher = create_voucher_with_lines(
+            request,
+            voucher_type="debit_note",
+            party_name=bill.vendor_name,
+            narration=notes or reason,
+            voucher_date=debit_date,
+            ledger_lines=[
+                {"account": account_by_code(request, "2000"), "description": bill.reference or bill.vendor_name, "debit": amount, "credit": Decimal("0")},
+                {"account": vendor_bill_expense_account(request, bill), "description": reason or bill.category, "debit": Decimal("0"), "credit": amount},
+            ],
+        )
+        debit_note = VendorDebitNote.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            bill=bill,
+            voucher=voucher,
+            journal_entry=voucher.journal_entry,
+            debit_note_number=next_debit_note_number(request),
+            debit_date=debit_date,
+            vendor_name=bill.vendor_name,
+            amount=amount,
+            reason=reason or "Vendor bill adjustment",
+            notes=notes,
+        )
+        update_vendor_bill_payment_status(bill)
+    return debit_note
+
+
+def payment_receipt_amount_reversed(receipt: PaymentReceipt) -> Decimal:
+    return sum((reversal.amount for reversal in receipt.reversals.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
+def vendor_payment_amount_reversed(payment: VendorBillPayment) -> Decimal:
+    return sum((reversal.amount for reversal in payment.reversals.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
+def post_customer_receipt_reversal(
+    request: HttpRequest,
+    *,
+    receipt: PaymentReceipt,
+    reversal_date,
+    amount: Decimal,
+    reason: str,
+    notes: str = "",
+) -> PaymentReversal:
+    amount = amount.quantize(Decimal("0.01"))
+    available = (receipt.amount - payment_receipt_amount_reversed(receipt)).quantize(Decimal("0.01"))
+    if available <= 0:
+        raise ValueError("This receipt has already been fully reversed.")
+    if amount <= 0:
+        raise ValueError("Reversal amount must be greater than zero.")
+    if amount > available:
+        raise ValueError(f"Reversal cannot exceed available receipt amount of {available}.")
+    with transaction.atomic():
+        voucher = create_voucher_with_lines(
+            request,
+            voucher_type="reversal",
+            party_name=receipt.payer_name,
+            narration=notes or reason,
+            voucher_date=reversal_date or timezone.localdate(),
+            ledger_lines=[
+                {"account": account_by_code(request, "1100" if receipt.invoice else "4000"), "description": reason or receipt.reference, "debit": amount, "credit": Decimal("0")},
+                {"account": cash_account_for_method(request, receipt.method), "description": reason or receipt.reference, "debit": Decimal("0"), "credit": amount},
+            ],
+        )
+        reversal = PaymentReversal.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            reversal_type="customer_receipt",
+            reversal_number=next_reversal_number(request),
+            reversal_date=reversal_date or timezone.localdate(),
+            customer_receipt=receipt,
+            voucher=voucher,
+            journal_entry=voucher.journal_entry,
+            party_name=receipt.payer_name,
+            amount=amount,
+            reason=reason or "Receipt reversal",
+            notes=notes,
+        )
+        if receipt.invoice:
+            update_invoice_payment_status(receipt.invoice)
+    return reversal
+
+
+def post_vendor_payment_reversal(
+    request: HttpRequest,
+    *,
+    payment: VendorBillPayment,
+    reversal_date,
+    amount: Decimal,
+    reason: str,
+    notes: str = "",
+) -> PaymentReversal:
+    amount = amount.quantize(Decimal("0.01"))
+    available = (payment.amount - vendor_payment_amount_reversed(payment)).quantize(Decimal("0.01"))
+    if available <= 0:
+        raise ValueError("This vendor payment has already been fully reversed.")
+    if amount <= 0:
+        raise ValueError("Reversal amount must be greater than zero.")
+    if amount > available:
+        raise ValueError(f"Reversal cannot exceed available vendor payment amount of {available}.")
+    with transaction.atomic():
+        voucher = create_voucher_with_lines(
+            request,
+            voucher_type="reversal",
+            party_name=payment.vendor_name,
+            narration=notes or reason,
+            voucher_date=reversal_date or timezone.localdate(),
+            ledger_lines=[
+                {"account": cash_account_for_method(request, payment.method), "description": reason or payment.reference, "debit": amount, "credit": Decimal("0")},
+                {"account": account_by_code(request, "2000"), "description": reason or payment.reference, "debit": Decimal("0"), "credit": amount},
+            ],
+        )
+        reversal = PaymentReversal.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            reversal_type="vendor_payment",
+            reversal_number=next_reversal_number(request),
+            reversal_date=reversal_date or timezone.localdate(),
+            vendor_payment=payment,
+            voucher=voucher,
+            journal_entry=voucher.journal_entry,
+            party_name=payment.vendor_name,
+            amount=amount,
+            reason=reason or "Vendor payment reversal",
+            notes=notes,
+        )
+        update_vendor_bill_payment_status(payment.bill)
+    return reversal
+
+
 def finance_summary_for_user(request: HttpRequest) -> dict[str, Decimal]:
     invoices = Invoice.objects.filter(account_q(request))
     bills = VendorBill.objects.filter(account_q(request))
+    customer_reversals = PaymentReversal.objects.filter(account_q(request), reversal_type="customer_receipt")
+    vendor_reversals = PaymentReversal.objects.filter(account_q(request), reversal_type="vendor_payment")
     return {
         "accounts_receivable": sum((invoice_outstanding_amount(invoice) for invoice in invoices.exclude(status="paid")), Decimal("0")),
         "accounts_payable": sum((vendor_bill_outstanding_amount(bill) for bill in bills.exclude(status="paid")), Decimal("0")),
-        "cash_collected": sum((receipt.amount for receipt in PaymentReceipt.objects.filter(account_q(request))), Decimal("0")),
-        "bills_paid": sum((payment.amount for payment in VendorBillPayment.objects.filter(account_q(request))), Decimal("0")),
+        "cash_collected": sum((receipt.amount for receipt in PaymentReceipt.objects.filter(account_q(request))), Decimal("0")) - sum((reversal.amount for reversal in customer_reversals), Decimal("0")),
+        "bills_paid": sum((payment.amount for payment in VendorBillPayment.objects.filter(account_q(request))), Decimal("0")) - sum((reversal.amount for reversal in vendor_reversals), Decimal("0")),
     }
 
 
@@ -3862,6 +4065,68 @@ def reports(request: HttpRequest) -> HttpResponse:
             for bucket, amount in totals_by_bucket.items()
         )
 
+    posted_entries = JournalEntry.objects.filter(account_q(request), is_posted=True)
+    trial_rows = []
+    for account in Account.objects.filter(account_q(request), is_active=True).order_by("code"):
+        debit = sum((line.debit for line in JournalLine.objects.filter(entry__in=posted_entries, account=account)), Decimal("0")).quantize(Decimal("0.01"))
+        credit = sum((line.credit for line in JournalLine.objects.filter(entry__in=posted_entries, account=account)), Decimal("0")).quantize(Decimal("0.01"))
+        if debit == 0 and credit == 0:
+            continue
+        trial_rows.append(
+            f"""
+            <tr>
+              <td>{escape(account.code)}</td>
+              <td>{escape(account.name)}</td>
+              <td>{escape(account.get_account_type_display())}</td>
+              <td class="amount-cell">{escape(money(debit, currency)) if debit else '-'}</td>
+              <td class="amount-cell">{escape(money(credit, currency)) if credit else '-'}</td>
+            </tr>
+            """
+        )
+    if not trial_rows:
+        trial_rows.append('<tr><td colspan="5" class="empty-report-row">No posted ledger lines yet.</td></tr>')
+
+    tax_lines = JournalLine.objects.filter(entry__in=posted_entries, account__code="2100")
+    tax_collected = sum((line.credit for line in tax_lines), Decimal("0")).quantize(Decimal("0.01"))
+    tax_reduced = sum((line.debit for line in tax_lines), Decimal("0")).quantize(Decimal("0.01"))
+    tax_payable = (tax_collected - tax_reduced).quantize(Decimal("0.01"))
+
+    sales_by_customer = []
+    for name in sorted(set(Invoice.objects.filter(account_q(request)).values_list("client_name", flat=True))):
+        invoices_for_customer = Invoice.objects.filter(account_q(request), client_name=name)
+        gross = sum((invoice_total_amount(invoice) for invoice in invoices_for_customer), Decimal("0")).quantize(Decimal("0.01"))
+        credits = sum((credit.total_amount for credit in CustomerCreditNote.objects.filter(account_q(request), client_name=name)), Decimal("0")).quantize(Decimal("0.01"))
+        sales_by_customer.append(
+            f"""
+            <tr>
+              <td>{escape(name)}</td>
+              <td class="amount-cell">{escape(money(gross, currency))}</td>
+              <td class="amount-cell">{escape(money(credits, currency))}</td>
+              <td class="amount-cell">{escape(money(gross - credits, currency))}</td>
+            </tr>
+            """
+        )
+    if not sales_by_customer:
+        sales_by_customer.append('<tr><td colspan="4" class="empty-report-row">No customer sales yet.</td></tr>')
+
+    expense_by_vendor = []
+    for name in sorted(set(VendorBill.objects.filter(account_q(request)).values_list("vendor_name", flat=True))):
+        bills_for_vendor = VendorBill.objects.filter(account_q(request), vendor_name=name)
+        gross = sum((bill.amount for bill in bills_for_vendor), Decimal("0")).quantize(Decimal("0.01"))
+        debits = sum((debit.amount for debit in VendorDebitNote.objects.filter(account_q(request), vendor_name=name)), Decimal("0")).quantize(Decimal("0.01"))
+        expense_by_vendor.append(
+            f"""
+            <tr>
+              <td>{escape(name)}</td>
+              <td class="amount-cell">{escape(money(gross, currency))}</td>
+              <td class="amount-cell">{escape(money(debits, currency))}</td>
+              <td class="amount-cell">{escape(money(gross - debits, currency))}</td>
+            </tr>
+            """
+        )
+    if not expense_by_vendor:
+        expense_by_vendor.append('<tr><td colspan="4" class="empty-report-row">No vendor expenses yet.</td></tr>')
+
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
@@ -3932,6 +4197,61 @@ def reports(request: HttpRequest) -> HttpResponse:
           <div><span>Customer payments recorded</span><strong>{escape(money(finance['cash_collected'], currency))}</strong></div>
           <div><span>Bills paid</span><strong>{escape(money(finance['bills_paid'], currency))}</strong></div>
           <div class="statement-total"><span>Total cash and bank</span><strong>{escape(money(cash['total'], currency))}</strong></div>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Trial balance</p>
+          <h2>Debit and credit by ledger account</h2>
+          <p>Review posted balances account by account before preparing final reports.</p>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{''.join(trial_rows)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Balance sheet</p>
+          <h2>Assets, liabilities and equity snapshot</h2>
+          <p>Based on posted journal entries in this account.</p>
+        </div>
+        <div class="report-statement">
+          <div><span>Assets</span><strong>{escape(money(totals['assets'], currency))}</strong></div>
+          <div><span>Liabilities</span><strong>{escape(money(totals['liabilities'], currency))}</strong></div>
+          <div><span>Owner equity</span><strong>{escape(money(totals['equity'], currency)) if 'equity' in totals else escape(money(Decimal('0'), currency))}</strong></div>
+          <div class="statement-total"><span>Current profit</span><strong>{escape(money(profit, currency))}</strong></div>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Tax summary</p>
+          <h2>{'Sales tax' if current_market(request) == 'US' else 'GST'} payable movement</h2>
+        </div>
+        <div class="report-statement">
+          <div><span>Tax collected on invoices</span><strong>{escape(money(tax_collected, currency))}</strong></div>
+          <div><span>Tax reduced by credit notes</span><strong>{escape(money(tax_reduced, currency))}</strong></div>
+          <div class="statement-total"><span>Net tax payable</span><strong>{escape(money(tax_payable, currency))}</strong></div>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Sales</p><h2>Sales by customer</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Customer</th><th>Gross invoices</th><th>Credit notes</th><th>Net sales</th></tr></thead>
+            <tbody>{''.join(sales_by_customer)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Expenses</p><h2>Expenses by vendor</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Vendor</th><th>Gross bills</th><th>Debit notes</th><th>Net expense</th></tr></thead>
+            <tbody>{''.join(expense_by_vendor)}</tbody>
+          </table>
         </div>
       </section>
     </main>
@@ -4127,6 +4447,7 @@ def receipt_pdf(request: HttpRequest, receipt_id: int) -> HttpResponse:
     heading_style = ParagraphStyle("ReceiptHeading", parent=styles["Heading1"], fontSize=20, leading=24, spaceAfter=8)
     label_style = ParagraphStyle("ReceiptLabel", parent=small_style, textColor=colors.white)
     accent = colors.HexColor("#126b4f")
+    profile = get_business_profile(request)
 
     def para(value: str, style=body_style) -> Paragraph:
         return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
@@ -4137,7 +4458,7 @@ def receipt_pdf(request: HttpRequest, receipt_id: int) -> HttpResponse:
         Table([[""]], colWidths=[500], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
         Spacer(1, 18),
         Paragraph("PAYMENT ACKNOWLEDGEMENT", heading_style),
-        para("Generated by RozLedger for the account holder's records.", small_style),
+        para(f"{profile.business_name} - {profile.business_address}" if profile else "Generated by RozLedger for the account holder's records.", small_style),
         Spacer(1, 18),
         Table(
             [
@@ -4208,10 +4529,23 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
           <td>{escape(payment.reference or 'Not provided')}</td>
           <td>{escape(payment.get_method_display())}</td>
           <td class="amount-cell">{escape(money(payment.amount, currency))}</td>
+          <td><a href="/dashboard/vendor-payments/{payment.id}/reverse/">Reverse</a></td>
         </tr>
         """
         for payment in bill.payments.all()
-    ) or '<tr><td colspan="5" class="empty-report-row">No payments posted yet.</td></tr>'
+    ) or '<tr><td colspan="6" class="empty-report-row">No payments posted yet.</td></tr>'
+    debit_rows = "".join(
+        f"""
+        <tr>
+          <td>{debit_note.debit_date:%d %b %Y}</td>
+          <td><a href="/dashboard/debit-notes/{debit_note.id}/">{escape(debit_note.debit_note_number)}</a></td>
+          <td>{escape(debit_note.reason)}</td>
+          <td>{voucher_link(debit_note.voucher)}</td>
+          <td class="amount-cell">{escape(money(debit_note.amount, currency))}</td>
+        </tr>
+        """
+        for debit_note in bill.debit_notes.select_related("voucher").all()
+    ) or '<tr><td colspan="5" class="empty-report-row">No debit notes posted against this vendor bill.</td></tr>'
     source_actions = "".join(
         part
         for part in [
@@ -4229,6 +4563,7 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
         <div class="hero-actions">
           <a class="button secondary" href="/dashboard/#payables">Back to payables</a>
           <a class="button primary" href="/dashboard/expenses/pay/?bill={bill.id}">Pay bill</a>
+          <a class="button secondary" href="/dashboard/expenses/{bill.id}/debit-notes/new/">Issue debit note</a>
           <a class="button secondary" href="/dashboard/ledger/vendors/?vendor={quote_plus(bill.vendor_name)}">Vendor statement</a>
           {source_actions}
         </div>
@@ -4243,8 +4578,17 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
         <div class="section-head"><p class="eyebrow">Payments</p><h2>Payment history</h2></div>
         <div class="report-table-wrap">
           <table class="report-table">
-            <thead><tr><th>Date</th><th>Voucher</th><th>Reference</th><th>Method</th><th>Amount</th></tr></thead>
+            <thead><tr><th>Date</th><th>Voucher</th><th>Reference</th><th>Method</th><th>Amount</th><th>Correction</th></tr></thead>
             <tbody>{payment_rows}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Corrections</p><h2>Debit notes</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Debit note</th><th>Reason</th><th>Voucher</th><th>Amount</th></tr></thead>
+            <tbody>{debit_rows}</tbody>
           </table>
         </div>
       </section>
@@ -4442,6 +4786,7 @@ def credit_note_detail(request: HttpRequest, credit_note_id: int) -> HttpRespons
         <p>{escape(money(credit_note.total_amount, currency))} credited to {escape(credit_note.client_name)} for {escape(invoice_number(invoice))}.</p>
         <div class="hero-actions">
           <a class="button primary" href="/dashboard/invoices/{invoice.id}/accounting/">Open invoice accounting</a>
+          <a class="button secondary" href="/dashboard/credit-notes/{credit_note.id}/download.pdf">Download PDF</a>
           <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(credit_note.client_name)}">Customer ledger</a>
           <a class="button secondary" href="/dashboard/">Back to dashboard</a>
         </div>
@@ -4471,14 +4816,176 @@ def credit_note_detail(request: HttpRequest, credit_note_id: int) -> HttpRespons
 
 @login_required
 @require_GET
+def credit_note_pdf(request: HttpRequest, credit_note_id: int) -> HttpResponse:
+    credit_note = owned_credit_note(request, credit_note_id)
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    currency = "$" if credit_note.market == "US" else RUPEE_SYMBOL
+    profile = get_business_profile(request)
+    invoice = credit_note.invoice
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=42, bottomMargin=40)
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle("CreditBody", parent=styles["BodyText"], fontSize=10, leading=14)
+    small_style = ParagraphStyle("CreditSmall", parent=body_style, fontSize=8.5, leading=11, textColor=colors.HexColor("#5b6964"))
+    heading_style = ParagraphStyle("CreditHeading", parent=styles["Heading1"], fontSize=20, leading=24, spaceAfter=8)
+    accent = colors.HexColor("#126b4f")
+
+    def para(value: str, style=body_style) -> Paragraph:
+        return Paragraph(escape(value or "").replace("\n", "<br/>"), style)
+
+    story = [
+        Table([[""]], colWidths=[500], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
+        Spacer(1, 18),
+        Paragraph("CREDIT NOTE", heading_style),
+        para(f"{profile.business_name} - {profile.business_address}" if profile else "Generated by RozLedger.", small_style),
+        Spacer(1, 18),
+        Table(
+            [
+                [para("Credit note number", small_style), para(credit_note.credit_note_number)],
+                [para("Credit date", small_style), para(f"{credit_note.credit_date:%d %b %Y}")],
+                [para("Customer", small_style), para(credit_note.client_name)],
+                [para("Original invoice", small_style), para(invoice_number(invoice))],
+                [para("Reason", small_style), para(credit_note.reason)],
+                [para("Taxable credit", small_style), para(money(credit_note.taxable_amount, currency))],
+                [para("Tax credit", small_style), para(money(credit_note.tax_amount, currency))],
+                [para("Total credit", small_style), para(money(credit_note.total_amount, currency))],
+            ],
+            colWidths=[150, 350],
+            style=TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f4f7f5")),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9e0dd")),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            ),
+        ),
+        Spacer(1, 18),
+        para(credit_note.notes or "This credit note adjusts the original invoice balance.", body_style),
+        Spacer(1, 22),
+        para("Generated by RozLedger www.rozledger.in / www.rozledger.com", small_style),
+    ]
+    doc.build(story)
+    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="rozledger-credit-note-{credit_note.id}.pdf"'
+    return response
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def vendor_debit_note_new(request: HttpRequest, bill_id: int) -> HttpResponse:
+    bill = owned_vendor_bill(request, bill_id)
+    currency = "$" if bill.market == "US" else RUPEE_SYMBOL
+    outstanding = vendor_bill_outstanding_amount(bill)
+    values = {
+        "debit_date": f"{timezone.localdate():%Y-%m-%d}",
+        "amount": f"{outstanding}",
+        "reason": "Vendor bill adjustment",
+        "notes": "",
+    }
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        try:
+            debit_note = post_vendor_debit_note(
+                request,
+                bill=bill,
+                debit_date=parse_form_date(values["debit_date"]),
+                amount=decimal_value(values["amount"]),
+                reason=values["reason"],
+                notes=values["notes"],
+            )
+            audit_log(request, "debit_note.created", "VendorDebitNote", debit_note.id, f"Issued {debit_note.debit_note_number} for vendor bill {bill.id}")
+            return redirect(f"/dashboard/debit-notes/{debit_note.id}/")
+        except ValueError as exc:
+            error = str(exc)
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Correction</p>
+        <h1>Issue vendor debit note</h1>
+        <p class="account-copy">Debit notes reduce accounts payable without deleting the original vendor bill. Maximum available adjustment: {escape(money(outstanding, currency))}.</p>
+        {error_html}
+        <div class="selected-invoice-panel">
+          <span>Selected vendor bill</span>
+          <strong>{escape(bill.vendor_name)}</strong>
+          <p>{escape(bill.category)} - total {escape(money(bill.amount, currency))} / outstanding {escape(money(outstanding, currency))}</p>
+        </div>
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Debit note date<input name="debit_date" type="date" value="{escape(values['debit_date'])}" required /></label>
+          <label>Debit note amount<input name="amount" type="number" min="0.01" max="{outstanding}" step="0.01" value="{escape(values['amount'])}" required /></label>
+          <label class="full-row">Reason<input name="reason" value="{escape(values['reason'])}" placeholder="Vendor discount, return, wrong bill" required /></label>
+          <label class="full-row">Notes<textarea name="notes" rows="3" placeholder="Optional internal note">{escape(values['notes'])}</textarea></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post debit note</button>
+            <a class="button secondary" href="/dashboard/expenses/{bill.id}/">Back to vendor bill</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Issue vendor debit note", body, request)
+
+
+@login_required
+@require_GET
+def vendor_debit_note_detail(request: HttpRequest, debit_note_id: int) -> HttpResponse:
+    debit_note = owned_debit_note(request, debit_note_id)
+    currency = "$" if debit_note.market == "US" else RUPEE_SYMBOL
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Vendor debit note</p>
+        <h1>{escape(debit_note.debit_note_number)}</h1>
+        <p>{escape(money(debit_note.amount, currency))} adjusted from {escape(debit_note.vendor_name)}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/expenses/{debit_note.bill.id}/">Open vendor bill</a>
+          <a class="button secondary" href="/dashboard/ledger/vendors/?vendor={quote_plus(debit_note.vendor_name)}">Vendor ledger</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Date</span><strong>{debit_note.debit_date:%d %b %Y}</strong></article>
+        <article><span>Vendor</span><strong>{escape(debit_note.vendor_name)}</strong></article>
+        <article><span>Amount</span><strong>{escape(money(debit_note.amount, currency))}</strong></article>
+        <article><span>Voucher</span><strong>{voucher_link(debit_note.voucher)}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Reason</p><h2>{escape(debit_note.reason)}</h2><p>{escape(debit_note.notes or 'No additional note saved.')}</p></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Accounting</p><h2>Debit note voucher ledger lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(debit_note.voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Vendor debit note", body, request)
+
+
+@login_required
+@require_GET
 def receipt_detail(request: HttpRequest, receipt_id: int) -> HttpResponse:
     receipt = owned_receipt(request, receipt_id)
     currency = "$" if receipt.market == "US" else RUPEE_SYMBOL
+    available_reversal = (receipt.amount - payment_receipt_amount_reversed(receipt)).quantize(Decimal("0.01"))
     invoice_copy = (
         f'<a href="/dashboard/invoices/{receipt.invoice.id}/accounting/">{escape(invoice_number(receipt.invoice))} - {escape(receipt.invoice.client_name)}</a>'
         if receipt.invoice
         else "Direct receipt"
     )
+    reversal_action = f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/reverse/">Reverse receipt</a>' if available_reversal > 0 else ""
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
@@ -4487,6 +4994,7 @@ def receipt_detail(request: HttpRequest, receipt_id: int) -> HttpResponse:
         <p>{escape(money(receipt.amount, currency))} received by {escape(receipt.get_method_display())} on {receipt.payment_date:%d %b %Y}.</p>
         <div class="hero-actions">
           <a class="button primary" href="/dashboard/payments/{receipt.id}/receipt.pdf">Download acknowledgement</a>
+          {reversal_action}
           <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(receipt.payer_name)}">Customer ledger</a>
           <a class="button secondary" href="/dashboard/#receipts">Back to receipts</a>
         </div>
@@ -4495,7 +5003,7 @@ def receipt_detail(request: HttpRequest, receipt_id: int) -> HttpResponse:
         <article><span>Invoice</span><strong>{invoice_copy}</strong></article>
         <article><span>Voucher</span><strong>{voucher_link(receipt.voucher)}</strong></article>
         <article><span>Journal</span><strong>{journal_entry_link(receipt.journal_entry)}</strong></article>
-        <article><span>Reference</span><strong>{escape(receipt.reference or 'Not provided')}</strong></article>
+        <article><span>Available to reverse</span><strong>{escape(money(available_reversal, currency))}</strong></article>
       </section>
       <section class="report-section">
         <div class="section-head"><p class="eyebrow">Accounting</p><h2>Receipt voucher ledger lines</h2></div>
@@ -4515,6 +5023,144 @@ def receipt_detail(request: HttpRequest, receipt_id: int) -> HttpResponse:
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
+def receipt_reversal_new(request: HttpRequest, receipt_id: int) -> HttpResponse:
+    receipt = owned_receipt(request, receipt_id)
+    currency = "$" if receipt.market == "US" else RUPEE_SYMBOL
+    available = (receipt.amount - payment_receipt_amount_reversed(receipt)).quantize(Decimal("0.01"))
+    values = {"reversal_date": f"{timezone.localdate():%Y-%m-%d}", "amount": f"{available}", "reason": "Wrong receipt posting", "notes": ""}
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        try:
+            reversal = post_customer_receipt_reversal(
+                request,
+                receipt=receipt,
+                reversal_date=parse_form_date(values["reversal_date"]),
+                amount=decimal_value(values["amount"]),
+                reason=values["reason"],
+                notes=values["notes"],
+            )
+            audit_log(request, "payment_reversal.created", "PaymentReversal", reversal.id, f"Reversed receipt {receipt.id}")
+            return redirect(f"/dashboard/reversals/{reversal.id}/")
+        except ValueError as exc:
+            error = str(exc)
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Correction</p>
+        <h1>Reverse customer receipt</h1>
+        <p class="account-copy">This posts the opposite accounting entry and keeps the original receipt visible. Available to reverse: {escape(money(available, currency))}.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Reversal date<input name="reversal_date" type="date" value="{escape(values['reversal_date'])}" required /></label>
+          <label>Amount<input name="amount" type="number" min="0.01" max="{available}" step="0.01" value="{escape(values['amount'])}" required /></label>
+          <label class="full-row">Reason<input name="reason" value="{escape(values['reason'])}" required /></label>
+          <label class="full-row">Notes<textarea name="notes" rows="3">{escape(values['notes'])}</textarea></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post reversal</button>
+            <a class="button secondary" href="/dashboard/payments/{receipt.id}/">Back to receipt</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Reverse receipt", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def vendor_payment_reversal_new(request: HttpRequest, payment_id: int) -> HttpResponse:
+    payment = owned_vendor_payment(request, payment_id)
+    currency = "$" if payment.market == "US" else RUPEE_SYMBOL
+    available = (payment.amount - vendor_payment_amount_reversed(payment)).quantize(Decimal("0.01"))
+    values = {"reversal_date": f"{timezone.localdate():%Y-%m-%d}", "amount": f"{available}", "reason": "Wrong vendor payment posting", "notes": ""}
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        try:
+            reversal = post_vendor_payment_reversal(
+                request,
+                payment=payment,
+                reversal_date=parse_form_date(values["reversal_date"]),
+                amount=decimal_value(values["amount"]),
+                reason=values["reason"],
+                notes=values["notes"],
+            )
+            audit_log(request, "payment_reversal.created", "PaymentReversal", reversal.id, f"Reversed vendor payment {payment.id}")
+            return redirect(f"/dashboard/reversals/{reversal.id}/")
+        except ValueError as exc:
+            error = str(exc)
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Correction</p>
+        <h1>Reverse vendor payment</h1>
+        <p class="account-copy">This restores payable/cash balances with a reversal voucher. Available to reverse: {escape(money(available, currency))}.</p>
+        {error_html}
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Reversal date<input name="reversal_date" type="date" value="{escape(values['reversal_date'])}" required /></label>
+          <label>Amount<input name="amount" type="number" min="0.01" max="{available}" step="0.01" value="{escape(values['amount'])}" required /></label>
+          <label class="full-row">Reason<input name="reason" value="{escape(values['reason'])}" required /></label>
+          <label class="full-row">Notes<textarea name="notes" rows="3">{escape(values['notes'])}</textarea></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post reversal</button>
+            <a class="button secondary" href="/dashboard/expenses/{payment.bill.id}/">Back to vendor bill</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Reverse vendor payment", body, request)
+
+
+@login_required
+@require_GET
+def payment_reversal_detail(request: HttpRequest, reversal_id: int) -> HttpResponse:
+    reversal = owned_reversal(request, reversal_id)
+    currency = "$" if reversal.market == "US" else RUPEE_SYMBOL
+    source = "Customer receipt" if reversal.customer_receipt_id else "Vendor payment"
+    source_link = f"/dashboard/payments/{reversal.customer_receipt_id}/" if reversal.customer_receipt_id else f"/dashboard/expenses/{reversal.vendor_payment.bill_id}/"
+    voucher_action = f'<a class="button secondary" href="/dashboard/vouchers/{reversal.voucher.id}/">Open voucher</a>' if reversal.voucher else ""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Payment reversal</p>
+        <h1>{escape(reversal.reversal_number)}</h1>
+        <p>{escape(money(reversal.amount, currency))} reversed for {escape(reversal.party_name)}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="{source_link}">Open source</a>
+          {voucher_action}
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Type</span><strong>{escape(source)}</strong></article>
+        <article><span>Date</span><strong>{reversal.reversal_date:%d %b %Y}</strong></article>
+        <article><span>Amount</span><strong>{escape(money(reversal.amount, currency))}</strong></article>
+        <article><span>Journal</span><strong>{journal_entry_link(reversal.journal_entry)}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Reason</p><h2>{escape(reversal.reason)}</h2><p>{escape(reversal.notes or 'No additional note saved.')}</p></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Accounting</p><h2>Reversal voucher ledger lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(reversal.voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Payment reversal", body, request)
+
+
+@login_required
 @require_GET
 def voucher_detail(request: HttpRequest, voucher_id: int) -> HttpResponse:
     voucher = owned_voucher(request, voucher_id)
@@ -4526,6 +5172,10 @@ def voucher_detail(request: HttpRequest, voucher_id: int) -> HttpResponse:
         source_links.append(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>')
     for credit_note in CustomerCreditNote.objects.filter(account_q(request), voucher=voucher)[:5]:
         source_links.append(f'<a class="button secondary" href="/dashboard/credit-notes/{credit_note.id}/">Credit note {escape(credit_note.credit_note_number)}</a>')
+    for debit_note in VendorDebitNote.objects.filter(account_q(request), voucher=voucher)[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/debit-notes/{debit_note.id}/">Debit note {escape(debit_note.debit_note_number)}</a>')
+    for reversal in PaymentReversal.objects.filter(account_q(request), voucher=voucher)[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/reversals/{reversal.id}/">Reversal {escape(reversal.reversal_number)}</a>')
     for bill in VendorBill.objects.filter(account_q(request)).filter(Q(voucher=voucher) | Q(payment_voucher=voucher))[:5]:
         source_links.append(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>')
     for payment in VendorBillPayment.objects.filter(account_q(request), voucher=voucher).select_related("bill")[:5]:
@@ -4578,8 +5228,10 @@ def journal_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
     voucher_links = "".join(f'<a class="button secondary" href="/dashboard/vouchers/{voucher.id}/">{escape(voucher.voucher_number)}</a>' for voucher in entry.vouchers.all())
     receipt_links = "".join(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>' for receipt in entry.payment_receipts.all())
     credit_note_links = "".join(f'<a class="button secondary" href="/dashboard/credit-notes/{credit_note.id}/">Credit note {escape(credit_note.credit_note_number)}</a>' for credit_note in entry.customer_credit_notes.all())
+    debit_note_links = "".join(f'<a class="button secondary" href="/dashboard/debit-notes/{debit_note.id}/">Debit note {escape(debit_note.debit_note_number)}</a>' for debit_note in entry.vendor_debit_notes.all())
+    reversal_links = "".join(f'<a class="button secondary" href="/dashboard/reversals/{reversal.id}/">Reversal {escape(reversal.reversal_number)}</a>' for reversal in entry.payment_reversals.all())
     bill_links = "".join(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>' for bill in entry.vendor_bills.all())
-    source_html = voucher_links + receipt_links + credit_note_links + bill_links or '<span class="form-hint">Manual or source record not linked.</span>'
+    source_html = voucher_links + receipt_links + credit_note_links + debit_note_links + reversal_links + bill_links or '<span class="form-hint">Manual or source record not linked.</span>'
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
@@ -4646,6 +5298,18 @@ def global_search(request: HttpRequest) -> HttpResponse:
             queryset = queryset.filter(Q(credit_note_number__icontains=q) | Q(client_name__icontains=q) | Q(reason__icontains=q) | Q(notes__icontains=q) | Q(invoice__client_name__icontains=q))
         for credit_note in queryset[:20]:
             rows.append(("Credit note", credit_note.credit_note_number, credit_note.client_name, money(credit_note.total_amount, currency), f"/dashboard/credit-notes/{credit_note.id}/"))
+    if record_type in {"all", "debits"}:
+        queryset = VendorDebitNote.objects.filter(account_q(request))
+        if q:
+            queryset = queryset.filter(Q(debit_note_number__icontains=q) | Q(vendor_name__icontains=q) | Q(reason__icontains=q) | Q(notes__icontains=q) | Q(bill__vendor_name__icontains=q))
+        for debit_note in queryset[:20]:
+            rows.append(("Debit note", debit_note.debit_note_number, debit_note.vendor_name, money(debit_note.amount, currency), f"/dashboard/debit-notes/{debit_note.id}/"))
+    if record_type in {"all", "reversals"}:
+        queryset = PaymentReversal.objects.filter(account_q(request))
+        if q:
+            queryset = queryset.filter(Q(reversal_number__icontains=q) | Q(party_name__icontains=q) | Q(reason__icontains=q) | Q(notes__icontains=q))
+        for reversal in queryset[:20]:
+            rows.append(("Reversal", reversal.reversal_number, reversal.party_name, money(reversal.amount, currency), f"/dashboard/reversals/{reversal.id}/"))
     if record_type in {"all", "vouchers"}:
         queryset = Voucher.objects.filter(account_q(request))
         if q:
@@ -4654,7 +5318,7 @@ def global_search(request: HttpRequest) -> HttpResponse:
             rows.append(("Voucher", voucher.voucher_number, voucher.party_name, money(voucher.total_amount, currency), f"/dashboard/vouchers/{voucher.id}/"))
     type_options = "".join(
         f'<option value="{value}" {"selected" if record_type == value else ""}>{label}</option>'
-        for value, label in [("all", "All records"), ("invoices", "Invoices"), ("bills", "Vendor bills"), ("payments", "Receipts"), ("credits", "Credit notes"), ("vouchers", "Vouchers")]
+        for value, label in [("all", "All records"), ("invoices", "Invoices"), ("bills", "Vendor bills"), ("payments", "Receipts"), ("credits", "Credit notes"), ("debits", "Debit notes"), ("reversals", "Reversals"), ("vouchers", "Vouchers")]
     )
     result_rows = "".join(
         f"""
@@ -4746,29 +5410,38 @@ def audit_trail(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
-@require_GET
+@require_http_methods(["GET", "POST"])
 def reconciliation(request: HttpRequest) -> HttpResponse:
     ensure_default_chart(request)
     currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
-    account_code = clean_text(request.GET.get("account"), "1010", 20)
+    source = request.POST if request.method == "POST" else request.GET
+    account_code = clean_text(source.get("account"), "1010", 20)
     if account_code not in {"1000", "1010"}:
         account_code = "1010"
-    statement_balance = decimal_value(request.GET.get("statement_balance"))
+    statement_balance = decimal_value(source.get("statement_balance"))
     entries = JournalEntry.objects.filter(account_q(request), is_posted=True)
     lines = JournalLine.objects.filter(entry__in=entries, account__code=account_code).select_related("entry", "account").order_by("entry__entry_date", "entry__created_at", "id")
-    start_date = parse_form_date(request.GET.get("from", "")) if request.GET.get("from") else None
-    end_date = parse_form_date(request.GET.get("to", "")) if request.GET.get("to") else None
+    start_date = parse_form_date(source.get("from", "")) if source.get("from") else None
+    end_date = parse_form_date(source.get("to", "")) if source.get("to") else None
     if start_date:
         lines = lines.filter(entry__entry_date__gte=start_date)
     if end_date:
         lines = lines.filter(entry__entry_date__lte=end_date)
     running = Decimal("0")
     rows = []
+    selected_ids = set(source.getlist("line_ids")) if hasattr(source, "getlist") else set()
+    selected_total = Decimal("0")
+    saved_message = ""
     for line in lines:
         running = (running + line.debit - line.credit).quantize(Decimal("0.01"))
+        line_amount = (line.debit - line.credit).quantize(Decimal("0.01"))
+        checked = str(line.id) in selected_ids
+        if checked:
+            selected_total += line_amount
         rows.append(
             f"""
             <tr>
+              <td><input type="checkbox" name="line_ids" value="{line.id}" {'checked' if checked else ''} /></td>
               <td>{line.entry.entry_date:%d %b %Y}</td>
               <td><a href="/dashboard/accounting/journal/{line.entry.id}/">{escape(line.entry.memo)}</a></td>
               <td>{escape(line.description)}</td>
@@ -4778,39 +5451,91 @@ def reconciliation(request: HttpRequest) -> HttpResponse:
             </tr>
             """
         )
-    table_rows = "".join(rows) or '<tr><td colspan="6" class="empty-report-row">No cash/bank transactions found.</td></tr>'
-    difference = (statement_balance - running).quantize(Decimal("0.01")) if request.GET.get("statement_balance") else Decimal("0")
+    if request.method == "POST":
+        account = account_by_code(request, account_code)
+        difference_for_save = (statement_balance - running).quantize(Decimal("0.01"))
+        session = ReconciliationSession.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            account=account,
+            statement_date=end_date or timezone.localdate(),
+            date_from=start_date,
+            date_to=end_date,
+            statement_balance=statement_balance,
+            ledger_balance=running,
+            difference=difference_for_save,
+            notes=clean_text(request.POST.get("notes")),
+        )
+        selected_lines = JournalLine.objects.filter(id__in=[int(value) for value in selected_ids if str(value).isdigit()], entry__in=entries, account__code=account_code)
+        ReconciliationLine.objects.bulk_create(
+            ReconciliationLine(session=session, journal_line=line, amount=(line.debit - line.credit).quantize(Decimal("0.01")))
+            for line in selected_lines
+        )
+        audit_log(request, "reconciliation.saved", "ReconciliationSession", session.id, f"Saved {account.code} reconciliation with difference {difference_for_save}")
+        saved_message = f'<p class="dashboard-notice">Reconciliation saved with {selected_lines.count()} checked transaction(s).</p>'
+    table_rows = "".join(rows) or '<tr><td colspan="7" class="empty-report-row">No cash/bank transactions found.</td></tr>'
+    difference = (statement_balance - running).quantize(Decimal("0.01")) if source.get("statement_balance") else Decimal("0")
     account_options_html = "".join(f'<option value="{code}" {"selected" if account_code == code else ""}>{label}</option>' for code, label in [("1010", "Bank account"), ("1000", "Cash on hand")])
+    recent_sessions = "".join(
+        f"""
+        <article class="dashboard-card compact-card">
+          <div>
+            <span>{session.statement_date:%d %b %Y}</span>
+            <h2>{escape(session.account.name)}</h2>
+            <p>Statement {escape(money(session.statement_balance, currency))} / Ledger {escape(money(session.ledger_balance, currency))} / Difference {escape(money(session.difference, currency))}</p>
+          </div>
+        </article>
+        """
+        for session in ReconciliationSession.objects.filter(account_q(request)).select_related("account")[:6]
+    ) or '<article class="dashboard-card empty-state compact-card"><span>Reconciliation</span><h2>No saved reconciliations yet</h2><p>Tick transactions and save your first reconciliation.</p></article>'
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
         <p class="eyebrow">Reconciliation</p>
         <h1>Bank and cash reconciliation</h1>
         <p>Compare posted cash/bank ledger balance against your bank or cash statement balance.</p>
+        {saved_message}
       </section>
       <section class="dashboard-section">
         <form method="get" class="dashboard-form invoice-server-form">
           <label>Account<select name="account">{account_options_html}</select></label>
-          <label>From<input name="from" type="date" value="{escape(request.GET.get('from', ''))}" /></label>
-          <label>To<input name="to" type="date" value="{escape(request.GET.get('to', ''))}" /></label>
-          <label>Statement balance<input name="statement_balance" type="number" step="0.01" value="{escape(request.GET.get('statement_balance', ''))}" /></label>
+          <label>From<input name="from" type="date" value="{escape(source.get('from', ''))}" /></label>
+          <label>To<input name="to" type="date" value="{escape(source.get('to', ''))}" /></label>
+          <label>Statement balance<input name="statement_balance" type="number" step="0.01" value="{escape(source.get('statement_balance', ''))}" /></label>
           <button class="button primary" type="submit">Reconcile</button>
         </form>
       </section>
       <section class="report-kpi-grid">
         <article><span>Ledger balance</span><strong>{escape(money(running, currency))}</strong></article>
-        <article><span>Statement balance</span><strong>{escape(money(statement_balance, currency)) if request.GET.get('statement_balance') else 'Not entered'}</strong></article>
-        <article><span>Difference</span><strong>{escape(money(difference, currency)) if request.GET.get('statement_balance') else 'Not calculated'}</strong></article>
+        <article><span>Statement balance</span><strong>{escape(money(statement_balance, currency)) if source.get('statement_balance') else 'Not entered'}</strong></article>
+        <article><span>Difference</span><strong>{escape(money(difference, currency)) if source.get('statement_balance') else 'Not calculated'}</strong></article>
         <article><span>Account</span><strong>{'Bank' if account_code == '1010' else 'Cash'}</strong></article>
       </section>
       <section class="report-section">
         <div class="section-head"><p class="eyebrow">Ledger lines</p><h2>{'Bank account' if account_code == '1010' else 'Cash on hand'}</h2></div>
+        <form method="post">
+          {csrf_input(request)}
+          <input type="hidden" name="account" value="{escape(account_code)}" />
+          <input type="hidden" name="from" value="{escape(source.get('from', ''))}" />
+          <input type="hidden" name="to" value="{escape(source.get('to', ''))}" />
+          <input type="hidden" name="statement_balance" value="{escape(source.get('statement_balance', ''))}" />
         <div class="report-table-wrap">
           <table class="report-table">
-            <thead><tr><th>Date</th><th>Memo</th><th>Description</th><th>In</th><th>Out</th><th>Running balance</th></tr></thead>
+            <thead><tr><th>Clear</th><th>Date</th><th>Memo</th><th>Description</th><th>In</th><th>Out</th><th>Running balance</th></tr></thead>
             <tbody>{table_rows}</tbody>
           </table>
         </div>
+          <div class="dashboard-actions section-actions">
+            <label class="full-row">Notes<input name="notes" placeholder="Statement page, bank reference or reconciliation note" /></label>
+            <button class="button primary" type="submit">Save reconciliation</button>
+            <span class="form-hint">Checked net amount: {escape(money(selected_total, currency))}</span>
+          </div>
+        </form>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">History</p><h2>Saved reconciliations</h2></div>
+        <div class="dashboard-grid">{recent_sessions}</div>
       </section>
     </main>
     """
@@ -5594,6 +6319,27 @@ def owned_credit_note(request: HttpRequest, credit_note_id: int) -> CustomerCred
         return CustomerCreditNote.objects.select_related("invoice", "voucher", "journal_entry").get(Q(id=credit_note_id) & account_q(request))
     except CustomerCreditNote.DoesNotExist as exc:
         raise Http404("Credit note not found") from exc
+
+
+def owned_debit_note(request: HttpRequest, debit_note_id: int) -> VendorDebitNote:
+    try:
+        return VendorDebitNote.objects.select_related("bill", "voucher", "journal_entry").get(Q(id=debit_note_id) & account_q(request))
+    except VendorDebitNote.DoesNotExist as exc:
+        raise Http404("Debit note not found") from exc
+
+
+def owned_reversal(request: HttpRequest, reversal_id: int) -> PaymentReversal:
+    try:
+        return PaymentReversal.objects.select_related("customer_receipt", "vendor_payment__bill", "voucher", "journal_entry").get(Q(id=reversal_id) & account_q(request))
+    except PaymentReversal.DoesNotExist as exc:
+        raise Http404("Payment reversal not found") from exc
+
+
+def owned_vendor_payment(request: HttpRequest, payment_id: int) -> VendorBillPayment:
+    try:
+        return VendorBillPayment.objects.select_related("bill", "voucher").get(Q(id=payment_id) & account_q(request))
+    except VendorBillPayment.DoesNotExist as exc:
+        raise Http404("Vendor payment not found") from exc
 
 
 def owned_vendor_bill(request: HttpRequest, bill_id: int) -> VendorBill:

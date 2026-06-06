@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -244,6 +244,22 @@ class VendorBillPaymentAdmin(admin.ModelAdmin):
     readonly_fields = ("voucher", "created_at")
 
 
+@admin.register(VendorDebitNote)
+class VendorDebitNoteAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "debit_date", "debit_note_number", "vendor_name", "bill", "amount", "voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "debit_note_number", "vendor_name", "reason", "notes", "bill__vendor_name", "voucher__voucher_number")
+    list_filter = ("market", "debit_date", "created_at")
+    readonly_fields = ("voucher", "journal_entry", "created_at")
+
+
+@admin.register(PaymentReversal)
+class PaymentReversalAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "reversal_date", "reversal_number", "reversal_type", "party_name", "amount", "voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "reversal_number", "party_name", "reason", "notes", "voucher__voucher_number")
+    list_filter = ("market", "reversal_type", "reversal_date", "created_at")
+    readonly_fields = ("voucher", "journal_entry", "created_at")
+
+
 @admin.register(ExpenseUploadDraft)
 class ExpenseUploadDraftAdmin(admin.ModelAdmin):
     list_display = ("market", "owner_email", "vendor_name", "amount", "bill_status", "status", "original_filename", "vendor_bill", "created_at")
@@ -314,6 +330,22 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+class ReconciliationLineInline(admin.TabularInline):
+    model = ReconciliationLine
+    extra = 0
+    fields = ("journal_line", "amount", "created_at")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(ReconciliationSession)
+class ReconciliationSessionAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "statement_date", "account", "statement_balance", "ledger_balance", "difference", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "account__code", "account__name", "notes")
+    list_filter = ("market", "account", "statement_date", "created_at")
+    readonly_fields = ("ledger_balance", "difference", "created_at")
+    inlines = (ReconciliationLineInline,)
 
 
 class PaymentGatewayConfigForm(forms.ModelForm):

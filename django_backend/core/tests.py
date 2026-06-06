@@ -12,8 +12,8 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient, CustomerCreditNote
-from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, Voucher
-from .views import invoice_outstanding_amount
+from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationSession, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, VendorDebitNote, Voucher
+from .views import invoice_outstanding_amount, vendor_bill_outstanding_amount
 
 
 TEST_SETTINGS = {
@@ -1954,6 +1954,144 @@ class AccountWorkflowTests(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "sent")
 
+    def test_vendor_debit_note_posts_accounting_and_reduces_ap(self):
+        user = User.objects.create_user("vendor-debit@example.com", "vendor-debit@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-01",
+                "due_date": "2026-06-15",
+                "vendor_name": "Debit Vendor",
+                "category": "Office supplies",
+                "expense_account": str(expense.id),
+                "amount": "1000.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "DV-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        bill = VendorBill.objects.get(owner=user, vendor_name="Debit Vendor")
+
+        response = self.client.post(
+            reverse("vendor_debit_note_new", args=[bill.id]),
+            {"debit_date": "2026-06-06", "amount": "250.00", "reason": "Supplier discount"},
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        debit_note = VendorDebitNote.objects.select_related("voucher", "journal_entry").get(owner=user)
+        self.assertEqual(debit_note.amount, Decimal("250.00"))
+        self.assertEqual(debit_note.voucher.voucher_type, "debit_note")
+        self.assertTrue(debit_note.journal_entry.lines.filter(account__code="2000", debit=Decimal("250.00")).exists())
+        self.assertTrue(debit_note.journal_entry.lines.filter(account__code="5100", credit=Decimal("250.00")).exists())
+        bill.refresh_from_db()
+        self.assertEqual(vendor_bill_outstanding_amount(bill), Decimal("750.00"))
+        detail = self.client.get(reverse("vendor_debit_note_detail", args=[debit_note.id]), HTTP_HOST="rozledger.in")
+        self.assertContains(detail, "Debit note voucher ledger lines")
+        ledger = self.client.get(f"{reverse('vendor_ledger')}?vendor=Debit%20Vendor", HTTP_HOST="rozledger.in")
+        self.assertContains(ledger, "Debit note")
+        self.assertContains(ledger, debit_note.debit_note_number)
+
+    def test_customer_receipt_reversal_restores_invoice_balance(self):
+        user = User.objects.create_user("receipt-reversal@example.com", "receipt-reversal@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Reversal Business",
+                "client_name": "Reversal Client",
+                "item_description": ["Support"],
+                "item_quantity": ["1"],
+                "item_rate": ["300"],
+                "gst_rate": "0",
+                "due_days": "7",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        invoice = Invoice.objects.get(owner=user, client_name="Reversal Client")
+        self.client.post(
+            reverse("payment_new"),
+            {"invoice_id": str(invoice.id), "payment_date": "2026-06-06", "payer_name": "Reversal Client", "amount": "200.00", "method": "bank", "reference": "RR-1"},
+            HTTP_HOST="rozledger.com",
+        )
+        receipt = PaymentReceipt.objects.get(owner=user, reference="RR-1")
+
+        response = self.client.post(
+            reverse("receipt_reversal_new", args=[receipt.id]),
+            {"reversal_date": "2026-06-07", "amount": "50.00", "reason": "Wrong amount"},
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        reversal = PaymentReversal.objects.select_related("voucher", "journal_entry").get(owner=user, reversal_type="customer_receipt")
+        self.assertEqual(reversal.amount, Decimal("50.00"))
+        self.assertTrue(reversal.journal_entry.lines.filter(account__code="1100", debit=Decimal("50.00")).exists())
+        self.assertTrue(reversal.journal_entry.lines.filter(account__code="1010", credit=Decimal("50.00")).exists())
+        invoice.refresh_from_db()
+        self.assertEqual(invoice_outstanding_amount(invoice), Decimal("150.00"))
+        detail = self.client.get(reverse("payment_reversal_detail", args=[reversal.id]), HTTP_HOST="rozledger.com")
+        self.assertContains(detail, "Reversal voucher ledger lines")
+
+    def test_vendor_payment_reversal_restores_bill_balance(self):
+        user = User.objects.create_user("vendor-payment-reversal@example.com", "vendor-payment-reversal@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        expense = Account.objects.get(owner=user, market="US", code="5100")
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-01",
+                "vendor_name": "Payment Reverse Vendor",
+                "category": "Supplies",
+                "expense_account": str(expense.id),
+                "amount": "500.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        bill = VendorBill.objects.get(owner=user, vendor_name="Payment Reverse Vendor")
+        self.client.post(reverse("vendor_bill_payment"), {"bill_id": str(bill.id), "payment_date": "2026-06-06", "amount": "300.00", "method": "bank", "reference": "VP-1"}, HTTP_HOST="rozledger.com")
+        payment = VendorBillPayment.objects.get(owner=user, reference="VP-1")
+
+        response = self.client.post(
+            reverse("vendor_payment_reversal_new", args=[payment.id]),
+            {"reversal_date": "2026-06-07", "amount": "100.00", "reason": "Wrong vendor payment"},
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        reversal = PaymentReversal.objects.select_related("journal_entry").get(owner=user, reversal_type="vendor_payment")
+        self.assertTrue(reversal.journal_entry.lines.filter(account__code="1010", debit=Decimal("100.00")).exists())
+        self.assertTrue(reversal.journal_entry.lines.filter(account__code="2000", credit=Decimal("100.00")).exists())
+        bill.refresh_from_db()
+        self.assertEqual(vendor_bill_outstanding_amount(bill), Decimal("300.00"))
+
+    def test_reconciliation_can_save_selected_bank_lines(self):
+        user = User.objects.create_user("reconcile-save@example.com", "reconcile-save@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.client.post(reverse("payment_new"), {"payment_date": "2026-06-06", "payer_name": "Bank Customer", "amount": "125.00", "method": "bank", "reference": "BANK-REC-1"}, HTTP_HOST="rozledger.com")
+        line = JournalLine.objects.get(entry__owner=user, account__code="1010", debit=Decimal("125.00"))
+
+        response = self.client.post(
+            reverse("reconciliation"),
+            {"account": "1010", "from": "2026-06-01", "to": "2026-06-30", "statement_balance": "125.00", "line_ids": [str(line.id)], "notes": "June statement"},
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Reconciliation saved")
+        session = ReconciliationSession.objects.get(owner=user)
+        self.assertEqual(session.statement_balance, Decimal("125.00"))
+        self.assertEqual(session.ledger_balance, Decimal("125.00"))
+        self.assertEqual(session.lines.count(), 1)
+
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")
         self.client.force_login(user)
@@ -2008,6 +2146,11 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(response, "AR aging by invoice and customer")
         self.assertContains(response, "AP aging by vendor")
         self.assertContains(response, "Cash and bank position")
+        self.assertContains(response, "Trial balance")
+        self.assertContains(response, "Balance sheet")
+        self.assertContains(response, "Tax summary")
+        self.assertContains(response, "Sales by customer")
+        self.assertContains(response, "Expenses by vendor")
         self.assertContains(response, f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}")
         self.assertContains(response, "Reports Client")
         self.assertContains(response, "Reports Vendor")
