@@ -1770,6 +1770,94 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(reconciliation_response, "$ 100.00")
         self.assertContains(reconciliation_response, "$ 0.00")
 
+    def test_invoice_accounting_trace_and_delete_safety_for_posted_invoice(self):
+        user = User.objects.create_user("trace-invoice@example.com", "trace-invoice@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Trace Business",
+                "client_name": "Trace Client",
+                "item_description": ["Monthly support"],
+                "item_quantity": ["1"],
+                "item_rate": ["250"],
+                "gst_rate": "0",
+                "due_days": "7",
+                "thank_you_note": "Thanks.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user, client_name="Trace Client")
+        self.assertIsNotNone(invoice.sales_voucher)
+
+        accounting = self.client.get(reverse("invoice_accounting_detail", args=[invoice.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(accounting.status_code, 200)
+        self.assertContains(accounting, "Invoice accounting")
+        self.assertContains(accounting, invoice.sales_voucher.voucher_number)
+        self.assertContains(accounting, "Correction safety")
+
+        edit_response = self.client.get(reverse("invoice_edit", args=[invoice.id]), HTTP_HOST="rozledger.com")
+        self.assertContains(edit_response, "Posted invoices cannot be deleted")
+        delete_response = self.client.post(reverse("invoice_delete", args=[invoice.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertContains(delete_response, "Invoice cannot be deleted")
+        self.assertTrue(Invoice.objects.filter(id=invoice.id).exists())
+        self.assertTrue(AuditLog.objects.filter(owner=user, action="invoice.delete_blocked", object_id=str(invoice.id)).exists())
+
+    def test_receipt_voucher_and_journal_detail_pages_show_accounting_trace(self):
+        user = User.objects.create_user("trace-receipt@example.com", "trace-receipt@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Trace Receipt Business",
+                "client_name": "Receipt Trace Client",
+                "item_description": ["Implementation"],
+                "item_quantity": ["1"],
+                "item_rate": ["300"],
+                "gst_rate": "0",
+                "due_days": "7",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        invoice = Invoice.objects.get(owner=user, client_name="Receipt Trace Client")
+        payment_response = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-06",
+                "payer_name": "Receipt Trace Client",
+                "amount": "120.00",
+                "method": "bank",
+                "reference": "TRACE-PAY-1",
+                "notes": "Partial payment",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(payment_response.status_code, 302)
+        receipt = PaymentReceipt.objects.select_related("voucher", "journal_entry").get(owner=user, reference="TRACE-PAY-1")
+
+        receipt_response = self.client.get(reverse("receipt_detail", args=[receipt.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(receipt_response.status_code, 200)
+        self.assertContains(receipt_response, "Download acknowledgement")
+        self.assertContains(receipt_response, invoice.client_name)
+        self.assertContains(receipt_response, receipt.voucher.voucher_number)
+
+        voucher_response = self.client.get(reverse("voucher_detail", args=[receipt.voucher.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(voucher_response.status_code, 200)
+        self.assertContains(voucher_response, "Debit and credit lines")
+        self.assertContains(voucher_response, "TRACE-PAY-1")
+        self.assertContains(voucher_response, "Receipt")
+
+        journal_response = self.client.get(reverse("journal_detail", args=[receipt.journal_entry.id]), HTTP_HOST="rozledger.com")
+        self.assertEqual(journal_response.status_code, 200)
+        self.assertContains(journal_response, "Journal entry")
+        self.assertContains(journal_response, "Balanced")
+        self.assertContains(journal_response, receipt.voucher.voucher_number)
+
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")
         self.client.force_login(user)

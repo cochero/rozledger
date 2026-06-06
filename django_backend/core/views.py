@@ -514,6 +514,76 @@ def vendor_bill_options(bills, selected_id: str = "") -> str:
     return "".join(options)
 
 
+def journal_lines_table(entry: JournalEntry | None, currency: str) -> str:
+    if not entry:
+        return '<tr><td colspan="5" class="empty-report-row">No journal entry linked.</td></tr>'
+    rows = []
+    for line in entry.lines.select_related("account").all():
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(line.account.code)}</td>
+              <td>{escape(line.account.name)}</td>
+              <td>{escape(line.description)}</td>
+              <td class="amount-cell">{escape(money(line.debit, currency)) if line.debit else '-'}</td>
+              <td class="amount-cell">{escape(money(line.credit, currency)) if line.credit else '-'}</td>
+            </tr>
+            """
+        )
+    return "".join(rows) or '<tr><td colspan="5" class="empty-report-row">No journal lines posted.</td></tr>'
+
+
+def voucher_ledger_table(voucher: Voucher | None, currency: str) -> str:
+    if not voucher:
+        return '<tr><td colspan="5" class="empty-report-row">No voucher linked.</td></tr>'
+    rows = []
+    for line in voucher.ledger_lines.select_related("account").all():
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(line.account.code)}</td>
+              <td>{escape(line.account.name)}</td>
+              <td>{escape(line.description)}</td>
+              <td class="amount-cell">{escape(money(line.debit, currency)) if line.debit else '-'}</td>
+              <td class="amount-cell">{escape(money(line.credit, currency)) if line.credit else '-'}</td>
+            </tr>
+            """
+        )
+    return "".join(rows) or '<tr><td colspan="5" class="empty-report-row">No voucher ledger lines posted.</td></tr>'
+
+
+def voucher_inventory_table(voucher: Voucher | None, currency: str) -> str:
+    if not voucher:
+        return '<tr><td colspan="6" class="empty-report-row">No voucher linked.</td></tr>'
+    rows = []
+    for line in voucher.inventory_lines.select_related("item", "godown").all():
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(line.item.name)}</td>
+              <td>{escape(line.godown.name if line.godown else 'Main')}</td>
+              <td>{escape(line.description)}</td>
+              <td class="amount-cell">{escape(format_quantity(line.quantity))}</td>
+              <td class="amount-cell">{escape(money(line.rate, currency))}</td>
+              <td class="amount-cell">{escape(money(line.amount, currency))}</td>
+            </tr>
+            """
+        )
+    return "".join(rows) or '<tr><td colspan="6" class="empty-report-row">No stock lines on this voucher.</td></tr>'
+
+
+def journal_entry_link(entry: JournalEntry | None) -> str:
+    if not entry:
+        return "Not linked"
+    return f'<a href="/dashboard/accounting/journal/{entry.id}/">{escape(entry.memo)}</a>'
+
+
+def voucher_link(voucher: Voucher | None) -> str:
+    if not voucher:
+        return "Not linked"
+    return f'<a href="/dashboard/vouchers/{voucher.id}/">{escape(voucher.voucher_number)}</a>'
+
+
 def statement_name_options(names: list[str], selected_name: str = "", placeholder: str = "Select name") -> str:
     options = [f'<option value="">{escape(placeholder)}</option>']
     for name in names:
@@ -2180,7 +2250,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     journal_entries = JournalEntry.objects.filter(account_q(request))[:10]
     accounting_totals = journal_totals_for_user(request)
     finance_summary = finance_summary_for_user(request)
-    payment_receipts = PaymentReceipt.objects.filter(account_q(request))[:8]
+    payment_receipts = PaymentReceipt.objects.filter(account_q(request)).select_related("invoice", "voucher", "journal_entry")[:8]
     vendor_bills = VendorBill.objects.filter(account_q(request))[:8]
     inventory_items = list(InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements")[:8])
     stock_snapshots = [(item, stock_quantity(item)) for item in inventory_items]
@@ -2203,6 +2273,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
               <div class="dashboard-actions">
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/download.pdf">PDF</a>
+                <a class="button ghost" href="/dashboard/invoices/{invoice.id}/accounting/">Accounting</a>
                 <a class="button ghost" href="/dashboard/ledger/customers/?customer={quote_plus(invoice.client_name)}">Statement</a>
                 <a class="button ghost" href="/dashboard/invoices/{invoice.id}/edit/">Edit</a>
                 <a class="button ghost" href="{escape(whatsapp_url(invoice.invoice_text))}" target="_blank" rel="noopener">WhatsApp</a>
@@ -2331,6 +2402,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 <h2>{escape(entry.memo)}</h2>
                 <p>Debit {escape(money(entry.total_debit, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} / Credit {escape(money(entry.total_credit, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))}</p>
               </div>
+              <div class="dashboard-actions">
+                <a class="button secondary" href="/dashboard/accounting/journal/{entry.id}/">Open journal</a>
+              </div>
             </article>
             """
         )
@@ -2357,6 +2431,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 <p>{escape(receipt_invoice)}<br />{escape(money(receipt.amount, '$' if current_market(request) == 'US' else RUPEE_SYMBOL))} via {escape(receipt.get_method_display())}</p>
               </div>
               <div class="dashboard-actions">
+                <a class="button secondary" href="/dashboard/payments/{receipt.id}/">Open receipt</a>
                 <a class="button secondary" href="/dashboard/payments/{receipt.id}/receipt.pdf">Receipt PDF</a>
               </div>
             </article>
@@ -3315,6 +3390,9 @@ def voucher_new(request: HttpRequest) -> HttpResponse:
                 <h2>{escape(voucher.voucher_number)}</h2>
                 <p>{escape(voucher.party_name or 'No party')} - {escape(money(voucher.total_amount, currency))}<br />{voucher.voucher_date:%d %b %Y}</p>
               </div>
+              <div class="dashboard-actions">
+                <a class="button secondary" href="/dashboard/vouchers/{voucher.id}/">Open voucher</a>
+              </div>
             </article>
             """
         )
@@ -4023,13 +4101,22 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
         f"""
         <tr>
           <td>{payment.payment_date:%d %b %Y}</td>
-          <td>{escape(payment.reference or (payment.voucher.voucher_number if payment.voucher else 'Payment'))}</td>
+          <td>{voucher_link(payment.voucher)}</td>
+          <td>{escape(payment.reference or 'Not provided')}</td>
           <td>{escape(payment.get_method_display())}</td>
           <td class="amount-cell">{escape(money(payment.amount, currency))}</td>
         </tr>
         """
         for payment in bill.payments.all()
-    ) or '<tr><td colspan="4" class="empty-report-row">No payments posted yet.</td></tr>'
+    ) or '<tr><td colspan="5" class="empty-report-row">No payments posted yet.</td></tr>'
+    source_actions = "".join(
+        part
+        for part in [
+            f'<a class="button secondary" href="/dashboard/vouchers/{bill.voucher.id}/">Bill voucher</a>' if bill.voucher else "",
+            f'<a class="button secondary" href="/dashboard/accounting/journal/{bill.journal_entry.id}/">Bill journal</a>' if bill.journal_entry else "",
+            f'<a class="button secondary" href="/dashboard/vouchers/{bill.payment_voucher.id}/">Latest payment voucher</a>' if bill.payment_voucher else "",
+        ]
+    )
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
@@ -4040,6 +4127,7 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
           <a class="button secondary" href="/dashboard/#payables">Back to payables</a>
           <a class="button primary" href="/dashboard/expenses/pay/?bill={bill.id}">Pay bill</a>
           <a class="button secondary" href="/dashboard/ledger/vendors/?vendor={quote_plus(bill.vendor_name)}">Vendor statement</a>
+          {source_actions}
         </div>
       </section>
       <section class="report-kpi-grid">
@@ -4052,7 +4140,7 @@ def vendor_bill_detail(request: HttpRequest, bill_id: int) -> HttpResponse:
         <div class="section-head"><p class="eyebrow">Payments</p><h2>Payment history</h2></div>
         <div class="report-table-wrap">
           <table class="report-table">
-            <thead><tr><th>Date</th><th>Reference</th><th>Method</th><th>Amount</th></tr></thead>
+            <thead><tr><th>Date</th><th>Voucher</th><th>Reference</th><th>Method</th><th>Amount</th></tr></thead>
             <tbody>{payment_rows}</tbody>
           </table>
         </div>
@@ -4081,6 +4169,218 @@ def vendor_bill_attachment(request: HttpRequest, bill_id: int, draft_id: int) ->
 
 @login_required
 @require_GET
+def invoice_accounting_detail(request: HttpRequest, invoice_id: int) -> HttpResponse:
+    invoice = owned_invoice(request, invoice_id)
+    currency = invoice.currency_symbol
+    voucher = invoice.sales_voucher
+    receipts = invoice.payments.select_related("voucher", "journal_entry").all()
+    receipt_rows = "".join(
+        f"""
+        <tr>
+          <td>{receipt.payment_date:%d %b %Y}</td>
+          <td><a href="/dashboard/payments/{receipt.id}/">{escape(receipt.reference or receipt.payer_name)}</a></td>
+          <td>{escape(receipt.get_method_display())}</td>
+          <td>{voucher_link(receipt.voucher)}</td>
+          <td>{journal_entry_link(receipt.journal_entry)}</td>
+          <td class="amount-cell">{escape(money(receipt.amount, currency))}</td>
+        </tr>
+        """
+        for receipt in receipts
+    ) or '<tr><td colspan="6" class="empty-report-row">No receipts posted against this invoice yet.</td></tr>'
+    correction_note = (
+        "This invoice has posted accounting entries. Use receipts, credit notes or a correcting invoice for changes that affect money."
+        if voucher or receipts
+        else "This invoice has not posted accounting yet and can be edited or deleted."
+    )
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Invoice accounting</p>
+        <h1>{escape(invoice_number(invoice))}</h1>
+        <p>{escape(invoice.client_name)} - total {escape(invoice_total_display(invoice))}, received {escape(money(invoice_amount_received(invoice), currency))}, outstanding {escape(money(invoice_outstanding_amount(invoice), currency))}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
+          <a class="button secondary" href="/dashboard/payments/new/?invoice={invoice.id}">Record payment</a>
+          <a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Edit invoice</a>
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Status</span><strong>{escape(invoice.get_status_display())}</strong></article>
+        <article><span>Sales voucher</span><strong>{voucher_link(voucher)}</strong></article>
+        <article><span>Sales journal</span><strong>{journal_entry_link(voucher.journal_entry if voucher else None)}</strong></article>
+        <article><span>Correction rule</span><strong>{escape('Locked' if voucher or receipts else 'Open')}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Control</p><h2>Correction safety</h2><p>{escape(correction_note)}</p></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Sales posting</p><h2>Voucher ledger lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Settlement</p><h2>Receipts against this invoice</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Receipt</th><th>Method</th><th>Voucher</th><th>Journal</th><th>Amount</th></tr></thead>
+            <tbody>{receipt_rows}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Invoice accounting", body, request)
+
+
+@login_required
+@require_GET
+def receipt_detail(request: HttpRequest, receipt_id: int) -> HttpResponse:
+    receipt = owned_receipt(request, receipt_id)
+    currency = "$" if receipt.market == "US" else RUPEE_SYMBOL
+    invoice_copy = (
+        f'<a href="/dashboard/invoices/{receipt.invoice.id}/accounting/">{escape(invoice_number(receipt.invoice))} - {escape(receipt.invoice.client_name)}</a>'
+        if receipt.invoice
+        else "Direct receipt"
+    )
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Receipt</p>
+        <h1>{escape(receipt.payer_name)}</h1>
+        <p>{escape(money(receipt.amount, currency))} received by {escape(receipt.get_method_display())} on {receipt.payment_date:%d %b %Y}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/payments/{receipt.id}/receipt.pdf">Download acknowledgement</a>
+          <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(receipt.payer_name)}">Customer ledger</a>
+          <a class="button secondary" href="/dashboard/#receipts">Back to receipts</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Invoice</span><strong>{invoice_copy}</strong></article>
+        <article><span>Voucher</span><strong>{voucher_link(receipt.voucher)}</strong></article>
+        <article><span>Journal</span><strong>{journal_entry_link(receipt.journal_entry)}</strong></article>
+        <article><span>Reference</span><strong>{escape(receipt.reference or 'Not provided')}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Accounting</p><h2>Receipt voucher ledger lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(receipt.voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Notes</p><h2>Payment note</h2><p>{escape(receipt.notes or 'No note saved.')}</p></div>
+      </section>
+    </main>
+    """
+    return page_shell("Receipt detail", body, request)
+
+
+@login_required
+@require_GET
+def voucher_detail(request: HttpRequest, voucher_id: int) -> HttpResponse:
+    voucher = owned_voucher(request, voucher_id)
+    currency = "$" if voucher.market == "US" else RUPEE_SYMBOL
+    source_links = []
+    for invoice in Invoice.objects.filter(account_q(request), sales_voucher=voucher)[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/invoices/{invoice.id}/accounting/">Invoice {escape(invoice_number(invoice))}</a>')
+    for receipt in PaymentReceipt.objects.filter(account_q(request), voucher=voucher)[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>')
+    for bill in VendorBill.objects.filter(account_q(request)).filter(Q(voucher=voucher) | Q(payment_voucher=voucher))[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>')
+    for payment in VendorBillPayment.objects.filter(account_q(request), voucher=voucher).select_related("bill")[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/expenses/{payment.bill.id}/">Vendor payment {escape(payment.reference or str(payment.id))}</a>')
+    source_html = "".join(source_links) or '<span class="form-hint">No source document linked.</span>'
+    journal_action = f'<a class="button secondary" href="/dashboard/accounting/journal/{voucher.journal_entry.id}/">Open journal</a>' if voucher.journal_entry else ""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Voucher</p>
+        <h1>{escape(voucher.voucher_number)}</h1>
+        <p>{escape(voucher.get_voucher_type_display())} for {escape(voucher.party_name or 'No party')} on {voucher.voucher_date:%d %b %Y}. Total {escape(money(voucher.total_amount, currency))}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/vouchers/new/">Post another voucher</a>
+          {journal_action}
+          <a class="button secondary" href="/dashboard/search/?type=vouchers&q={quote_plus(voucher.voucher_number)}">Search</a>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Source</p><h2>Linked records</h2><div class="dashboard-actions">{source_html}</div></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Ledger</p><h2>Debit and credit lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Inventory</p><h2>Stock lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Item</th><th>Location</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+            <tbody>{voucher_inventory_table(voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Voucher detail", body, request)
+
+
+@login_required
+@require_GET
+def journal_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
+    entry = owned_journal_entry(request, entry_id)
+    currency = "$" if entry.market == "US" else RUPEE_SYMBOL
+    voucher_links = "".join(f'<a class="button secondary" href="/dashboard/vouchers/{voucher.id}/">{escape(voucher.voucher_number)}</a>' for voucher in entry.vouchers.all())
+    receipt_links = "".join(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>' for receipt in entry.payment_receipts.all())
+    bill_links = "".join(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>' for bill in entry.vendor_bills.all())
+    source_html = voucher_links + receipt_links + bill_links or '<span class="form-hint">Manual or source record not linked.</span>'
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Journal entry</p>
+        <h1>{escape(entry.memo)}</h1>
+        <p>{entry.entry_date:%d %b %Y} - source {escape(entry.source)} - debit {escape(money(entry.total_debit, currency))} / credit {escape(money(entry.total_credit, currency))}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/accounting/journal/new/">Record journal</a>
+          <a class="button secondary" href="/dashboard/#accounting">Back to accounting</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Status</span><strong>{'Balanced' if entry.is_balanced else 'Out of balance'}</strong></article>
+        <article><span>Posted</span><strong>{'Yes' if entry.is_posted else 'No'}</strong></article>
+        <article><span>Total debit</span><strong>{escape(money(entry.total_debit, currency))}</strong></article>
+        <article><span>Total credit</span><strong>{escape(money(entry.total_credit, currency))}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Source</p><h2>Linked records</h2><div class="dashboard-actions">{source_html}</div></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Ledger</p><h2>Journal lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{journal_lines_table(entry, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Journal detail", body, request)
+
+
+@login_required
+@require_GET
 def global_search(request: HttpRequest) -> HttpResponse:
     ensure_default_chart(request)
     currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
@@ -4104,13 +4404,13 @@ def global_search(request: HttpRequest) -> HttpResponse:
         if q:
             queryset = queryset.filter(Q(payer_name__icontains=q) | Q(reference__icontains=q) | Q(notes__icontains=q) | Q(invoice__client_name__icontains=q))
         for receipt in queryset[:20]:
-            rows.append(("Receipt", receipt.reference or str(receipt.id), receipt.payer_name, money(receipt.amount, currency), f"/dashboard/payments/{receipt.id}/receipt.pdf"))
+            rows.append(("Receipt", receipt.reference or str(receipt.id), receipt.payer_name, money(receipt.amount, currency), f"/dashboard/payments/{receipt.id}/"))
     if record_type in {"all", "vouchers"}:
         queryset = Voucher.objects.filter(account_q(request))
         if q:
             queryset = queryset.filter(Q(voucher_number__icontains=q) | Q(party_name__icontains=q) | Q(narration__icontains=q))
         for voucher in queryset[:20]:
-            rows.append(("Voucher", voucher.voucher_number, voucher.party_name, money(voucher.total_amount, currency), f"/dashboard/vouchers/new/"))
+            rows.append(("Voucher", voucher.voucher_number, voucher.party_name, money(voucher.total_amount, currency), f"/dashboard/vouchers/{voucher.id}/"))
     type_options = "".join(
         f'<option value="{value}" {"selected" if record_type == value else ""}>{label}</option>'
         for value, label in [("all", "All records"), ("invoices", "Invoices"), ("bills", "Vendor bills"), ("payments", "Receipts"), ("vouchers", "Vouchers")]
@@ -4229,7 +4529,7 @@ def reconciliation(request: HttpRequest) -> HttpResponse:
             f"""
             <tr>
               <td>{line.entry.entry_date:%d %b %Y}</td>
-              <td>{escape(line.entry.memo)}</td>
+              <td><a href="/dashboard/accounting/journal/{line.entry.id}/">{escape(line.entry.memo)}</a></td>
               <td>{escape(line.description)}</td>
               <td class="amount-cell">{escape(money(line.debit, currency)) if line.debit else '-'}</td>
               <td class="amount-cell">{escape(money(line.credit, currency)) if line.credit else '-'}</td>
@@ -5043,16 +5343,34 @@ def owned_invoice(request: HttpRequest, invoice_id: int) -> Invoice:
 
 def owned_receipt(request: HttpRequest, receipt_id: int) -> PaymentReceipt:
     try:
-        return PaymentReceipt.objects.select_related("invoice", "voucher").get(Q(id=receipt_id) & account_q(request))
+        return PaymentReceipt.objects.select_related("invoice", "voucher", "journal_entry").get(Q(id=receipt_id) & account_q(request))
     except PaymentReceipt.DoesNotExist as exc:
         raise Http404("Receipt not found") from exc
 
 
 def owned_vendor_bill(request: HttpRequest, bill_id: int) -> VendorBill:
     try:
-        return VendorBill.objects.prefetch_related("payments", "upload_drafts").select_related("voucher", "payment_voucher").get(Q(id=bill_id) & account_q(request))
+        return VendorBill.objects.prefetch_related("payments__voucher", "upload_drafts").select_related("journal_entry", "voucher", "payment_voucher").get(Q(id=bill_id) & account_q(request))
     except VendorBill.DoesNotExist as exc:
         raise Http404("Vendor bill not found") from exc
+
+
+def owned_voucher(request: HttpRequest, voucher_id: int) -> Voucher:
+    try:
+        return (
+            Voucher.objects.select_related("journal_entry")
+            .prefetch_related("ledger_lines__account", "inventory_lines__item", "inventory_lines__godown")
+            .get(Q(id=voucher_id) & account_q(request))
+        )
+    except Voucher.DoesNotExist as exc:
+        raise Http404("Voucher not found") from exc
+
+
+def owned_journal_entry(request: HttpRequest, entry_id: int) -> JournalEntry:
+    try:
+        return JournalEntry.objects.prefetch_related("lines__account").get(Q(id=entry_id) & account_q(request))
+    except JournalEntry.DoesNotExist as exc:
+        raise Http404("Journal entry not found") from exc
 
 
 @login_required
@@ -5128,6 +5446,23 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         for value, label in Invoice.STATUS_CHOICES
     )
     edit_item_rows = [{"description": item.description, "quantity": item.quantity, "rate": item.rate} for item in invoice_items(invoice)]
+    delete_control = (
+        f"""
+        <div class="selected-invoice-panel">
+          <span>Correction safety</span>
+          <strong>Posted invoices cannot be deleted</strong>
+          <p>This invoice has accounting postings or receipts. Keep the audit trail and use a correcting invoice or receipt adjustment workflow.</p>
+          <a class="button secondary" href="/dashboard/invoices/{invoice.id}/accounting/">Open accounting trace</a>
+        </div>
+        """
+        if invoice.sales_voucher_id or invoice.payments.exists()
+        else f"""
+        <form method="post" action="/dashboard/invoices/{invoice.id}/delete/" class="danger-form">
+          {csrf_input(request)}
+          <button class="button ghost" type="submit">Delete invoice</button>
+        </form>
+        """
+    )
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card">
@@ -5177,10 +5512,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             <a class="button ghost" href="/dashboard/">Cancel</a>
           </div>
         </form>
-        <form method="post" action="/dashboard/invoices/{invoice.id}/delete/" class="danger-form">
-          {csrf_input(request)}
-          <button class="button ghost" type="submit">Delete invoice</button>
-        </form>
+        {delete_control}
       </section>
     </main>
     """
@@ -5205,6 +5537,25 @@ def invoice_status(request: HttpRequest, invoice_id: int) -> HttpResponse:
 @require_POST
 def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
     invoice = owned_invoice(request, invoice_id)
+    if invoice.sales_voucher_id or invoice.payments.exists():
+        audit_log(request, "invoice.delete_blocked", "Invoice", invoice.id, f"Blocked delete for posted invoice {invoice_number(invoice)}")
+        return page_shell(
+            "Invoice correction required",
+            f"""
+            <main class="account-shell">
+              <section class="account-card">
+                <p class="eyebrow">Correction safety</p>
+                <h1>Invoice cannot be deleted</h1>
+                <p class="account-copy">This invoice has posted accounting entries or receipts. RozLedger keeps the audit trail intact. Use a correcting invoice or contact support before changing posted financial history.</p>
+                <div class="dashboard-actions">
+                  <a class="button primary" href="/dashboard/invoices/{invoice.id}/accounting/">Open accounting trace</a>
+                  <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+                </div>
+              </section>
+            </main>
+            """,
+            request,
+        )
     audit_log(request, "invoice.deleted", "Invoice", invoice.id, f"Deleted invoice for {invoice.client_name}")
     invoice.delete()
     return redirect("/dashboard/")
