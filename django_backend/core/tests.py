@@ -967,7 +967,9 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(expense.status_code, 200)
         bill = VendorBill.objects.get(owner=user, vendor_name="Airtel")
         self.assertEqual(bill.amount, Decimal("1800.00"))
-        self.assertEqual(bill.journal_entry.source, "ai_expense_paid")
+        self.assertIsNotNone(bill.voucher)
+        self.assertEqual(bill.voucher.voucher_type, "expense")
+        self.assertEqual(bill.journal_entry.source, "voucher_expense")
 
         invoice = Invoice.objects.create(
             owner=user,
@@ -997,6 +999,9 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(payment.status_code, 200)
         receipt = PaymentReceipt.objects.get(owner=user, invoice=invoice)
         self.assertEqual(receipt.amount, Decimal("5000.00"))
+        self.assertIsNotNone(receipt.voucher)
+        self.assertEqual(receipt.voucher.voucher_type, "receipt")
+        self.assertTrue(receipt.journal_entry.lines.filter(account__code="1100", credit=Decimal("5000.00")).exists())
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "paid")
 
@@ -1179,13 +1184,16 @@ class AccountWorkflowTests(TestCase):
         receipt = PaymentReceipt.objects.get(owner=user, market="US")
         self.assertEqual(receipt.amount, Decimal("100.00"))
         self.assertEqual(receipt.invoice_id, invoice.id)
+        self.assertIsNotNone(receipt.voucher)
+        self.assertEqual(receipt.voucher.voucher_type, "receipt")
+        self.assertEqual(receipt.voucher.journal_entry_id, receipt.journal_entry_id)
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "paid")
         entry = receipt.journal_entry
-        self.assertEqual(entry.source, "payment_received")
+        self.assertEqual(entry.source, "voucher_receipt")
         self.assertEqual(entry.total_debit, entry.total_credit)
         self.assertTrue(entry.lines.filter(account__code="1010", debit=Decimal("100.00")).exists())
-        self.assertTrue(entry.lines.filter(account__code="4000", credit=Decimal("100.00")).exists())
+        self.assertTrue(entry.lines.filter(account__code="1100", credit=Decimal("100.00")).exists())
         dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
         self.assertContains(dashboard_response, invoice_ref)
         self.assertContains(dashboard_response, "Direct receipt", count=0)
@@ -1217,8 +1225,11 @@ class AccountWorkflowTests(TestCase):
         bill = VendorBill.objects.get(owner=user, market="IN")
         self.assertEqual(bill.status, "unpaid")
         self.assertEqual(bill.amount, Decimal("750.00"))
+        self.assertIsNotNone(bill.voucher)
+        self.assertEqual(bill.voucher.voucher_type, "expense")
+        self.assertIsNone(bill.payment_voucher)
         entry = bill.journal_entry
-        self.assertEqual(entry.source, "vendor_bill")
+        self.assertEqual(entry.source, "voucher_expense")
         self.assertEqual(entry.total_debit, entry.total_credit)
         self.assertTrue(entry.lines.filter(account__code="5100", debit=Decimal("750.00")).exists())
         self.assertTrue(entry.lines.filter(account__code="2000", credit=Decimal("750.00")).exists())
@@ -1294,10 +1305,64 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(posted.status_code, 302)
         bill = VendorBill.objects.get(owner=user, vendor_name="Airtel")
         self.assertEqual(bill.amount, Decimal("1800.00"))
-        self.assertEqual(bill.journal_entry.source, "upload_expense_paid")
+        self.assertIsNotNone(bill.voucher)
+        self.assertEqual(bill.voucher.voucher_type, "expense")
+        self.assertEqual(bill.journal_entry.source, "voucher_expense")
         draft.refresh_from_db()
         self.assertEqual(draft.status, "posted")
         self.assertEqual(draft.vendor_bill, bill)
+
+    def test_customer_can_pay_selected_vendor_bill_with_payment_voucher(self):
+        user = User.objects.create_user("pay-bill@example.com", "pay-bill@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-01",
+                "due_date": "2026-06-08",
+                "vendor_name": "Courier Vendor",
+                "category": "Courier",
+                "expense_account": str(expense.id),
+                "amount": "1200.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "BILL-PAY-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        bill = VendorBill.objects.get(owner=user, vendor_name="Courier Vendor")
+
+        form = self.client.get(f"{reverse('vendor_bill_payment')}?bill={bill.id}", HTTP_HOST="rozledger.in")
+        self.assertEqual(form.status_code, 200)
+        self.assertContains(form, "Courier Vendor")
+        self.assertContains(form, 'value="1200.00"')
+
+        response = self.client.post(
+            reverse("vendor_bill_payment"),
+            {
+                "bill_id": str(bill.id),
+                "payment_date": "2026-06-05",
+                "amount": "1200.00",
+                "method": "bank",
+                "reference": "BANK-PAY-1",
+                "notes": "Paid from bank",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        bill.refresh_from_db()
+        self.assertEqual(bill.status, "paid")
+        self.assertEqual(bill.payment_reference, "BANK-PAY-1")
+        self.assertEqual(bill.paid_date.strftime("%Y-%m-%d"), "2026-06-05")
+        self.assertIsNotNone(bill.payment_voucher)
+        self.assertEqual(bill.payment_voucher.voucher_type, "payment")
+        entry = bill.payment_voucher.journal_entry
+        self.assertEqual(entry.source, "voucher_payment")
+        self.assertTrue(entry.lines.filter(account__code="2000", debit=Decimal("1200.00")).exists())
+        self.assertTrue(entry.lines.filter(account__code="1010", credit=Decimal("1200.00")).exists())
 
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")

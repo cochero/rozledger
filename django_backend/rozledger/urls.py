@@ -42,6 +42,7 @@ urlpatterns = [
     path("dashboard/reports/", views.reports, name="reports"),
     path("dashboard/payments/new/", views.payment_new, name="payment_new"),
     path("dashboard/expenses/new/", views.expense_new, name="expense_new"),
+    path("dashboard/expenses/pay/", views.vendor_bill_payment, name="vendor_bill_payment"),
     path("dashboard/expenses/upload/", views.expense_upload, name="expense_upload"),
     path("dashboard/expenses/upload/<str:token>/", views.expense_upload, name="expense_upload_review"),
     path("dashboard/invoices/new/", views.invoice_new, name="invoice_new"),

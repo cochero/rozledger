@@ -213,18 +213,18 @@ class JournalEntryAdmin(admin.ModelAdmin):
 
 @admin.register(PaymentReceipt)
 class PaymentReceiptAdmin(admin.ModelAdmin):
-    list_display = ("market", "owner_email", "payment_date", "payer_name", "amount", "method", "invoice", "created_at")
-    search_fields = ("owner__username", "owner__email", "owner_email", "payer_name", "reference", "notes", "invoice__client_name")
+    list_display = ("market", "owner_email", "payment_date", "payer_name", "amount", "method", "invoice", "voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "payer_name", "reference", "notes", "invoice__client_name", "voucher__voucher_number")
     list_filter = ("market", "method", "payment_date", "created_at")
-    readonly_fields = ("journal_entry", "created_at")
+    readonly_fields = ("journal_entry", "voucher", "created_at")
 
 
 @admin.register(VendorBill)
 class VendorBillAdmin(admin.ModelAdmin):
-    list_display = ("market", "owner_email", "bill_date", "vendor_name", "category", "amount", "status", "due_date", "created_at")
-    search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "notes")
-    list_filter = ("market", "status", "bill_date", "due_date", "created_at")
-    readonly_fields = ("journal_entry", "created_at")
+    list_display = ("market", "owner_email", "bill_date", "vendor_name", "category", "amount", "status", "due_date", "paid_date", "voucher", "payment_voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "payment_reference", "notes", "voucher__voucher_number", "payment_voucher__voucher_number")
+    list_filter = ("market", "status", "bill_date", "due_date", "paid_date", "created_at")
+    readonly_fields = ("journal_entry", "voucher", "payment_voucher", "created_at")
 
 
 @admin.register(ExpenseUploadDraft)
