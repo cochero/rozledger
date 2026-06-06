@@ -1618,6 +1618,96 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(VendorBillPayment.objects.filter(bill=bill).count(), 2)
         self.assertEqual(sum((payment.amount for payment in bill.payments.all()), Decimal("0")), Decimal("900.00"))
 
+    def test_customer_ledger_statement_shows_invoices_receipts_and_balance(self):
+        user = User.objects.create_user("customer-ledger@example.com", "customer-ledger@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        invoice = Invoice.objects.create(
+            owner=user,
+            owner_email=user.email,
+            market="US",
+            business_name="Ledger Business",
+            client_name="Ledger Client",
+            service_name="Monthly support",
+            include_gst=False,
+            amount_before_gst=Decimal("300.00"),
+            gst_rate=Decimal("0"),
+            tax_label="Sales tax",
+            currency_symbol="$",
+            total_text="$ 300.00",
+            upi_link="",
+            invoice_text="Invoice text",
+        )
+        self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Ledger Client",
+                "amount": "125.00",
+                "method": "bank",
+                "reference": "PARTIAL-1",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        response = self.client.get(f"{reverse('customer_ledger')}?customer=Ledger%20Client", HTTP_HOST="rozledger.com")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Customer statement")
+        self.assertContains(response, "Ledger Client")
+        self.assertContains(response, f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}")
+        self.assertContains(response, "$ 300.00")
+        self.assertContains(response, "$ 125.00")
+        self.assertContains(response, "$ 175.00")
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.assertContains(dashboard_response, "/dashboard/ledger/customers/?customer=Ledger+Client")
+
+    def test_vendor_ledger_statement_shows_bills_payments_and_balance(self):
+        user = User.objects.create_user("vendor-ledger@example.com", "vendor-ledger@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-01",
+                "due_date": "2026-06-08",
+                "vendor_name": "Ledger Vendor",
+                "category": "Supplies",
+                "expense_account": str(expense.id),
+                "amount": "900.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "LV-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        bill = VendorBill.objects.get(owner=user, vendor_name="Ledger Vendor")
+        self.client.post(
+            reverse("vendor_bill_payment"),
+            {
+                "bill_id": str(bill.id),
+                "payment_date": "2026-06-05",
+                "amount": "400.00",
+                "method": "bank",
+                "reference": "VPART-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        response = self.client.get(f"{reverse('vendor_ledger')}?vendor=Ledger%20Vendor", HTTP_HOST="rozledger.in")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Vendor statement")
+        self.assertContains(response, "Ledger Vendor")
+        self.assertContains(response, "LV-1")
+        self.assertContains(response, "900.00")
+        self.assertContains(response, "400.00")
+        self.assertContains(response, "500.00")
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        self.assertContains(dashboard_response, "/dashboard/ledger/vendors/?vendor=Ledger+Vendor")
+
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")
         self.client.force_login(user)

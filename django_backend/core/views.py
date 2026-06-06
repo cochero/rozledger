@@ -514,6 +514,13 @@ def vendor_bill_options(bills, selected_id: str = "") -> str:
     return "".join(options)
 
 
+def statement_name_options(names: list[str], selected_name: str = "", placeholder: str = "Select name") -> str:
+    options = [f'<option value="">{escape(placeholder)}</option>']
+    for name in names:
+        options.append(f'<option value="{escape(name)}" {"selected" if selected_name == name else ""}>{escape(name)}</option>')
+    return "".join(options)
+
+
 def client_name_options(clients, selected_name: str = "") -> str:
     options = ['<option value="">Select customer</option>']
     seen = set()
@@ -523,6 +530,121 @@ def client_name_options(clients, selected_name: str = "") -> str:
         seen.add(client.name)
         options.append(f'<option value="{escape(client.name)}" {"selected" if selected_name == client.name else ""}>{escape(client.name)}</option>')
     return "".join(options)
+
+
+def customer_statement_names(request: HttpRequest) -> list[str]:
+    names = set(Client.objects.filter(account_q(request)).values_list("name", flat=True))
+    names.update(Invoice.objects.filter(account_q(request)).values_list("client_name", flat=True))
+    names.update(PaymentReceipt.objects.filter(account_q(request), invoice__isnull=True).values_list("payer_name", flat=True))
+    return sorted(name for name in names if name)
+
+
+def vendor_statement_names(request: HttpRequest) -> list[str]:
+    names = set(VendorBill.objects.filter(account_q(request)).values_list("vendor_name", flat=True))
+    names.update(VendorBillPayment.objects.filter(account_q(request)).values_list("vendor_name", flat=True))
+    return sorted(name for name in names if name)
+
+
+def customer_statement_entries(request: HttpRequest, customer_name: str) -> tuple[list[dict[str, Any]], Decimal, Decimal, Decimal]:
+    invoices = list(Invoice.objects.filter(account_q(request), client_name__iexact=customer_name).prefetch_related("payments", "line_items").order_by("created_at", "id"))
+    invoice_ids = [invoice.id for invoice in invoices]
+    receipts = list(
+        PaymentReceipt.objects.filter(account_q(request))
+        .filter(Q(invoice_id__in=invoice_ids) | Q(invoice__isnull=True, payer_name__iexact=customer_name))
+        .select_related("invoice", "voucher")
+        .order_by("payment_date", "created_at", "id")
+    )
+    events: list[dict[str, Any]] = []
+    for invoice in invoices:
+        amount = invoice_total_amount(invoice)
+        events.append(
+            {
+                "date": timezone.localtime(invoice.created_at).date(),
+                "sort": invoice.created_at,
+                "kind": "Invoice",
+                "reference": invoice_number(invoice),
+                "description": invoice.service_name,
+                "debit": amount,
+                "credit": Decimal("0"),
+                "link": f"/invoice/{invoice.public_token}/",
+            }
+        )
+    for receipt in receipts:
+        reference = receipt.voucher.voucher_number if receipt.voucher else receipt.reference
+        events.append(
+            {
+                "date": receipt.payment_date,
+                "sort": receipt.created_at,
+                "kind": "Receipt",
+                "reference": reference or "Receipt",
+                "description": receipt.invoice and invoice_number(receipt.invoice) or receipt.reference or receipt.notes,
+                "debit": Decimal("0"),
+                "credit": receipt.amount,
+                "link": f"/dashboard/payments/new/?invoice={receipt.invoice_id}" if receipt.invoice_id else "",
+            }
+        )
+    events.sort(key=lambda event: (event["date"], event["sort"], event["kind"]))
+    balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    rows = []
+    for event in events:
+        total_debit += event["debit"]
+        total_credit += event["credit"]
+        balance = (balance + event["debit"] - event["credit"]).quantize(Decimal("0.01"))
+        event["balance"] = balance
+        rows.append(event)
+    return rows, total_debit.quantize(Decimal("0.01")), total_credit.quantize(Decimal("0.01")), max(balance, Decimal("0")).quantize(Decimal("0.01"))
+
+
+def vendor_statement_entries(request: HttpRequest, vendor_name: str) -> tuple[list[dict[str, Any]], Decimal, Decimal, Decimal]:
+    bills = list(VendorBill.objects.filter(account_q(request), vendor_name__iexact=vendor_name).prefetch_related("payments").order_by("bill_date", "id"))
+    bill_ids = [bill.id for bill in bills]
+    payments = list(
+        VendorBillPayment.objects.filter(account_q(request))
+        .filter(Q(bill_id__in=bill_ids) | Q(vendor_name__iexact=vendor_name))
+        .select_related("bill", "voucher")
+        .order_by("payment_date", "created_at", "id")
+    )
+    events: list[dict[str, Any]] = []
+    for bill in bills:
+        events.append(
+            {
+                "date": bill.bill_date,
+                "sort": bill.created_at,
+                "kind": "Bill",
+                "reference": bill.reference or (bill.voucher.voucher_number if bill.voucher else "Bill"),
+                "description": bill.category,
+                "debit": Decimal("0"),
+                "credit": bill.amount,
+                "link": f"/dashboard/expenses/pay/?bill={bill.id}" if vendor_bill_outstanding_amount(bill) > 0 else "",
+            }
+        )
+    for payment in payments:
+        events.append(
+            {
+                "date": payment.payment_date,
+                "sort": payment.created_at,
+                "kind": "Payment",
+                "reference": payment.voucher.voucher_number if payment.voucher else payment.reference or "Payment",
+                "description": payment.bill.reference if payment.bill and payment.bill.reference else payment.reference or payment.notes,
+                "debit": payment.amount,
+                "credit": Decimal("0"),
+                "link": f"/dashboard/expenses/pay/?bill={payment.bill_id}",
+            }
+        )
+    events.sort(key=lambda event: (event["date"], event["sort"], event["kind"]))
+    balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    rows = []
+    for event in events:
+        total_debit += event["debit"]
+        total_credit += event["credit"]
+        balance = (balance + event["credit"] - event["debit"]).quantize(Decimal("0.01"))
+        event["balance"] = balance
+        rows.append(event)
+    return rows, total_credit.quantize(Decimal("0.01")), total_debit.quantize(Decimal("0.01")), max(balance, Decimal("0")).quantize(Decimal("0.01"))
 
 
 def journal_totals_for_user(request: HttpRequest) -> dict[str, Decimal]:
@@ -1588,6 +1710,8 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/vouchers/new/", "V", "Vouchers"),
         ("/dashboard/inventory/", "N", "Inventory"),
         ("/dashboard/reports/", "P", "Reports"),
+        ("/dashboard/ledger/customers/", "CL", "Customer ledger"),
+        ("/dashboard/ledger/vendors/", "VL", "Vendor ledger"),
         ("/dashboard/setup/", "T", "Business setup"),
         ("/dashboard/business-profile/", "S", "Business profile"),
         ("/dashboard/#invoices", "C", "Customers"),
@@ -2076,6 +2200,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
               <div class="dashboard-actions">
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/download.pdf">PDF</a>
+                <a class="button ghost" href="/dashboard/ledger/customers/?customer={quote_plus(invoice.client_name)}">Statement</a>
                 <a class="button ghost" href="/dashboard/invoices/{invoice.id}/edit/">Edit</a>
                 <a class="button ghost" href="{escape(whatsapp_url(invoice.invoice_text))}" target="_blank" rel="noopener">WhatsApp</a>
                 {payment_action}
@@ -2156,14 +2281,17 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         client_rows.append(
             f"""
             <article class="dashboard-card compact-card">
-              <div>
-                <span>Client</span>
-                <h2>{escape(client.name)}</h2>
-                <p>{escape(details or 'No contact details saved yet')}</p>
-                {f'<p>{escape(client.address).replace(chr(10), "<br />")}</p>' if client.address else ''}
-              </div>
-            </article>
-            """
+          <div>
+            <span>Client</span>
+            <h2>{escape(client.name)}</h2>
+            <p>{escape(details or 'No contact details saved yet')}</p>
+            {f'<p>{escape(client.address).replace(chr(10), "<br />")}</p>' if client.address else ''}
+          </div>
+          <div class="dashboard-actions">
+            <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(client.name)}">Statement</a>
+          </div>
+        </article>
+        """
         )
     if not client_rows:
         client_rows.append(
@@ -2257,7 +2385,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 {f'<p>Voucher: {escape(voucher_ref)}</p>' if voucher_ref else ''}
                 {f'<p>Paid by: {escape(payment_ref)}</p>' if payment_ref else ''}
               </div>
-              {f'<div class="dashboard-actions">{bill_action}</div>' if bill_action else ''}
+              <div class="dashboard-actions">
+                <a class="button secondary" href="/dashboard/ledger/vendors/?vendor={quote_plus(bill.vendor_name)}">Statement</a>
+                {bill_action}
+              </div>
             </article>
             """
         )
@@ -2324,6 +2455,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         <a class="module-tile" href="/dashboard/inventory/"><span>06</span><strong>Inventory</strong><p>Manage products, services, raw materials, stock inward and stock outward.</p></a>
         <a class="module-tile" href="/dashboard/setup/"><span>07</span><strong>Business setup</strong><p>Choose your business type and apply required accounting defaults.</p></a>
         <a class="module-tile" href="/dashboard/reports/"><span>08</span><strong>View reports</strong><p>Check profit, receivables, payables and cash position.</p></a>
+        <a class="module-tile" href="/dashboard/ledger/customers/"><span>09</span><strong>Customer ledger</strong><p>View invoices, receipts, partial payments and customer balances.</p></a>
+        <a class="module-tile" href="/dashboard/ledger/vendors/"><span>10</span><strong>Vendor ledger</strong><p>View bills, payments, partial payments and vendor balances.</p></a>
       </section>
       <section class="dashboard-summary" aria-label="Account summary">
         <div><span>Pending invoices</span><strong>{pending_count}</strong></div>
@@ -3616,6 +3749,175 @@ def reports(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Financial reports", body, request)
+
+
+def statement_table_rows(rows: list[dict[str, Any]], currency: str, *, debit_label: str, credit_label: str) -> str:
+    if not rows:
+        return '<tr><td colspan="6" class="empty-report-row">No statement entries yet.</td></tr>'
+    html_rows = []
+    for row in rows:
+        reference = escape(row["reference"] or row["kind"])
+        if row.get("link"):
+            reference = f'<a href="{escape(row["link"])}">{reference}</a>'
+        html_rows.append(
+            f"""
+            <tr>
+              <td>{row['date']:%d %b %Y}</td>
+              <td><strong>{escape(row['kind'])}</strong><span>{escape(row['description'] or '')}</span></td>
+              <td>{reference}</td>
+              <td class="amount-cell">{escape(money(row['debit'], currency)) if row['debit'] else '-'}</td>
+              <td class="amount-cell">{escape(money(row['credit'], currency)) if row['credit'] else '-'}</td>
+              <td class="amount-cell">{escape(money(row['balance'], currency))}</td>
+            </tr>
+            """
+        )
+    return "".join(html_rows)
+
+
+@login_required
+@require_GET
+def customer_ledger(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    names = customer_statement_names(request)
+    selected = clean_text(request.GET.get("customer"), max_length=180)
+    if selected and selected.lower() not in {name.lower() for name in names}:
+        selected = ""
+    if not selected and names:
+        selected = names[0]
+    rows, invoiced, received, balance = customer_statement_entries(request, selected) if selected else ([], Decimal("0"), Decimal("0"), Decimal("0"))
+    customer_cards = "".join(
+        f"""
+        <article class="dashboard-card compact-card">
+          <div>
+            <span>Customer</span>
+            <h2>{escape(name)}</h2>
+          </div>
+          <div class="dashboard-actions">
+            <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(name)}">View statement</a>
+          </div>
+        </article>
+        """
+        for name in names[:12]
+    )
+    if not customer_cards:
+        customer_cards = '<article class="dashboard-card empty-state compact-card"><span>Customer ledger</span><h2>No customers yet</h2><p>Create invoices or clients to build customer statements.</p></article>'
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Customer ledger</p>
+        <h1>Customer statement</h1>
+        <p>Review invoices, receipts, partial payments and current balance for each customer.</p>
+        <div class="hero-actions">
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          <a class="button primary" href="/dashboard/payments/new/">Record receipt</a>
+        </div>
+      </section>
+      <section class="dashboard-section">
+        <form method="get" class="dashboard-form invoice-server-form">
+          <label>Customer<select name="customer">{statement_name_options(names, selected, 'Select customer')}</select></label>
+          <button class="button primary" type="submit">Open statement</button>
+        </form>
+      </section>
+      <section class="report-kpi-grid" aria-label="Customer statement summary">
+        <article><span>Customer</span><strong>{escape(selected or 'None selected')}</strong></article>
+        <article><span>Invoiced</span><strong>{escape(money(invoiced, currency))}</strong></article>
+        <article><span>Received</span><strong>{escape(money(received, currency))}</strong></article>
+        <article><span>Balance due</span><strong>{escape(money(balance, currency))}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Statement</p>
+          <h2>{escape(selected or 'Select a customer')}</h2>
+          <p>Debit increases receivable. Credit records receipt from customer.</p>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Invoice</th><th>Receipt</th><th>Balance</th></tr></thead>
+            <tbody>{statement_table_rows(rows, currency, debit_label='Invoice', credit_label='Receipt')}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Customers</p><h2>Available statements</h2></div>
+        <div class="dashboard-grid">{customer_cards}</div>
+      </section>
+    </main>
+    """
+    return page_shell("Customer ledger", body, request)
+
+
+@login_required
+@require_GET
+def vendor_ledger(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    names = vendor_statement_names(request)
+    selected = clean_text(request.GET.get("vendor"), max_length=180)
+    if selected and selected.lower() not in {name.lower() for name in names}:
+        selected = ""
+    if not selected and names:
+        selected = names[0]
+    rows, billed, paid, balance = vendor_statement_entries(request, selected) if selected else ([], Decimal("0"), Decimal("0"), Decimal("0"))
+    vendor_cards = "".join(
+        f"""
+        <article class="dashboard-card compact-card">
+          <div>
+            <span>Vendor</span>
+            <h2>{escape(name)}</h2>
+          </div>
+          <div class="dashboard-actions">
+            <a class="button secondary" href="/dashboard/ledger/vendors/?vendor={quote_plus(name)}">View statement</a>
+          </div>
+        </article>
+        """
+        for name in names[:12]
+    )
+    if not vendor_cards:
+        vendor_cards = '<article class="dashboard-card empty-state compact-card"><span>Vendor ledger</span><h2>No vendors yet</h2><p>Create vendor bills to build vendor statements.</p></article>'
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Vendor ledger</p>
+        <h1>Vendor statement</h1>
+        <p>Review bills, partial payments and amount still payable for each vendor.</p>
+        <div class="hero-actions">
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+          <a class="button primary" href="/dashboard/expenses/pay/">Pay vendor bill</a>
+        </div>
+      </section>
+      <section class="dashboard-section">
+        <form method="get" class="dashboard-form invoice-server-form">
+          <label>Vendor<select name="vendor">{statement_name_options(names, selected, 'Select vendor')}</select></label>
+          <button class="button primary" type="submit">Open statement</button>
+        </form>
+      </section>
+      <section class="report-kpi-grid" aria-label="Vendor statement summary">
+        <article><span>Vendor</span><strong>{escape(selected or 'None selected')}</strong></article>
+        <article><span>Billed</span><strong>{escape(money(billed, currency))}</strong></article>
+        <article><span>Paid</span><strong>{escape(money(paid, currency))}</strong></article>
+        <article><span>Balance payable</span><strong>{escape(money(balance, currency))}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Statement</p>
+          <h2>{escape(selected or 'Select a vendor')}</h2>
+          <p>Credit increases payable. Debit records payment to vendor.</p>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Payment</th><th>Bill</th><th>Balance</th></tr></thead>
+            <tbody>{statement_table_rows(rows, currency, debit_label='Payment', credit_label='Bill')}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="dashboard-section">
+        <div class="section-head"><p class="eyebrow">Vendors</p><h2>Available statements</h2></div>
+        <div class="dashboard-grid">{vendor_cards}</div>
+      </section>
+    </main>
+    """
+    return page_shell("Vendor ledger", body, request)
 
 
 @login_required
