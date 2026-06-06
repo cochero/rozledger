@@ -29,7 +29,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -319,6 +319,7 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
         "purchase": "PUR",
         "expense": "EXP",
         "receipt": "RCT",
+        "credit_note": "CRN",
         "payment": "PAY",
         "contra": "CON",
         "journal": "JRN",
@@ -326,6 +327,11 @@ def next_voucher_number(request: HttpRequest, voucher_type: str) -> str:
     }.get(voucher_type, "VCH")
     count = Voucher.objects.filter(account_q(request), voucher_type=voucher_type).count() + 1
     return f"{prefix}-{timezone.localdate():%Y%m}-{count:05d}"
+
+
+def next_credit_note_number(request: HttpRequest) -> str:
+    count = CustomerCreditNote.objects.filter(account_q(request)).count() + 1
+    return f"CN-{timezone.localdate():%Y%m}-{count:05d}"
 
 
 def parse_form_date(value: str):
@@ -618,6 +624,12 @@ def vendor_statement_names(request: HttpRequest) -> list[str]:
 def customer_statement_entries(request: HttpRequest, customer_name: str) -> tuple[list[dict[str, Any]], Decimal, Decimal, Decimal]:
     invoices = list(Invoice.objects.filter(account_q(request), client_name__iexact=customer_name).prefetch_related("payments", "line_items").order_by("created_at", "id"))
     invoice_ids = [invoice.id for invoice in invoices]
+    credit_notes = list(
+        CustomerCreditNote.objects.filter(account_q(request))
+        .filter(Q(invoice_id__in=invoice_ids) | Q(client_name__iexact=customer_name))
+        .select_related("invoice", "voucher")
+        .order_by("credit_date", "created_at", "id")
+    )
     receipts = list(
         PaymentReceipt.objects.filter(account_q(request))
         .filter(Q(invoice_id__in=invoice_ids) | Q(invoice__isnull=True, payer_name__iexact=customer_name))
@@ -637,6 +649,19 @@ def customer_statement_entries(request: HttpRequest, customer_name: str) -> tupl
                 "debit": amount,
                 "credit": Decimal("0"),
                 "link": f"/invoice/{invoice.public_token}/",
+            }
+        )
+    for credit_note in credit_notes:
+        events.append(
+            {
+                "date": credit_note.credit_date,
+                "sort": credit_note.created_at,
+                "kind": "Credit note",
+                "reference": credit_note.credit_note_number,
+                "description": credit_note.invoice and invoice_number(credit_note.invoice) or credit_note.reason,
+                "debit": Decimal("0"),
+                "credit": credit_note.total_amount,
+                "link": f"/dashboard/credit-notes/{credit_note.id}/",
             }
         )
     for receipt in receipts:
@@ -737,21 +762,32 @@ def invoice_amount_received(invoice: Invoice) -> Decimal:
     return sum((payment.amount for payment in invoice.payments.all()), Decimal("0")).quantize(Decimal("0.01"))
 
 
+def invoice_amount_credited(invoice: Invoice) -> Decimal:
+    return sum((credit.total_amount for credit in invoice.credit_notes.all()), Decimal("0")).quantize(Decimal("0.01"))
+
+
 def invoice_outstanding_amount(invoice: Invoice) -> Decimal:
-    balance = invoice_total_amount(invoice) - invoice_amount_received(invoice)
+    balance = invoice_total_amount(invoice) - invoice_amount_received(invoice) - invoice_amount_credited(invoice)
     return max(balance, Decimal("0")).quantize(Decimal("0.01"))
 
 
 def update_invoice_payment_status(invoice: Invoice) -> None:
     received = invoice_amount_received(invoice)
+    credited = invoice_amount_credited(invoice)
     total = invoice_total_amount(invoice)
     if total <= 0:
         return
     if received >= total:
         invoice.status = "paid"
+    elif credited >= total and received <= 0:
+        invoice.status = "credited"
+    elif received + credited >= total:
+        invoice.status = "paid"
     elif received > 0:
         invoice.status = "partially_paid"
-    elif invoice.status in {"paid", "partially_paid"}:
+    elif credited > 0:
+        invoice.status = "partially_credited"
+    elif invoice.status in {"paid", "partially_paid", "partially_credited", "credited"}:
         invoice.status = "sent"
     else:
         return
@@ -1217,6 +1253,70 @@ def post_invoice_sales_voucher(request: HttpRequest, invoice: Invoice, *, replac
     invoice.sales_voucher = voucher
     invoice.save(update_fields=["sales_voucher", "updated_at"])
     return voucher
+
+
+def split_credit_note_amount(invoice: Invoice, total_amount: Decimal) -> tuple[Decimal, Decimal]:
+    total_amount = total_amount.quantize(Decimal("0.01"))
+    if not invoice.include_gst or invoice.gst_rate <= 0:
+        return total_amount, Decimal("0.00")
+    denominator = Decimal("100") + invoice.gst_rate
+    tax_amount = (total_amount * invoice.gst_rate / denominator).quantize(Decimal("0.01"))
+    taxable_amount = (total_amount - tax_amount).quantize(Decimal("0.01"))
+    return taxable_amount, tax_amount
+
+
+def post_customer_credit_note(
+    request: HttpRequest,
+    *,
+    invoice: Invoice,
+    credit_date,
+    total_amount: Decimal,
+    reason: str,
+    notes: str = "",
+) -> CustomerCreditNote:
+    total_amount = total_amount.quantize(Decimal("0.01"))
+    credit_date = credit_date or timezone.localdate()
+    outstanding = invoice_outstanding_amount(invoice)
+    if outstanding <= 0:
+        raise ValueError("This invoice has no outstanding balance to credit.")
+    if total_amount <= 0:
+        raise ValueError("Credit note amount must be greater than zero.")
+    if total_amount > outstanding:
+        raise ValueError(f"Credit note cannot exceed the outstanding balance of {invoice.currency_symbol} {outstanding}.")
+    taxable_amount, tax_amount = split_credit_note_amount(invoice, total_amount)
+    with transaction.atomic():
+        ledger_lines = []
+        if taxable_amount > 0:
+            ledger_lines.append({"account": account_by_code(request, "4000"), "description": reason or invoice_number(invoice), "debit": taxable_amount, "credit": Decimal("0")})
+        if tax_amount > 0:
+            ledger_lines.append({"account": account_by_code(request, "2100"), "description": invoice_tax_label(invoice), "debit": tax_amount, "credit": Decimal("0")})
+        ledger_lines.append({"account": account_by_code(request, "1100"), "description": invoice_number(invoice), "debit": Decimal("0"), "credit": total_amount})
+        voucher = create_voucher_with_lines(
+            request,
+            voucher_type="credit_note",
+            party_name=invoice.client_name,
+            narration=notes or reason,
+            voucher_date=credit_date,
+            ledger_lines=ledger_lines,
+        )
+        credit_note = CustomerCreditNote.objects.create(
+            market=current_market(request),
+            owner=request.user,
+            owner_email=current_account_email(request),
+            invoice=invoice,
+            voucher=voucher,
+            journal_entry=voucher.journal_entry,
+            credit_note_number=next_credit_note_number(request),
+            credit_date=credit_date,
+            client_name=invoice.client_name,
+            taxable_amount=taxable_amount,
+            tax_amount=tax_amount,
+            total_amount=total_amount,
+            reason=reason or "Invoice correction",
+            notes=notes,
+        )
+        update_invoice_payment_status(invoice)
+    return credit_note
 
 
 def post_expense_bill(
@@ -2260,15 +2360,17 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     for invoice in invoices:
         inv_number = invoice_number(invoice)
         received = invoice_amount_received(invoice)
+        credited = invoice_amount_credited(invoice)
         balance = invoice_outstanding_amount(invoice)
         payment_action = f'<a class="button ghost" href="/dashboard/payments/new/?invoice={invoice.id}">Record payment</a>' if balance > 0 else ""
+        credit_action = f'<a class="button ghost" href="/dashboard/invoices/{invoice.id}/credit-notes/new/">Credit note</a>' if balance > 0 else ""
         invoice_rows.append(
             f"""
             <article class="dashboard-card invoice-card">
               <div>
                 <div class="card-meta-row"><span>Invoice</span><strong class="status-pill status-{escape(invoice.status)}">{escape(invoice.get_status_display())}</strong></div>
                 <h2>{escape(inv_number)}</h2>
-                <p><strong>{escape(invoice.client_name)}</strong><br />{escape(invoice.service_name)}<br />Total {escape(invoice_total_display(invoice))} / Received {escape(money(received, invoice.currency_symbol))} / Balance {escape(money(balance, invoice.currency_symbol))}<br />{invoice.created_at:%d %b %Y}</p>
+                <p><strong>{escape(invoice.client_name)}</strong><br />{escape(invoice.service_name)}<br />Total {escape(invoice_total_display(invoice))} / Received {escape(money(received, invoice.currency_symbol))} / Credited {escape(money(credited, invoice.currency_symbol))} / Balance {escape(money(balance, invoice.currency_symbol))}<br />{invoice.created_at:%d %b %Y}</p>
               </div>
               <div class="dashboard-actions">
                 <a class="button secondary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
@@ -2278,6 +2380,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 <a class="button ghost" href="/dashboard/invoices/{invoice.id}/edit/">Edit</a>
                 <a class="button ghost" href="{escape(whatsapp_url(invoice.invoice_text))}" target="_blank" rel="noopener">WhatsApp</a>
                 {payment_action}
+                {credit_action}
               </div>
             </article>
             """
@@ -3892,7 +3995,7 @@ def customer_ledger(request: HttpRequest) -> HttpResponse:
       <section class="dashboard-hero reports-hero">
         <p class="eyebrow">Customer ledger</p>
         <h1>Customer statement</h1>
-        <p>Review invoices, receipts, partial payments and current balance for each customer.</p>
+        <p>Review invoices, receipts, credit notes, partial payments and current balance for each customer.</p>
         <div class="hero-actions">
           <a class="button secondary" href="/dashboard/">Back to dashboard</a>
           <a class="button primary" href="/dashboard/payments/new/">Record receipt</a>
@@ -3907,19 +4010,19 @@ def customer_ledger(request: HttpRequest) -> HttpResponse:
       <section class="report-kpi-grid" aria-label="Customer statement summary">
         <article><span>Customer</span><strong>{escape(selected or 'None selected')}</strong></article>
         <article><span>Invoiced</span><strong>{escape(money(invoiced, currency))}</strong></article>
-        <article><span>Received</span><strong>{escape(money(received, currency))}</strong></article>
+        <article><span>Receipts / credits</span><strong>{escape(money(received, currency))}</strong></article>
         <article><span>Balance due</span><strong>{escape(money(balance, currency))}</strong></article>
       </section>
       <section class="report-section">
         <div class="section-head">
           <p class="eyebrow">Statement</p>
           <h2>{escape(selected or 'Select a customer')}</h2>
-          <p>Debit increases receivable. Credit records receipt from customer.</p>
+          <p>Debit increases receivable. Credit records customer receipts and credit notes.</p>
         </div>
         <div class="report-table-wrap">
           <table class="report-table">
-            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Invoice</th><th>Receipt</th><th>Balance</th></tr></thead>
-            <tbody>{statement_table_rows(rows, currency, debit_label='Invoice', credit_label='Receipt')}</tbody>
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Invoice</th><th>Receipt / credit</th><th>Balance</th></tr></thead>
+            <tbody>{statement_table_rows(rows, currency, debit_label='Invoice', credit_label='Receipt / credit')}</tbody>
           </table>
         </div>
       </section>
@@ -4174,6 +4277,9 @@ def invoice_accounting_detail(request: HttpRequest, invoice_id: int) -> HttpResp
     currency = invoice.currency_symbol
     voucher = invoice.sales_voucher
     receipts = invoice.payments.select_related("voucher", "journal_entry").all()
+    credit_notes = invoice.credit_notes.select_related("voucher", "journal_entry").all()
+    outstanding = invoice_outstanding_amount(invoice)
+    credit_action = f'<a class="button secondary" href="/dashboard/invoices/{invoice.id}/credit-notes/new/">Issue credit note</a>' if outstanding > 0 else ""
     receipt_rows = "".join(
         f"""
         <tr>
@@ -4187,6 +4293,19 @@ def invoice_accounting_detail(request: HttpRequest, invoice_id: int) -> HttpResp
         """
         for receipt in receipts
     ) or '<tr><td colspan="6" class="empty-report-row">No receipts posted against this invoice yet.</td></tr>'
+    credit_rows = "".join(
+        f"""
+        <tr>
+          <td>{credit_note.credit_date:%d %b %Y}</td>
+          <td><a href="/dashboard/credit-notes/{credit_note.id}/">{escape(credit_note.credit_note_number)}</a></td>
+          <td>{escape(credit_note.reason)}</td>
+          <td>{voucher_link(credit_note.voucher)}</td>
+          <td>{journal_entry_link(credit_note.journal_entry)}</td>
+          <td class="amount-cell">{escape(money(credit_note.total_amount, currency))}</td>
+        </tr>
+        """
+        for credit_note in credit_notes
+    ) or '<tr><td colspan="6" class="empty-report-row">No credit notes issued against this invoice.</td></tr>'
     correction_note = (
         "This invoice has posted accounting entries. Use receipts, credit notes or a correcting invoice for changes that affect money."
         if voucher or receipts
@@ -4197,10 +4316,11 @@ def invoice_accounting_detail(request: HttpRequest, invoice_id: int) -> HttpResp
       <section class="dashboard-hero reports-hero">
         <p class="eyebrow">Invoice accounting</p>
         <h1>{escape(invoice_number(invoice))}</h1>
-        <p>{escape(invoice.client_name)} - total {escape(invoice_total_display(invoice))}, received {escape(money(invoice_amount_received(invoice), currency))}, outstanding {escape(money(invoice_outstanding_amount(invoice), currency))}.</p>
+        <p>{escape(invoice.client_name)} - total {escape(invoice_total_display(invoice))}, received {escape(money(invoice_amount_received(invoice), currency))}, credited {escape(money(invoice_amount_credited(invoice), currency))}, outstanding {escape(money(outstanding, currency))}.</p>
         <div class="hero-actions">
           <a class="button primary" href="/invoice/{escape(invoice.public_token)}/" target="_blank" rel="noopener">Open invoice</a>
           <a class="button secondary" href="/dashboard/payments/new/?invoice={invoice.id}">Record payment</a>
+          {credit_action}
           <a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Edit invoice</a>
           <a class="button secondary" href="/dashboard/">Back to dashboard</a>
         </div>
@@ -4232,9 +4352,121 @@ def invoice_accounting_detail(request: HttpRequest, invoice_id: int) -> HttpResp
           </table>
         </div>
       </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Corrections</p><h2>Credit notes against this invoice</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Credit note</th><th>Reason</th><th>Voucher</th><th>Journal</th><th>Amount</th></tr></thead>
+            <tbody>{credit_rows}</tbody>
+          </table>
+        </div>
+      </section>
     </main>
     """
     return page_shell("Invoice accounting", body, request)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def credit_note_new(request: HttpRequest, invoice_id: int) -> HttpResponse:
+    invoice = owned_invoice(request, invoice_id)
+    currency = invoice.currency_symbol
+    outstanding = invoice_outstanding_amount(invoice)
+    values = {
+        "credit_date": f"{timezone.localdate():%Y-%m-%d}",
+        "total_amount": f"{outstanding}",
+        "reason": "Invoice correction",
+        "notes": "",
+    }
+    error = ""
+    if request.method == "POST":
+        values = {key: clean_text(request.POST.get(key), max_length=240) for key in values}
+        total_amount = decimal_value(values["total_amount"])
+        if not values["reason"]:
+            error = "Reason is required."
+        else:
+            try:
+                credit_note = post_customer_credit_note(
+                    request,
+                    invoice=invoice,
+                    credit_date=parse_form_date(values["credit_date"]),
+                    total_amount=total_amount,
+                    reason=values["reason"],
+                    notes=values["notes"],
+                )
+                audit_log(request, "credit_note.created", "CustomerCreditNote", credit_note.id, f"Issued {credit_note.credit_note_number} for {invoice_number(invoice)}")
+                return redirect(f"/dashboard/credit-notes/{credit_note.id}/")
+            except ValueError as exc:
+                error = str(exc)
+    error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card finance-form-card">
+        <p class="eyebrow">Correction</p>
+        <h1>Issue customer credit note</h1>
+        <p class="account-copy">Credit notes reduce the invoice receivable without deleting accounting history. Maximum credit available for {escape(invoice_number(invoice))}: {escape(money(outstanding, currency))}.</p>
+        {error_html}
+        <div class="selected-invoice-panel">
+          <span>Selected invoice</span>
+          <strong>{escape(invoice_number(invoice))}</strong>
+          <p>{escape(invoice.client_name)} - total {escape(invoice_total_display(invoice))} / outstanding {escape(money(outstanding, currency))}</p>
+        </div>
+        <form method="post" class="account-form invoice-server-form">
+          {csrf_input(request)}
+          <label>Credit date<input name="credit_date" type="date" value="{escape(values['credit_date'])}" required /></label>
+          <label>Credit amount<input name="total_amount" type="number" min="0.01" max="{outstanding}" step="0.01" value="{escape(values['total_amount'])}" required /></label>
+          <label class="full-row">Reason<input name="reason" value="{escape(values['reason'])}" placeholder="Wrong amount, discount, cancelled work" required /></label>
+          <label class="full-row">Notes<textarea name="notes" rows="3" placeholder="Optional internal note">{escape(values['notes'])}</textarea></label>
+          <div class="dashboard-actions">
+            <button class="button primary" type="submit">Post credit note</button>
+            <a class="button secondary" href="/dashboard/invoices/{invoice.id}/accounting/">Back to invoice accounting</a>
+          </div>
+        </form>
+      </section>
+    </main>
+    """
+    return page_shell("Issue credit note", body, request)
+
+
+@login_required
+@require_GET
+def credit_note_detail(request: HttpRequest, credit_note_id: int) -> HttpResponse:
+    credit_note = owned_credit_note(request, credit_note_id)
+    currency = "$" if credit_note.market == "US" else RUPEE_SYMBOL
+    invoice = credit_note.invoice
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Credit note</p>
+        <h1>{escape(credit_note.credit_note_number)}</h1>
+        <p>{escape(money(credit_note.total_amount, currency))} credited to {escape(credit_note.client_name)} for {escape(invoice_number(invoice))}.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/invoices/{invoice.id}/accounting/">Open invoice accounting</a>
+          <a class="button secondary" href="/dashboard/ledger/customers/?customer={quote_plus(credit_note.client_name)}">Customer ledger</a>
+          <a class="button secondary" href="/dashboard/">Back to dashboard</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid">
+        <article><span>Date</span><strong>{credit_note.credit_date:%d %b %Y}</strong></article>
+        <article><span>Taxable credit</span><strong>{escape(money(credit_note.taxable_amount, currency))}</strong></article>
+        <article><span>Tax credit</span><strong>{escape(money(credit_note.tax_amount, currency))}</strong></article>
+        <article><span>Total credit</span><strong>{escape(money(credit_note.total_amount, currency))}</strong></article>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Reason</p><h2>{escape(credit_note.reason)}</h2><p>{escape(credit_note.notes or 'No additional note saved.')}</p></div>
+      </section>
+      <section class="report-section">
+        <div class="section-head"><p class="eyebrow">Accounting</p><h2>Credit note voucher ledger lines</h2></div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Code</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead>
+            <tbody>{voucher_ledger_table(credit_note.voucher, currency)}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Credit note detail", body, request)
 
 
 @login_required
@@ -4292,6 +4524,8 @@ def voucher_detail(request: HttpRequest, voucher_id: int) -> HttpResponse:
         source_links.append(f'<a class="button secondary" href="/dashboard/invoices/{invoice.id}/accounting/">Invoice {escape(invoice_number(invoice))}</a>')
     for receipt in PaymentReceipt.objects.filter(account_q(request), voucher=voucher)[:5]:
         source_links.append(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>')
+    for credit_note in CustomerCreditNote.objects.filter(account_q(request), voucher=voucher)[:5]:
+        source_links.append(f'<a class="button secondary" href="/dashboard/credit-notes/{credit_note.id}/">Credit note {escape(credit_note.credit_note_number)}</a>')
     for bill in VendorBill.objects.filter(account_q(request)).filter(Q(voucher=voucher) | Q(payment_voucher=voucher))[:5]:
         source_links.append(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>')
     for payment in VendorBillPayment.objects.filter(account_q(request), voucher=voucher).select_related("bill")[:5]:
@@ -4343,8 +4577,9 @@ def journal_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
     currency = "$" if entry.market == "US" else RUPEE_SYMBOL
     voucher_links = "".join(f'<a class="button secondary" href="/dashboard/vouchers/{voucher.id}/">{escape(voucher.voucher_number)}</a>' for voucher in entry.vouchers.all())
     receipt_links = "".join(f'<a class="button secondary" href="/dashboard/payments/{receipt.id}/">Receipt {escape(receipt.reference or str(receipt.id))}</a>' for receipt in entry.payment_receipts.all())
+    credit_note_links = "".join(f'<a class="button secondary" href="/dashboard/credit-notes/{credit_note.id}/">Credit note {escape(credit_note.credit_note_number)}</a>' for credit_note in entry.customer_credit_notes.all())
     bill_links = "".join(f'<a class="button secondary" href="/dashboard/expenses/{bill.id}/">Bill {escape(bill.reference or bill.vendor_name)}</a>' for bill in entry.vendor_bills.all())
-    source_html = voucher_links + receipt_links + bill_links or '<span class="form-hint">Manual or source record not linked.</span>'
+    source_html = voucher_links + receipt_links + credit_note_links + bill_links or '<span class="form-hint">Manual or source record not linked.</span>'
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
@@ -4405,6 +4640,12 @@ def global_search(request: HttpRequest) -> HttpResponse:
             queryset = queryset.filter(Q(payer_name__icontains=q) | Q(reference__icontains=q) | Q(notes__icontains=q) | Q(invoice__client_name__icontains=q))
         for receipt in queryset[:20]:
             rows.append(("Receipt", receipt.reference or str(receipt.id), receipt.payer_name, money(receipt.amount, currency), f"/dashboard/payments/{receipt.id}/"))
+    if record_type in {"all", "credits"}:
+        queryset = CustomerCreditNote.objects.filter(account_q(request))
+        if q:
+            queryset = queryset.filter(Q(credit_note_number__icontains=q) | Q(client_name__icontains=q) | Q(reason__icontains=q) | Q(notes__icontains=q) | Q(invoice__client_name__icontains=q))
+        for credit_note in queryset[:20]:
+            rows.append(("Credit note", credit_note.credit_note_number, credit_note.client_name, money(credit_note.total_amount, currency), f"/dashboard/credit-notes/{credit_note.id}/"))
     if record_type in {"all", "vouchers"}:
         queryset = Voucher.objects.filter(account_q(request))
         if q:
@@ -4413,7 +4654,7 @@ def global_search(request: HttpRequest) -> HttpResponse:
             rows.append(("Voucher", voucher.voucher_number, voucher.party_name, money(voucher.total_amount, currency), f"/dashboard/vouchers/{voucher.id}/"))
     type_options = "".join(
         f'<option value="{value}" {"selected" if record_type == value else ""}>{label}</option>'
-        for value, label in [("all", "All records"), ("invoices", "Invoices"), ("bills", "Vendor bills"), ("payments", "Receipts"), ("vouchers", "Vouchers")]
+        for value, label in [("all", "All records"), ("invoices", "Invoices"), ("bills", "Vendor bills"), ("payments", "Receipts"), ("credits", "Credit notes"), ("vouchers", "Vouchers")]
     )
     result_rows = "".join(
         f"""
@@ -5348,6 +5589,13 @@ def owned_receipt(request: HttpRequest, receipt_id: int) -> PaymentReceipt:
         raise Http404("Receipt not found") from exc
 
 
+def owned_credit_note(request: HttpRequest, credit_note_id: int) -> CustomerCreditNote:
+    try:
+        return CustomerCreditNote.objects.select_related("invoice", "voucher", "journal_entry").get(Q(id=credit_note_id) & account_q(request))
+    except CustomerCreditNote.DoesNotExist as exc:
+        raise Http404("Credit note not found") from exc
+
+
 def owned_vendor_bill(request: HttpRequest, bill_id: int) -> VendorBill:
     try:
         return VendorBill.objects.prefetch_related("payments__voucher", "upload_drafts").select_related("journal_entry", "voucher", "payment_voucher").get(Q(id=bill_id) & account_q(request))
@@ -5455,7 +5703,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
           <a class="button secondary" href="/dashboard/invoices/{invoice.id}/accounting/">Open accounting trace</a>
         </div>
         """
-        if invoice.sales_voucher_id or invoice.payments.exists()
+        if invoice.sales_voucher_id or invoice.payments.exists() or invoice.credit_notes.exists()
         else f"""
         <form method="post" action="/dashboard/invoices/{invoice.id}/delete/" class="danger-form">
           {csrf_input(request)}
@@ -5537,7 +5785,7 @@ def invoice_status(request: HttpRequest, invoice_id: int) -> HttpResponse:
 @require_POST
 def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
     invoice = owned_invoice(request, invoice_id)
-    if invoice.sales_voucher_id or invoice.payments.exists():
+    if invoice.sales_voucher_id or invoice.payments.exists() or invoice.credit_notes.exists():
         audit_log(request, "invoice.delete_blocked", "Invoice", invoice.id, f"Blocked delete for posted invoice {invoice_number(invoice)}")
         return page_shell(
             "Invoice correction required",

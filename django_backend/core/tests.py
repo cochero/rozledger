@@ -11,8 +11,9 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
-from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
+from .models import Account, AuditLog, BusinessProfile, Client as SavedClient, CustomerCreditNote
 from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, Voucher
+from .views import invoice_outstanding_amount
 
 
 TEST_SETTINGS = {
@@ -1857,6 +1858,101 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(journal_response, "Journal entry")
         self.assertContains(journal_response, "Balanced")
         self.assertContains(journal_response, receipt.voucher.voucher_number)
+
+    def test_customer_credit_note_posts_accounting_and_updates_invoice_balance(self):
+        user = User.objects.create_user("credit-note@example.com", "credit-note@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Credit Business",
+                "client_name": "Credit Client",
+                "item_description": ["Correctable work"],
+                "item_quantity": ["1"],
+                "item_rate": ["1000"],
+                "include_gst": "on",
+                "gst_rate": "18",
+                "due_days": "7",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        invoice = Invoice.objects.get(owner=user, client_name="Credit Client")
+
+        response = self.client.post(
+            reverse("credit_note_new", args=[invoice.id]),
+            {
+                "credit_date": "2026-06-06",
+                "total_amount": "590.00",
+                "reason": "Scope reduced",
+                "notes": "Customer approved reduction",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        credit_note = CustomerCreditNote.objects.select_related("voucher", "journal_entry").get(owner=user)
+        self.assertEqual(response["Location"], reverse("credit_note_detail", args=[credit_note.id]))
+        self.assertEqual(credit_note.credit_note_number[:3], "CN-")
+        self.assertEqual(credit_note.taxable_amount, Decimal("500.00"))
+        self.assertEqual(credit_note.tax_amount, Decimal("90.00"))
+        self.assertEqual(credit_note.total_amount, Decimal("590.00"))
+        self.assertEqual(credit_note.voucher.voucher_type, "credit_note")
+        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="4000", debit=Decimal("500.00")).exists())
+        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="2100", debit=Decimal("90.00")).exists())
+        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="1100", credit=Decimal("590.00")).exists())
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "partially_credited")
+        self.assertEqual(invoice_outstanding_amount(invoice), Decimal("590.00"))
+
+        detail_response = self.client.get(reverse("credit_note_detail", args=[credit_note.id]), HTTP_HOST="rozledger.in")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertContains(detail_response, "Credit note voucher ledger lines")
+        self.assertContains(detail_response, "Scope reduced")
+
+        accounting_response = self.client.get(reverse("invoice_accounting_detail", args=[invoice.id]), HTTP_HOST="rozledger.in")
+        self.assertContains(accounting_response, credit_note.credit_note_number)
+        self.assertContains(accounting_response, "590.00")
+
+        ledger_response = self.client.get(f"{reverse('customer_ledger')}?customer=Credit%20Client", HTTP_HOST="rozledger.in")
+        self.assertContains(ledger_response, "Credit note")
+        self.assertContains(ledger_response, credit_note.credit_note_number)
+        self.assertContains(ledger_response, "590.00")
+
+    def test_customer_credit_note_blocks_amount_above_outstanding(self):
+        user = User.objects.create_user("credit-note-block@example.com", "credit-note-block@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Credit Block Business",
+                "client_name": "Credit Block Client",
+                "item_description": ["Small job"],
+                "item_quantity": ["1"],
+                "item_rate": ["100"],
+                "gst_rate": "0",
+                "due_days": "7",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        invoice = Invoice.objects.get(owner=user, client_name="Credit Block Client")
+
+        response = self.client.post(
+            reverse("credit_note_new", args=[invoice.id]),
+            {
+                "credit_date": "2026-06-06",
+                "total_amount": "101.00",
+                "reason": "Too much credit",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Credit note cannot exceed the outstanding balance")
+        self.assertFalse(CustomerCreditNote.objects.filter(owner=user).exists())
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "sent")
 
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")

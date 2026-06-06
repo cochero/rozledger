@@ -53,7 +53,9 @@ INVOICE_STATUS_CHOICES = [
     ("draft", "Draft"),
     ("sent", "Sent"),
     ("partially_paid", "Partially paid"),
+    ("partially_credited", "Partially credited"),
     ("paid", "Paid"),
+    ("credited", "Credited"),
     ("overdue", "Overdue"),
 ]
 
@@ -128,6 +130,7 @@ VOUCHER_TYPE_CHOICES = [
     ("purchase", "Purchase"),
     ("expense", "Expense"),
     ("receipt", "Receipt"),
+    ("credit_note", "Credit note"),
     ("payment", "Payment"),
     ("contra", "Contra"),
     ("journal", "Journal"),
@@ -460,6 +463,37 @@ class PaymentReceipt(models.Model):
 
     def __str__(self) -> str:
         return f"{self.payer_name} - {self.amount}"
+
+
+class CustomerCreditNote(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="customer_credit_notes",
+    )
+    owner_email = models.EmailField(db_index=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="credit_notes")
+    voucher = models.ForeignKey("Voucher", null=True, blank=True, on_delete=models.SET_NULL, related_name="customer_credit_notes")
+    journal_entry = models.ForeignKey(JournalEntry, null=True, blank=True, on_delete=models.SET_NULL, related_name="customer_credit_notes")
+    credit_note_number = models.CharField(max_length=60)
+    credit_date = models.DateField(default=timezone.localdate)
+    client_name = models.CharField(max_length=180)
+    taxable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=240)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-credit_date", "-created_at"]
+        unique_together = ("market", "owner_email", "credit_note_number")
+
+    def __str__(self) -> str:
+        return f"{self.credit_note_number} - {self.client_name}"
 
 
 class VendorBill(models.Model):

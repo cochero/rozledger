@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -218,6 +218,14 @@ class PaymentReceiptAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "owner__email", "owner_email", "payer_name", "reference", "notes", "invoice__client_name", "voucher__voucher_number")
     list_filter = ("market", "method", "payment_date", "created_at")
     readonly_fields = ("journal_entry", "voucher", "created_at")
+
+
+@admin.register(CustomerCreditNote)
+class CustomerCreditNoteAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "credit_date", "credit_note_number", "client_name", "invoice", "total_amount", "voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "credit_note_number", "client_name", "reason", "notes", "invoice__client_name", "voucher__voucher_number")
+    list_filter = ("market", "credit_date", "created_at")
+    readonly_fields = ("voucher", "journal_entry", "created_at")
 
 
 @admin.register(VendorBill)
