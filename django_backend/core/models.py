@@ -254,6 +254,7 @@ class Invoice(models.Model):
     bank_details = models.TextField(blank=True)
     thank_you_note = models.TextField(blank=True)
     invoice_text = models.TextField()
+    sales_voucher = models.ForeignKey("Voucher", null=True, blank=True, on_delete=models.SET_NULL, related_name="sales_invoices")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

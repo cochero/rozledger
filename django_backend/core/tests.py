@@ -430,6 +430,12 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.client_address, "Client Address")
         self.assertEqual(invoice.thank_you_note, "Thanks from form.")
         self.assertIn("Form Service", invoice.invoice_text)
+        self.assertIsNotNone(invoice.sales_voucher)
+        self.assertEqual(invoice.sales_voucher.voucher_type, "sales")
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("2360.00"))
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="1100", debit=Decimal("2360.00")).exists())
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="4000", credit=Decimal("2000.00")).exists())
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="2100", credit=Decimal("360.00")).exists())
         self.assertTrue(invoice.business_logo.name)
         saved_client = SavedClient.objects.get(owner=user, owner_email="form-owner@example.com")
         self.assertEqual(saved_client.phone, "+91 90000 22222")
@@ -477,6 +483,9 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.gst_rate, 0)
         self.assertEqual(invoice.total_text, "₹ 1500.00")
         self.assertIn("GST: Not charged", invoice.invoice_text)
+        self.assertIsNotNone(invoice.sales_voucher)
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("1500.00"))
+        self.assertFalse(invoice.sales_voucher.journal_entry.lines.filter(account__code="2100").exists())
 
     def test_dashboard_invoice_form_saves_quantity_rate_line_items(self):
         user = User.objects.create_user("items@example.com", "items@example.com", "strong-password-123")
@@ -505,6 +514,8 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(InvoiceLineItem.objects.filter(invoice=invoice).count(), 2)
         self.assertIn("2 x", invoice.invoice_text)
         self.assertIn("Monthly support", invoice.invoice_text)
+        self.assertIsNotNone(invoice.sales_voucher)
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("5310.00"))
 
         print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
         self.assertContains(print_response, "Qty")
@@ -570,6 +581,9 @@ class AccountWorkflowTests(TestCase):
         self.assertIn("Payment link: https://pay.example.com/invoice-1", invoice.invoice_text)
         self.assertNotIn("GST", invoice.invoice_text)
         self.assertNotIn("UPI", invoice.invoice_text)
+        self.assertIsNotNone(invoice.sales_voucher)
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("107.25"))
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="2100", credit=Decimal("7.25")).exists())
 
         print_response = self.client.get(reverse("invoice_print", args=[invoice.public_token]), HTTP_HOST="rozledger.com")
         self.assertContains(print_response, "Sales tax")
@@ -577,6 +591,94 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(print_response, "www.rozledger.com")
         self.assertNotContains(print_response, "GSTIN")
         self.assertNotContains(print_response, "UPI")
+
+    def test_invoice_edit_replaces_sales_voucher_before_payment_and_blocks_after_receipt(self):
+        user = User.objects.create_user("edit-accounting@example.com", "edit-accounting@example.com", "strong-password-123")
+        self.client.force_login(user)
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Edit Business",
+                "client_name": "Edit Client",
+                "item_description": ["Initial service"],
+                "item_quantity": ["1"],
+                "item_rate": ["100"],
+                "gst_rate": "0",
+                "due_days": "7",
+                "thank_you_note": "Thanks.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        invoice = Invoice.objects.get(owner=user)
+        old_voucher_id = invoice.sales_voucher_id
+        old_journal_id = invoice.sales_voucher.journal_entry_id
+
+        edit_response = self.client.post(
+            reverse("invoice_edit", args=[invoice.id]),
+            {
+                "template": "classic",
+                "accent_color": "#126b4f",
+                "business_name": "Edit Business",
+                "client_name": "Edit Client",
+                "item_description": ["Updated service"],
+                "item_quantity": ["1"],
+                "item_rate": ["150"],
+                "gst_rate": "0",
+                "total_text": "",
+                "status": "sent",
+                "upi_link": "",
+                "bank_details": "",
+                "thank_you_note": "Thanks.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(edit_response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertNotEqual(invoice.sales_voucher_id, old_voucher_id)
+        self.assertFalse(Voucher.objects.filter(id=old_voucher_id).exists())
+        self.assertFalse(JournalEntry.objects.filter(id=old_journal_id).exists())
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("150.00"))
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="1100", debit=Decimal("150.00")).exists())
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="4000", credit=Decimal("150.00")).exists())
+
+        self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Edit Client",
+                "amount": "150.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        paid_voucher_id = invoice.sales_voucher_id
+        blocked = self.client.post(
+            reverse("invoice_edit", args=[invoice.id]),
+            {
+                "template": "classic",
+                "accent_color": "#126b4f",
+                "business_name": "Edit Business",
+                "client_name": "Edit Client",
+                "item_description": ["Blocked service"],
+                "item_quantity": ["1"],
+                "item_rate": ["200"],
+                "gst_rate": "0",
+                "total_text": "",
+                "status": "paid",
+                "upi_link": "",
+                "bank_details": "",
+                "thank_you_note": "Thanks.",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(blocked.status_code, 200)
+        self.assertContains(blocked, "already has receipt postings")
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.sales_voucher_id, paid_voucher_id)
+        self.assertEqual(invoice.sales_voucher.total_amount, Decimal("150.00"))
 
     def test_invoice_owner_isolation_returns_404_for_other_customer(self):
         owner = User.objects.create_user("owner@example.com", "owner@example.com", "password-123456")
@@ -943,6 +1045,8 @@ class AccountWorkflowTests(TestCase):
         saved = Invoice.objects.get(owner=user, client_name="ABC Travels")
         self.assertEqual(saved.amount_before_gst, Decimal("75000.00"))
         self.assertEqual(saved.line_items.count(), 1)
+        self.assertIsNotNone(saved.sales_voucher)
+        self.assertEqual(saved.sales_voucher.total_amount, Decimal("88500.00"))
         self.assertContains(invoice, "created for ABC Travels")
 
     def test_ai_assistant_records_expense_and_matches_payment(self):

@@ -920,6 +920,55 @@ def post_customer_receipt(
     return receipt
 
 
+def invoice_accounting_amounts(invoice: Invoice) -> dict[str, Decimal]:
+    subtotal = invoice_subtotal(invoice).quantize(Decimal("0.01"))
+    tax = (subtotal * invoice.gst_rate / Decimal("100") if invoice.include_gst else Decimal("0")).quantize(Decimal("0.01"))
+    total = (subtotal + tax).quantize(Decimal("0.01"))
+    return {"subtotal": subtotal, "tax": tax, "total": total}
+
+
+def delete_invoice_sales_voucher(invoice: Invoice) -> None:
+    voucher = invoice.sales_voucher
+    if not voucher:
+        return
+    journal = voucher.journal_entry
+    invoice.sales_voucher = None
+    invoice.save(update_fields=["sales_voucher", "updated_at"])
+    voucher.delete()
+    if journal and not journal.vouchers.exists() and not journal.payment_receipts.exists() and not journal.vendor_bills.exists():
+        journal.delete()
+
+
+def post_invoice_sales_voucher(request: HttpRequest, invoice: Invoice, *, replace: bool = False) -> Voucher | None:
+    if not request.user.is_authenticated or invoice.owner_id is None:
+        return None
+    ensure_default_chart(request)
+    if invoice.sales_voucher_id and not replace:
+        return invoice.sales_voucher
+    if replace:
+        delete_invoice_sales_voucher(invoice)
+    amounts = invoice_accounting_amounts(invoice)
+    if amounts["total"] <= 0:
+        return None
+    ledger_lines = [
+        {"account": account_by_code(request, "1100"), "description": invoice_number(invoice), "debit": amounts["total"], "credit": Decimal("0")},
+        {"account": account_by_code(request, "4000"), "description": invoice.service_name or "Invoice income", "debit": Decimal("0"), "credit": amounts["subtotal"]},
+    ]
+    if amounts["tax"] > 0:
+        ledger_lines.append({"account": account_by_code(request, "2100"), "description": invoice_tax_label(invoice), "debit": Decimal("0"), "credit": amounts["tax"]})
+    voucher = create_voucher_with_lines(
+        request,
+        voucher_type="sales",
+        party_name=invoice.client_name,
+        narration=f"Sales invoice {invoice_number(invoice)}",
+        voucher_date=timezone.localdate(),
+        ledger_lines=ledger_lines,
+    )
+    invoice.sales_voucher = voucher
+    invoice.save(update_fields=["sales_voucher", "updated_at"])
+    return voucher
+
+
 def post_expense_bill(
     request: HttpRequest,
     *,
@@ -2426,6 +2475,7 @@ def ai_assistant(request: HttpRequest) -> HttpResponse:
                 save_invoice_line_items(invoice, [{"description": parsed["description"], "quantity": parsed["quantity"], "rate": parsed["rate"]}])
                 invoice.invoice_text = build_invoice_text(invoice)
                 invoice.save(update_fields=["invoice_text", "updated_at"])
+                post_invoice_sales_voucher(request, invoice)
                 save_client_from_invoice(invoice, request.user)
                 audit_log(request, "ai.invoice_created", "Invoice", invoice.id, f"AI created invoice for {invoice.client_name}")
                 message = f"Invoice {invoice_number(invoice)} created for {invoice.client_name}."
@@ -4033,6 +4083,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                 save_invoice_line_items(invoice, item_rows)
                 invoice.invoice_text = build_invoice_text(invoice)
                 invoice.save(update_fields=["business_logo", "invoice_text", "updated_at"])
+                post_invoice_sales_voucher(request, invoice)
                 save_business_profile_from_invoice(invoice, request.user)
                 save_client_from_invoice(invoice, request.user)
                 audit_log(request, "invoice.created", "Invoice", invoice.id, f"Created invoice for {invoice.client_name} amount {invoice.total_text}")
@@ -4245,6 +4296,7 @@ def owned_invoice(request: HttpRequest, invoice_id: int) -> Invoice:
 @require_http_methods(["GET", "POST"])
 def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
     invoice = owned_invoice(request, invoice_id)
+    old_amounts = invoice_accounting_amounts(invoice)
     us_invoice = invoice_is_us(invoice)
     tax_id_label = "Client tax ID" if us_invoice else "Client GSTIN"
     amount_label = "Amount before tax" if us_invoice else "Amount before GST"
@@ -4258,10 +4310,19 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         amount_before_gst = invoice_items_subtotal(item_rows)
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(request.POST.get("gst_rate")) if include_gst else Decimal("0")
+        new_tax = (amount_before_gst * gst_rate / Decimal("100") if include_gst else Decimal("0")).quantize(Decimal("0.01"))
+        new_amounts = {"subtotal": amount_before_gst, "tax": new_tax, "total": (amount_before_gst + new_tax).quantize(Decimal("0.01"))}
+        financial_amount_changed = any(old_amounts[key] != new_amounts[key] for key in old_amounts)
         logo_upload = request.FILES.get("business_logo")
         logo_error = valid_logo_upload(logo_upload)
         if logo_error:
             return page_shell("Edit invoice", f'<main class="account-shell"><section class="account-card"><p class="form-error">{escape(logo_error)}</p><a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Back to edit invoice</a></section></main>', request)
+        if financial_amount_changed and invoice.payments.exists():
+            return page_shell(
+                "Edit invoice",
+                f'<main class="account-shell"><section class="account-card"><p class="form-error">This invoice already has receipt postings. Create a correction invoice or contact support before changing amount or tax.</p><a class="button secondary" href="/dashboard/invoices/{invoice.id}/edit/">Back to edit invoice</a></section></main>',
+                request,
+            )
         if amount_before_gst > 0:
             invoice.template = clean_invoice_template(request.POST.get("template"))
             invoice.accent_color = clean_accent_color(request.POST.get("accent_color"))
@@ -4292,6 +4353,8 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             save_invoice_line_items(invoice, item_rows)
             invoice.invoice_text = build_invoice_text(invoice)
             invoice.save(update_fields=["invoice_text", "updated_at"])
+            if financial_amount_changed or not invoice.sales_voucher_id:
+                post_invoice_sales_voucher(request, invoice, replace=bool(invoice.sales_voucher_id))
             save_business_profile_from_invoice(invoice, request.user)
             save_client_from_invoice(invoice, request.user)
             audit_log(request, "invoice.updated", "Invoice", invoice.id, f"Updated invoice for {invoice.client_name}")
@@ -5090,6 +5153,8 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
     if not invoice.invoice_text:
         invoice.invoice_text = build_invoice_text(invoice)
         invoice.save(update_fields=["invoice_text", "updated_at"])
+    if request.user.is_authenticated:
+        post_invoice_sales_voucher(request, invoice)
     if owner_email:
         save_business_profile_from_invoice(invoice, request.user if request.user.is_authenticated else None)
         save_client_from_invoice(invoice, request.user if request.user.is_authenticated else None)
