@@ -942,6 +942,166 @@ textarea {
   margin: 18px auto 0;
 }
 
+.next-action-grid,
+.workflow-map,
+.trust-panel {
+  max-width: 1180px;
+  margin: 22px auto 0;
+}
+
+.next-action-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.15fr) repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.next-action-head {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: #17211f;
+  color: #fff;
+}
+
+.next-action-head .eyebrow {
+  color: var(--amber);
+}
+
+.next-action-head h2 {
+  font-size: clamp(24px, 2.7vw, 34px);
+}
+
+.next-action-head p {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.55;
+}
+
+.next-action-card,
+.workflow-lane-card,
+.workflow-detail-card,
+.trust-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(23, 33, 31, 0.035);
+}
+
+.next-action-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-height: 184px;
+  padding: 16px;
+}
+
+.next-action-card:hover,
+.workflow-lane-card:hover,
+.workflow-detail-card:hover {
+  border-color: rgba(18, 107, 79, 0.28);
+  transform: translateY(-1px);
+}
+
+.next-action-card span,
+.workflow-lane-card span,
+.workflow-detail-card span {
+  color: var(--coral);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.next-action-card strong,
+.workflow-lane-card strong {
+  font-size: 18px;
+  line-height: 1.22;
+}
+
+.next-action-card p,
+.workflow-lane-card p,
+.workflow-detail-card p,
+.trust-panel p,
+.workflow-card-footer strong {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.next-action-primary {
+  border-color: rgba(18, 107, 79, 0.32);
+  background: #f4fbf8;
+}
+
+.workflow-map {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: clamp(18px, 3vw, 26px);
+  background: #fff;
+}
+
+.workflow-map .section-head h2,
+.workflow-detail-card h2,
+.trust-panel h2 {
+  font-size: clamp(24px, 3vw, 36px);
+}
+
+.workflow-lane-grid,
+.workflow-detail-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.workflow-lane-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.workflow-lane-card {
+  display: grid;
+  gap: 8px;
+  min-height: 148px;
+  padding: 16px;
+  background: #f8faf8;
+}
+
+.workflow-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 1180px;
+  margin: 24px auto 0;
+}
+
+.workflow-detail-card {
+  display: grid;
+  gap: 18px;
+  align-content: space-between;
+  min-height: 280px;
+  padding: 20px;
+}
+
+.workflow-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.workflow-card-footer strong {
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.trust-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 22px;
+  padding: clamp(18px, 3vw, 26px);
+}
+
 .module-tile {
   min-height: 136px;
   border: 1px solid var(--line);
@@ -2242,8 +2402,11 @@ textarea {
   .app-sidebar {
     position: sticky;
     z-index: 12;
+    width: 100%;
+    max-width: 100vw;
     height: auto;
     grid-template-rows: auto auto;
+    overflow: hidden;
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding: 12px;
@@ -2260,6 +2423,7 @@ textarea {
   .app-nav {
     display: flex;
     gap: 8px;
+    max-width: 100%;
     overflow-x: auto;
     padding-bottom: 4px;
   }
@@ -2299,6 +2463,10 @@ textarea {
   .content-grid,
   .blog-grid,
   .pro-workflow-grid,
+  .next-action-grid,
+  .workflow-lane-grid,
+  .workflow-detail-grid,
+  .trust-panel,
   .setup-preset-grid,
   .setup-detail-grid,
   .inventory-form,
@@ -2398,6 +2566,10 @@ textarea {
   .content-grid,
   .blog-grid,
   .pro-workflow-grid,
+  .next-action-grid,
+  .workflow-lane-grid,
+  .workflow-detail-grid,
+  .trust-panel,
   .dashboard-module-grid,
   .report-kpi-grid,
   .aging-grid,

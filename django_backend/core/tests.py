@@ -47,7 +47,7 @@ class PublicPagesTests(TestCase):
         self.assertIn("US small service businesses", content)
         self.assertIn("Sales tax", content)
         self.assertIn("chart of accounts", content)
-        self.assertIn("journal entries", content)
+        self.assertIn("vouchers and reports", content)
         self.assertNotIn("Built for India", content)
 
     def test_dot_in_homepage_keeps_india_positioning(self):
@@ -98,6 +98,21 @@ class PublicPagesTests(TestCase):
         self.assertIn("Palarivattom", content)
         self.assertIn("+91 95160 22222", content)
         self.assertNotIn("114 Crockett Rd", content)
+
+    def test_pricing_pages_are_market_specific(self):
+        us_response = self.client.get("/pricing/", HTTP_HOST="rozledger.com")
+        us_content = b"".join(us_response.streaming_content).decode("utf-8")
+        india_response = self.client.get("/pricing/", HTTP_HOST="rozledger.in")
+        india_content = b"".join(india_response.streaming_content).decode("utf-8")
+
+        self.assertEqual(us_response.status_code, 200)
+        self.assertIn("$3.99/month", us_content)
+        self.assertIn("King Of Prussia, PA 19406", us_content)
+        self.assertNotIn("Rs 299/month", us_content)
+        self.assertEqual(india_response.status_code, 200)
+        self.assertIn("Rs 299/month", india_content)
+        self.assertIn("Palarivattom", india_content)
+        self.assertNotIn("$3.99/month", india_content)
 
 
 @override_settings(**TEST_SETTINGS)
@@ -748,6 +763,158 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(us_response, "Payments received")
         self.assertTrue(Account.objects.filter(owner=user, market="IN", code="1100", name="Accounts receivable").exists())
         self.assertTrue(Account.objects.filter(owner=user, market="US", code="1100", name="Accounts receivable").exists())
+
+    def test_dashboard_guides_new_customer_to_daily_workflows(self):
+        user = User.objects.create_user("guided@example.com", "guided@example.com", "password-123456")
+        self.client.force_login(user)
+
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        workflow_response = self.client.get(reverse("workflow_guide"), HTTP_HOST="rozledger.in")
+
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertContains(dashboard_response, "Next best actions")
+        self.assertContains(dashboard_response, "Create business profile")
+        self.assertContains(dashboard_response, "Workflow map")
+        self.assertContains(dashboard_response, "Audit-safe corrections")
+        self.assertContains(dashboard_response, "/dashboard/workflows/")
+        self.assertEqual(workflow_response.status_code, 200)
+        self.assertContains(workflow_response, "Invoice to receipt")
+        self.assertContains(workflow_response, "Expense, bill and vendor payment")
+        self.assertContains(workflow_response, "Trust controls")
+        self.assertContains(workflow_response, "not mock billing")
+
+    def test_acceptance_india_service_user_can_bill_collect_and_track_vendor_bill(self):
+        user = User.objects.create_user("accept-india@example.com", "accept-india@example.com", "password-123456", first_name="Acceptance Owner")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+
+        profile_response = self.client.post(
+            reverse("business_profile"),
+            {
+                "business_type": "service",
+                "business_name": "Acceptance Services",
+                "business_phone": "+91 95160 22222",
+                "business_address": "Palarivattom\nKochi",
+                "gstin": "32ABCDE1234F1Z5",
+                "upi_link": "upi://pay?pa=accept@upi",
+                "bank_details": "Acceptance Bank\nIFSC: TEST0001",
+                "thank_you_note": "Thank you for your business.",
+                "template": "classic",
+                "accent_color": "#126b4f",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(profile_response.status_code, 302)
+
+        invoice_response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Acceptance Services",
+                "business_phone": "+91 95160 22222",
+                "business_address": "Palarivattom\nKochi",
+                "client_name": "Acceptance Client",
+                "client_phone": "+91 90000 11111",
+                "client_address": "Client Street\nKochi",
+                "service_name": "Monthly support",
+                "item_description": ["Monthly support"],
+                "item_quantity": ["2"],
+                "item_rate": ["500"],
+                "include_gst": "on",
+                "gst_rate": "18",
+                "due_days": "7",
+                "upi_link": "upi://pay?pa=accept@upi",
+                "bank_details": "Acceptance Bank",
+                "thank_you_note": "Thank you for your business.",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(invoice_response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user, client_name="Acceptance Client")
+        self.assertEqual(invoice.total_text, "₹ 1180.00")
+
+        dashboard_with_ar = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        self.assertContains(dashboard_with_ar, "Collect open invoices")
+        self.assertContains(dashboard_with_ar, "Outstanding customer balance")
+
+        receipt_response = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-07",
+                "payer_name": "Acceptance Client",
+                "amount": "500.00",
+                "method": "upi",
+                "reference": "UPI-ACCEPT-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(receipt_response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "partially_paid")
+
+        expense_account = Account.objects.get(owner=user, market="IN", code="5100")
+        bill_response = self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-07",
+                "due_date": "2026-06-20",
+                "vendor_name": "Acceptance Vendor",
+                "category": "Office expenses",
+                "expense_account": str(expense_account.id),
+                "amount": "300.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "BILL-ACCEPT-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(bill_response.status_code, 302)
+
+        dashboard_with_ap = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        self.assertContains(dashboard_with_ap, "Pay vendor bills")
+        self.assertContains(dashboard_with_ap, "Business profile ready")
+        reports_response = self.client.get(reverse("reports"), HTTP_HOST="rozledger.in")
+        self.assertContains(reports_response, "Profit & Loss")
+        self.assertContains(reports_response, "AR aging by invoice and customer")
+        self.assertContains(reports_response, "AP aging by vendor")
+
+    def test_acceptance_us_service_user_gets_no_gst_dashboard_and_workflow_copy(self):
+        user = User.objects.create_user("accept-us@example.com", "accept-us@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+
+        invoice_response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "Acceptance Handyman",
+                "business_phone": "(215) 774-1500",
+                "business_address": "114 Crockett Rd\nKing Of Prussia, PA 19406",
+                "client_name": "Acceptance Homeowner",
+                "client_phone": "(555) 010-1000",
+                "client_address": "Client House\nPA",
+                "service_name": "Door repair",
+                "item_description": ["Door repair"],
+                "item_quantity": ["1"],
+                "item_rate": ["250"],
+                "gst_rate": "0",
+                "due_days": "7",
+                "upi_link": "https://pay.example.com/acceptance",
+                "bank_details": "Payment link preferred",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(invoice_response.status_code, 302)
+        invoice = Invoice.objects.get(owner=user, client_name="Acceptance Homeowner")
+        self.assertEqual(invoice.currency_symbol, "$")
+        self.assertEqual(invoice.tax_label, "Sales tax")
+        self.assertNotIn("GST", invoice.invoice_text)
+
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        workflow_response = self.client.get(reverse("workflow_guide"), HTTP_HOST="rozledger.com")
+        self.assertContains(dashboard_response, "Tax ID")
+        self.assertNotContains(dashboard_response, "GSTIN")
+        self.assertContains(workflow_response, "Sales tax and payment links")
+        self.assertContains(workflow_response, "US users")
 
     def test_customer_can_create_business_profile_before_invoice(self):
         user = User.objects.create_user("profile@example.com", "profile@example.com", "password-123456", first_name="Profile Owner")

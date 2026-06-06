@@ -2075,6 +2075,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         return ""
     links = [
         ("/dashboard/", "D", "Dashboard"),
+        ("/dashboard/workflows/", "W", "Workflows"),
         ("/dashboard/invoices/new/", "I", "Create invoice"),
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
@@ -2379,6 +2380,8 @@ def contact(request: HttpRequest) -> FileResponse:
 
 @require_http_methods(GET_OR_HEAD)
 def pricing(request: HttpRequest) -> FileResponse:
+    if is_us_host(request):
+        return serve_project_file("pricing-us.html", "text/html")
     return serve_project_file("pricing.html", "text/html")
 
 
@@ -2523,6 +2526,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     email = current_account_email(request)
     ensure_default_chart(request)
     us_market = is_us_host(request)
+    currency = "$" if us_market else RUPEE_SYMBOL
     client_tax_id_label = "Tax ID" if us_market else "GSTIN"
     client_tax_id_placeholder = "Optional tax ID" if us_market else "Optional GSTIN"
     invoices = Invoice.objects.filter(account_q(request))[:20]
@@ -2558,6 +2562,79 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     inventory_items = list(InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements")[:8])
     stock_snapshots = [(item, stock_quantity(item)) for item in inventory_items]
     low_stock_count = sum(1 for item, quantity in stock_snapshots if item.track_inventory and quantity <= item.reorder_level)
+    today = timezone.localdate()
+    all_open_invoices = list(Invoice.objects.filter(account_q(request)).exclude(status="paid").order_by("created_at"))
+    overdue_invoice_count = sum(
+        1
+        for open_invoice in all_open_invoices
+        if invoice_outstanding_amount(open_invoice) > 0
+        and timezone.localtime(open_invoice.created_at).date() + timedelta(days=open_invoice.due_days) < today
+    )
+    open_bill_count = VendorBill.objects.filter(account_q(request), status__in=["unpaid", "partially_paid"]).count()
+    recent_reconciliation = ReconciliationSession.objects.filter(account_q(request)).first()
+    profile_fields = [
+        bool(business_profile),
+        bool(business_profile and business_profile.business_phone),
+        bool(business_profile and business_profile.business_address),
+        bool(business_profile and (business_profile.bank_details or business_profile.upi_link)),
+    ]
+    profile_score = int((sum(profile_fields) / len(profile_fields)) * 100)
+
+    next_actions = []
+    if not business_profile:
+        next_actions.append(("Setup", "Create business profile", "Save company name, logo, address, phone, bank details and default invoice template.", "/dashboard/business-profile/", "primary"))
+    elif profile_score < 100:
+        next_actions.append(("Setup", f"Complete profile ({profile_score}%)", "Add the missing contact or payment details so every invoice is customer-ready.", "/dashboard/business-profile/", "primary"))
+    else:
+        next_actions.append(("Ready", "Business profile ready", "Your saved profile can prefill invoices and keep branding consistent.", "/dashboard/business-profile/", "secondary"))
+
+    if not invoices:
+        next_actions.append(("Sales", "Create first invoice", "Use quantity, rate, logo, address, phone and your chosen professional template.", "/dashboard/invoices/new/", "primary"))
+    elif finance_summary["accounts_receivable"] > 0:
+        label = f"{overdue_invoice_count} overdue invoice(s)" if overdue_invoice_count else "Collect open invoices"
+        next_actions.append(("AR", label, f"Outstanding customer balance is {money(finance_summary['accounts_receivable'], currency)}. Record payments against the selected invoice.", "/dashboard/payments/new/", "primary"))
+    else:
+        next_actions.append(("Sales", "Create next invoice", "Keep the billing habit daily and let the dashboard update ledgers automatically.", "/dashboard/invoices/new/", "secondary"))
+
+    if open_bill_count:
+        next_actions.append(("AP", "Pay vendor bills", f"{open_bill_count} vendor bill(s) are open. Post payments against the selected bill to update AP.", "/dashboard/expenses/pay/", "primary"))
+    else:
+        next_actions.append(("Purchases", "Record expense or bill", "Capture daily expenses, unpaid bills and supplier references before they are forgotten.", "/dashboard/expenses/new/", "secondary"))
+
+    if recent_reconciliation:
+        next_actions.append(("Control", "Review reports", "Use P&L, AR aging, AP aging, cash summary, trial balance and tax summary for control.", "/dashboard/reports/", "secondary"))
+    else:
+        next_actions.append(("Control", "Reconcile bank/cash", "Compare posted ledger lines with your bank or cash statement and save reconciliation history.", "/dashboard/reconciliation/", "secondary"))
+
+    next_action_cards = "".join(
+        f"""
+        <a class="next-action-card next-action-{escape(tone)}" href="{escape(href)}">
+          <span>{escape(kicker)}</span>
+          <strong>{escape(title)}</strong>
+          <p>{escape(description)}</p>
+        </a>
+        """
+        for kicker, title, description, href, tone in next_actions[:4]
+    )
+
+    workflow_lanes = [
+        ("01", "Start", "Business setup", "Choose business type, create profile, add logo, contact details, payment note and opening chart.", "/dashboard/business-profile/"),
+        ("02", "Sell", "Invoice and collect", "Create invoice, send PDF or WhatsApp reminder, record partial/final payment against invoice.", "/dashboard/invoices/new/"),
+        ("03", "Buy", "Expenses and AP", "Record paid expenses, upload bills, post vendor bills, pay selected bill and keep attachments.", "/dashboard/expenses/new/"),
+        ("04", "Stock", "Inventory", "Create products or services, post stock inward/outward and keep FIFO cost layers.", "/dashboard/inventory/"),
+        ("05", "Correct", "Audit-safe corrections", "Use credit notes, debit notes and reversals instead of deleting posted accounting records.", "/dashboard/search/"),
+        ("06", "Control", "Reports and reconcile", "Review P&L, AR/AP aging, cash, trial balance, tax summary, audit trail and bank reconciliation.", "/dashboard/reports/"),
+    ]
+    workflow_lane_cards = "".join(
+        f"""
+        <a class="workflow-lane-card" href="{escape(href)}">
+          <span>{escape(number)} / {escape(kicker)}</span>
+          <strong>{escape(title)}</strong>
+          <p>{escape(description)}</p>
+        </a>
+        """
+        for number, kicker, title, description, href in workflow_lanes
+    )
 
     invoice_rows = []
     for invoice in invoices:
@@ -2822,7 +2899,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
       <section class="dashboard-hero">
         <p class="eyebrow">Finance command center</p>
         <h1>Welcome, {escape(display_name)}.</h1>
-        <p>Run daily billing, collections, expenses and simple accounts from one clean workspace connected to {escape(email)}.</p>
+        <p>Run daily billing, collections, expenses, inventory, accounting reports and audit-safe corrections from one clean workspace connected to {escape(email)}.</p>
         {notice}
         <div class="hero-actions">
           <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
@@ -2832,6 +2909,27 @@ def dashboard(request: HttpRequest) -> HttpResponse:
           <a class="button secondary" href="/dashboard/ai/">Open AI assistant</a>
           <a class="button secondary" href="/dashboard/vouchers/new/">Post voucher</a>
           <a class="button secondary" href="/dashboard/inventory/">Manage inventory</a>
+        </div>
+      </section>
+      <section class="next-action-grid" aria-label="Next best actions">
+        <div class="section-head next-action-head">
+          <p class="eyebrow">Next best actions</p>
+          <h2>What to do now</h2>
+          <p>RozLedger points customers toward the next practical step instead of making them search through accounting menus.</p>
+        </div>
+        {next_action_cards}
+      </section>
+      <section class="workflow-map" aria-label="Workflow map">
+        <div class="section-head">
+          <p class="eyebrow">Workflow map</p>
+          <h2>From setup to reports</h2>
+          <p>A simple operating path for service, trading, manufacturing, travel and other small-business accounts.</p>
+        </div>
+        <div class="workflow-lane-grid">{workflow_lane_cards}</div>
+        <div class="dashboard-actions section-actions">
+          <a class="button secondary" href="/dashboard/workflows/">Open workflow guide</a>
+          <a class="button secondary" href="/dashboard/audit/">Audit trail</a>
+          <a class="button secondary" href="/dashboard/search/">Search records</a>
         </div>
       </section>
       <section class="dashboard-module-grid" aria-label="Daily workflow">
@@ -2993,6 +3091,126 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Dashboard", body, request)
+
+
+@login_required
+@require_GET
+def workflow_guide(request: HttpRequest) -> HttpResponse:
+    ensure_default_chart(request)
+    us_market = is_us_host(request)
+    currency = "$" if us_market else RUPEE_SYMBOL
+    profile = get_business_profile(request)
+    finance = finance_summary_for_user(request)
+    invoice_count = Invoice.objects.filter(account_q(request)).count()
+    bill_count = VendorBill.objects.filter(account_q(request)).count()
+    receipt_count = PaymentReceipt.objects.filter(account_q(request)).count()
+    reconciliation_count = ReconciliationSession.objects.filter(account_q(request)).count()
+    profile_status = "Ready" if profile and profile.business_address and (profile.bank_details or profile.upi_link) else "Needs setup"
+    tax_copy = "Sales tax and payment links" if us_market else "GST and UPI"
+    cards = [
+        (
+            "01",
+            "Setup",
+            "Business profile and market rules",
+            f"Save logo, business address, phone, bank/payment details, thank-you note and default template. Market copy stays separate for {'US' if us_market else 'India'} users.",
+            profile_status,
+            "/dashboard/business-profile/",
+            "Open profile",
+        ),
+        (
+            "02",
+            "Sales",
+            "Invoice to receipt",
+            f"Create professional invoices with quantity and rate, send PDF, then record partial or full payment against the selected invoice. {tax_copy} labels are handled by market.",
+            f"{invoice_count} invoice(s), {receipt_count} receipt(s)",
+            "/dashboard/invoices/new/",
+            "Create invoice",
+        ),
+        (
+            "03",
+            "Purchases",
+            "Expense, bill and vendor payment",
+            "Record paid expenses, unpaid vendor bills, upload bill photos, confirm extracted details and pay selected vendor bills without losing the audit trail.",
+            f"{bill_count} bill(s)",
+            "/dashboard/expenses/new/",
+            "Record bill",
+        ),
+        (
+            "04",
+            "Inventory",
+            "Products, services and FIFO stock",
+            "Create products, raw materials, finished goods, travel packages or service items, then post stock inward/outward and keep FIFO cost tracking.",
+            f"{InventoryItem.objects.filter(account_q(request), is_active=True).count()} item(s)",
+            "/dashboard/inventory/",
+            "Manage stock",
+        ),
+        (
+            "05",
+            "Corrections",
+            "Credit notes, debit notes and reversals",
+            "Correct posted documents with accounting documents instead of deleting history. This keeps customer, vendor and journal records explainable.",
+            f"AR {money(finance['accounts_receivable'], currency)} / AP {money(finance['accounts_payable'], currency)}",
+            "/dashboard/search/",
+            "Find records",
+        ),
+        (
+            "06",
+            "Control",
+            "Reports, audit trail and reconciliation",
+            "Review P&L, AR aging, AP aging, cash summary, trial balance, balance sheet, tax summary, audit log and bank/cash reconciliation.",
+            f"{reconciliation_count} reconciliation(s)",
+            "/dashboard/reports/",
+            "Open reports",
+        ),
+    ]
+    card_html = "".join(
+        f"""
+        <article class="workflow-detail-card">
+          <div>
+            <span>{escape(number)} / {escape(kicker)}</span>
+            <h2>{escape(title)}</h2>
+            <p>{escape(description)}</p>
+          </div>
+          <div class="workflow-card-footer">
+            <strong>{escape(status)}</strong>
+            <a class="button secondary" href="{escape(href)}">{escape(action)}</a>
+          </div>
+        </article>
+        """
+        for number, kicker, title, description, status, href, action in cards
+    )
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero">
+        <p class="eyebrow">Workflow guide</p>
+        <h1>Run the business from one clean accounting path.</h1>
+        <p>Use this screen as the customer-friendly operating guide: setup first, bill customers, record purchases, manage inventory, correct safely and review reports.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/dashboard/invoices/new/">Create invoice</a>
+          <a class="button secondary" href="/dashboard/payments/new/">Record receipt</a>
+          <a class="button secondary" href="/dashboard/expenses/new/">Record expense</a>
+          <a class="button secondary" href="/dashboard/reconciliation/">Reconcile</a>
+        </div>
+      </section>
+      <section class="workflow-detail-grid" aria-label="RozLedger workflow steps">
+        {card_html}
+      </section>
+      <section class="trust-panel" aria-label="Trust and control">
+        <div>
+          <p class="eyebrow">Trust controls</p>
+          <h2>Built for real records, not mock billing.</h2>
+          <p>Posted receipts, bills, vouchers, journal entries and correction documents remain traceable through audit pages and detail screens.</p>
+        </div>
+        <ul class="feature-list">
+          <li>Invoice and customer records are saved per account and market.</li>
+          <li>Payments are posted against selected invoices; vendor payments are posted against selected bills.</li>
+          <li>Credit notes, debit notes and reversals preserve a clean audit trail.</li>
+          <li>Reports read from posted accounting entries so daily work updates finance views.</li>
+        </ul>
+      </section>
+    </main>
+    """
+    return page_shell("Workflow guide", body, request)
 
 
 @login_required
