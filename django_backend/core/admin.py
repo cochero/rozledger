@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PlanSubscription, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -226,6 +226,14 @@ class VendorBillAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "category", "reference", "payment_reference", "notes", "voucher__voucher_number", "payment_voucher__voucher_number")
     list_filter = ("market", "status", "bill_date", "due_date", "paid_date", "created_at")
     readonly_fields = ("journal_entry", "voucher", "payment_voucher", "created_at")
+
+
+@admin.register(VendorBillPayment)
+class VendorBillPaymentAdmin(admin.ModelAdmin):
+    list_display = ("market", "owner_email", "payment_date", "vendor_name", "amount", "method", "bill", "voucher", "created_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "vendor_name", "reference", "notes", "bill__vendor_name", "bill__reference", "voucher__voucher_number")
+    list_filter = ("market", "method", "payment_date", "created_at")
+    readonly_fields = ("voucher", "created_at")
 
 
 @admin.register(ExpenseUploadDraft)

@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient
-from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, Voucher
+from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, Lead, PaymentReceipt, PlanSubscription, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, Voucher
 
 
 TEST_SETTINGS = {
@@ -1283,7 +1283,8 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(payment_form, invoice_ref)
         self.assertContains(payment_form, "Invoice / reference")
         self.assertContains(payment_form, "Receipt Client")
-        self.assertContains(payment_form, 'value="100.00"')
+        self.assertContains(payment_form, 'value="0.00"')
+        self.assertNotContains(payment_form, 'data-amount="100.00"')
 
         receipt = PaymentReceipt.objects.get(owner=user, market="US")
         self.assertEqual(receipt.amount, Decimal("100.00"))
@@ -1301,6 +1302,79 @@ class AccountWorkflowTests(TestCase):
         dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
         self.assertContains(dashboard_response, invoice_ref)
         self.assertContains(dashboard_response, "Direct receipt", count=0)
+
+    def test_customer_can_record_partial_and_final_invoice_payments(self):
+        user = User.objects.create_user("partial-ar@example.com", "partial-ar@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        invoice = Invoice.objects.create(
+            owner=user,
+            owner_email=user.email,
+            market="US",
+            business_name="Partial AR Business",
+            client_name="Partial Client",
+            service_name="Monthly support",
+            include_gst=False,
+            amount_before_gst=Decimal("300.00"),
+            gst_rate=Decimal("0"),
+            tax_label="Sales tax",
+            currency_symbol="$",
+            total_text="$ 300.00",
+            upi_link="",
+            invoice_text="Invoice text",
+        )
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+
+        partial = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Partial Client",
+                "amount": "125.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(partial.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "partially_paid")
+        self.assertEqual(sum((payment.amount for payment in invoice.payments.all()), Decimal("0")), Decimal("125.00"))
+        payment_form = self.client.get(f"{reverse('payment_new')}?invoice={invoice.id}", HTTP_HOST="rozledger.com")
+        self.assertContains(payment_form, 'value="175.00"')
+
+        overpay = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-05",
+                "payer_name": "Partial Client",
+                "amount": "176.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        self.assertEqual(overpay.status_code, 200)
+        self.assertContains(overpay, "Payment cannot exceed the outstanding balance")
+        self.assertEqual(PaymentReceipt.objects.filter(invoice=invoice).count(), 1)
+
+        final = self.client.post(
+            reverse("payment_new"),
+            {
+                "invoice_id": str(invoice.id),
+                "payment_date": "2026-06-06",
+                "payer_name": "Partial Client",
+                "amount": "175.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+
+        self.assertEqual(final.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "paid")
+        self.assertEqual(PaymentReceipt.objects.filter(invoice=invoice).count(), 2)
 
     def test_customer_can_record_unpaid_vendor_bill_as_accounts_payable(self):
         user = User.objects.create_user("payable@example.com", "payable@example.com", "password-123456")
@@ -1463,10 +1537,86 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(bill.paid_date.strftime("%Y-%m-%d"), "2026-06-05")
         self.assertIsNotNone(bill.payment_voucher)
         self.assertEqual(bill.payment_voucher.voucher_type, "payment")
+        payment = VendorBillPayment.objects.get(bill=bill)
+        self.assertEqual(payment.amount, Decimal("1200.00"))
+        self.assertEqual(payment.voucher_id, bill.payment_voucher_id)
         entry = bill.payment_voucher.journal_entry
         self.assertEqual(entry.source, "voucher_payment")
         self.assertTrue(entry.lines.filter(account__code="2000", debit=Decimal("1200.00")).exists())
         self.assertTrue(entry.lines.filter(account__code="1010", credit=Decimal("1200.00")).exists())
+
+    def test_customer_can_record_partial_and_final_vendor_bill_payments(self):
+        user = User.objects.create_user("partial-ap@example.com", "partial-ap@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        expense = Account.objects.get(owner=user, market="IN", code="5100")
+        self.client.post(
+            reverse("expense_new"),
+            {
+                "bill_date": "2026-06-01",
+                "due_date": "2026-06-08",
+                "vendor_name": "Partial Vendor",
+                "category": "Supplies",
+                "expense_account": str(expense.id),
+                "amount": "900.00",
+                "status": "unpaid",
+                "payment_method": "bank",
+                "reference": "PV-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        bill = VendorBill.objects.get(owner=user, vendor_name="Partial Vendor")
+
+        partial = self.client.post(
+            reverse("vendor_bill_payment"),
+            {
+                "bill_id": str(bill.id),
+                "payment_date": "2026-06-05",
+                "amount": "400.00",
+                "method": "bank",
+                "reference": "BANK-PART-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(partial.status_code, 302)
+        bill.refresh_from_db()
+        self.assertEqual(bill.status, "partially_paid")
+        self.assertEqual(VendorBillPayment.objects.filter(bill=bill).count(), 1)
+        form = self.client.get(f"{reverse('vendor_bill_payment')}?bill={bill.id}", HTTP_HOST="rozledger.in")
+        self.assertContains(form, 'value="500.00"')
+
+        overpay = self.client.post(
+            reverse("vendor_bill_payment"),
+            {
+                "bill_id": str(bill.id),
+                "payment_date": "2026-06-05",
+                "amount": "501.00",
+                "method": "bank",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+        self.assertEqual(overpay.status_code, 200)
+        self.assertContains(overpay, "Payment cannot exceed the outstanding vendor bill balance")
+        self.assertEqual(VendorBillPayment.objects.filter(bill=bill).count(), 1)
+
+        final = self.client.post(
+            reverse("vendor_bill_payment"),
+            {
+                "bill_id": str(bill.id),
+                "payment_date": "2026-06-06",
+                "amount": "500.00",
+                "method": "bank",
+                "reference": "BANK-FINAL-1",
+            },
+            HTTP_HOST="rozledger.in",
+        )
+
+        self.assertEqual(final.status_code, 302)
+        bill.refresh_from_db()
+        self.assertEqual(bill.status, "paid")
+        self.assertEqual(VendorBillPayment.objects.filter(bill=bill).count(), 2)
+        self.assertEqual(sum((payment.amount for payment in bill.payments.all()), Decimal("0")), Decimal("900.00"))
 
     def test_reports_show_profit_loss_ar_ap_and_cash_summary(self):
         user = User.objects.create_user("reports@example.com", "reports@example.com", "password-123456")

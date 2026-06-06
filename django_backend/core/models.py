@@ -52,6 +52,7 @@ INVOICE_TEMPLATE_CHOICES = [
 INVOICE_STATUS_CHOICES = [
     ("draft", "Draft"),
     ("sent", "Sent"),
+    ("partially_paid", "Partially paid"),
     ("paid", "Paid"),
     ("overdue", "Overdue"),
 ]
@@ -87,6 +88,7 @@ PAYMENT_METHOD_CHOICES = [
 
 BILL_STATUS_CHOICES = [
     ("unpaid", "Unpaid"),
+    ("partially_paid", "Partially paid"),
     ("paid", "Paid"),
 ]
 
@@ -488,6 +490,33 @@ class VendorBill(models.Model):
 
     class Meta:
         ordering = ["-bill_date", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.vendor_name} - {self.amount}"
+
+
+class VendorBillPayment(models.Model):
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="vendor_bill_payments",
+    )
+    owner_email = models.EmailField(db_index=True)
+    bill = models.ForeignKey(VendorBill, on_delete=models.CASCADE, related_name="payments")
+    voucher = models.ForeignKey("Voucher", null=True, blank=True, on_delete=models.SET_NULL, related_name="vendor_bill_payments")
+    payment_date = models.DateField(default=timezone.localdate)
+    vendor_name = models.CharField(max_length=180)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="bank")
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-payment_date", "-created_at"]
 
     def __str__(self) -> str:
         return f"{self.vendor_name} - {self.amount}"
