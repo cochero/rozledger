@@ -18,7 +18,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.mail import send_mail
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
@@ -2095,6 +2095,8 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/#accounting", "A", "Chart of accounts"),
         ("/dashboard/billing/pro/", "B", "Billing"),
     ]
+    if request.user.is_staff:
+        links.append(("/dashboard/monitoring/", "M", "Monitoring"))
     current_path = request.path
     items = []
     for href, icon, label in links:
@@ -3211,6 +3213,154 @@ def workflow_guide(request: HttpRequest) -> HttpResponse:
     </main>
     """
     return page_shell("Workflow guide", body, request)
+
+
+@login_required
+@require_GET
+def monitoring(request: HttpRequest) -> HttpResponse:
+    if not request.user.is_staff:
+        raise Http404("Monitoring not found")
+
+    now = timezone.now()
+    market = current_market(request)
+    currency = "$" if market == "US" else RUPEE_SYMBOL
+    db_ok = False
+    db_message = "Database check failed"
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        db_ok = True
+        db_message = "Database connection OK"
+    except Exception as exc:
+        db_message = f"Database check failed: {type(exc).__name__}"
+
+    recent_invoices = Invoice.objects.filter(market=market, created_at__gte=now - timedelta(days=1)).count()
+    recent_leads = Lead.objects.filter(market=market, created_at__gte=now - timedelta(days=1)).count()
+    pending_pro = PlanSubscription.objects.filter(market=market, status="requested").count()
+    open_ar = finance_summary_for_user(request)["accounts_receivable"]
+    open_ap = finance_summary_for_user(request)["accounts_payable"]
+    gateways = PaymentGatewayConfig.objects.filter(market=market, enabled=True).order_by("-updated_at")
+    gateway_copy = ", ".join(f"{gateway.get_gateway_display()} {gateway.get_mode_display()}" for gateway in gateways) or "No enabled gateway for this market"
+    recent_audits = AuditLog.objects.filter(market=market).order_by("-created_at")[:8]
+    audit_rows = "".join(
+        f"""
+        <tr>
+          <td>{audit.created_at:%d %b %Y %H:%M}</td>
+          <td>{escape(audit.owner_email)}</td>
+          <td>{escape(audit.action)}</td>
+          <td>{escape(audit.object_type)} #{escape(audit.object_id)}</td>
+        </tr>
+        """
+        for audit in recent_audits
+    ) or '<tr><td colspan="4" class="empty-report-row">No audit events yet.</td></tr>'
+    endpoint_rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{escape(label)}</strong><span>{escape(url)}</span></td>
+          <td>{escape(expected)}</td>
+          <td><a class="button secondary" href="{escape(url)}" target="_blank" rel="noopener">Open</a></td>
+        </tr>
+        """
+        for label, url, expected in [
+            ("India home", "https://rozledger.in/", "200"),
+            ("India pricing", "https://rozledger.in/pricing/", "200"),
+            ("India login", "https://rozledger.in/accounts/login/", "200"),
+            ("US home", "https://rozledger.com/", "200"),
+            ("US pricing", "https://rozledger.com/pricing/", "200"),
+            ("Health API", "https://rozledger.in/api/health", "200 JSON ok=true"),
+            ("Dashboard auth guard", "https://rozledger.in/dashboard/", "302 to login when logged out"),
+        ]
+    )
+    readiness_cards = [
+        ("Uptime", "External monitor", "Create checks for rozledger.in, rozledger.com, /api/health, login and pricing. Recommended interval: 5 minutes.", "Manual setup required"),
+        ("Errors", "Application error alerts", "Connect Sentry or GlitchTip DSN in the VPS environment and alert support email for server errors.", "Manual setup required"),
+        ("Backups", "Database backup alert", "Current deploy script writes MySQL backups before deploy. Add daily backup success/failure alert to email or chat.", "Manual setup required"),
+        ("Email", "Transactional email", "Verify Brevo/Titan delivery for password reset, Pro request, approval, invoice and receipt emails.", "Needs final provider check"),
+        ("Payments", "Gateway monitoring", "Watch Razorpay for India and Stripe/PayPal for US webhooks, failed payments and subscription status changes.", gateway_copy),
+        ("Security", "Admin protection", "Use strong admin passwords, limit staff accounts, review audit trail and keep customer data isolated by owner and market.", "Active process"),
+    ]
+    readiness_html = "".join(
+        f"""
+        <article class="workflow-detail-card monitoring-card">
+          <div>
+            <span>{escape(kicker)}</span>
+            <h2>{escape(title)}</h2>
+            <p>{escape(description)}</p>
+          </div>
+          <div class="workflow-card-footer"><strong>{escape(status)}</strong></div>
+        </article>
+        """
+        for kicker, title, description, status in readiness_cards
+    )
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero">
+        <p class="eyebrow">Staff monitoring</p>
+        <h1>Launch operations center.</h1>
+        <p>Use this staff-only screen to check core app health, beta activity, public endpoints and remaining monitoring setup tasks. It does not show API keys or payment secrets.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="/api/health" target="_blank" rel="noopener">Open health API</a>
+          <a class="button secondary" href="/dashboard/audit/">Audit trail</a>
+          <a class="button secondary" href="/admin/">Django admin</a>
+          <a class="button secondary" href="/dashboard/reports/">Reports</a>
+        </div>
+      </section>
+      <section class="report-kpi-grid" aria-label="Monitoring summary">
+        <article><span>Database</span><strong>{escape('OK' if db_ok else 'Check')}</strong></article>
+        <article><span>24h invoices</span><strong>{recent_invoices}</strong></article>
+        <article><span>24h leads</span><strong>{recent_leads}</strong></article>
+        <article><span>Pending Pro</span><strong>{pending_pro}</strong></article>
+      </section>
+      <section class="report-kpi-grid" aria-label="Finance watch">
+        <article><span>Market</span><strong>{escape(market)}</strong></article>
+        <article><span>AR exposure</span><strong>{escape(money(open_ar, currency))}</strong></article>
+        <article><span>AP exposure</span><strong>{escape(money(open_ap, currency))}</strong></article>
+        <article><span>Gateway</span><strong>{escape(gateway_copy)}</strong></article>
+      </section>
+      <section class="trust-panel monitoring-status-panel">
+        <div>
+          <p class="eyebrow">System status</p>
+          <h2>{escape(db_message)}</h2>
+          <p>Last checked at {now:%d %b %Y %H:%M %Z}. Health API should return JSON with <strong>ok=true</strong>.</p>
+        </div>
+        <ul class="feature-list">
+          <li>Keep production secrets in VPS environment variables or encrypted admin fields only.</li>
+          <li>Do not store payment secrets in public files, GitHub, or frontend JavaScript.</li>
+          <li>Review this screen after deployment and before inviting beta users.</li>
+          <li>Use external uptime monitoring for real alerts; this page is the internal operator view.</li>
+        </ul>
+      </section>
+      <section class="workflow-detail-grid" aria-label="Monitoring setup checklist">
+        {readiness_html}
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Public checks</p>
+          <h2>Endpoints to monitor externally</h2>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Endpoint</th><th>Expected</th><th>Action</th></tr></thead>
+            <tbody>{endpoint_rows}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="report-section">
+        <div class="section-head">
+          <p class="eyebrow">Recent audit trail</p>
+          <h2>Latest staff/customer activity for this market</h2>
+        </div>
+        <div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Object</th></tr></thead>
+            <tbody>{audit_rows}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("Monitoring", body, request)
 
 
 @login_required

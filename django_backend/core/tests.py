@@ -783,6 +783,29 @@ class AccountWorkflowTests(TestCase):
         self.assertContains(workflow_response, "Trust controls")
         self.assertContains(workflow_response, "not mock billing")
 
+    def test_monitoring_section_is_staff_only_and_shows_launch_checks(self):
+        customer = User.objects.create_user("monitor-customer@example.com", "monitor-customer@example.com", "password-123456")
+        self.client.force_login(customer)
+        blocked = self.client.get(reverse("monitoring"), HTTP_HOST="rozledger.in")
+
+        self.assertEqual(blocked.status_code, 404)
+
+        staff = User.objects.create_user("monitor-staff@example.com", "monitor-staff@example.com", "password-123456", is_staff=True)
+        self.client.force_login(staff)
+        dashboard_response = self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.in")
+        response = self.client.get(reverse("monitoring"), HTTP_HOST="rozledger.in")
+
+        self.assertContains(dashboard_response, "Monitoring")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Launch operations center")
+        self.assertContains(response, "Database connection OK")
+        self.assertContains(response, "Endpoints to monitor externally")
+        self.assertContains(response, "External monitor")
+        self.assertContains(response, "Application error alerts")
+        self.assertContains(response, "Database backup alert")
+        self.assertContains(response, "https://rozledger.in/api/health")
+        self.assertContains(response, "Django admin")
+
     def test_acceptance_india_service_user_can_bill_collect_and_track_vendor_bill(self):
         user = User.objects.create_user("accept-india@example.com", "accept-india@example.com", "password-123456", first_name="Acceptance Owner")
         self.client.force_login(user)
