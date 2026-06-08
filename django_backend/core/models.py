@@ -1058,3 +1058,124 @@ class PaymentEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.event_type}:{self.event_id}"
+
+
+class GstnApiConfig(models.Model):
+    """Encrypted connection settings for a GST Suvidha Provider (e.g. WhiteBooks) — e-Invoice / e-Way Bill / GST APIs."""
+
+    MODE_CHOICES = [
+        ("sandbox", "Sandbox"),
+        ("production", "Production"),
+    ]
+
+    market = models.CharField(max_length=2, choices=MARKET_CHOICES, default="IN", db_index=True)
+    provider = models.CharField(max_length=30, default="whitebooks")
+    enabled = models.BooleanField(default=False)
+    mode = models.CharField(max_length=12, choices=MODE_CHOICES, default="sandbox")
+    base_url = models.CharField(max_length=200, blank=True, help_text="GSP API base URL, e.g. https://api.whitebooks.in (no trailing slash).")
+    gstin = models.CharField(max_length=20, blank=True, help_text="Taxpayer GSTIN registered with the GSP.")
+    api_email = models.EmailField(blank=True, help_text="API login email (sent as the 'email' query parameter).")
+    ip_address = models.CharField(max_length=50, blank=True, help_text="Public IP registered with the GSP (the server's outbound IP).")
+    default_hsn = models.CharField(max_length=8, blank=True, help_text="Fallback HSN/SAC code used when an invoice line has none.")
+    encrypted_client_id = models.TextField(blank=True)
+    encrypted_client_secret = models.TextField(blank=True)
+    encrypted_username = models.TextField(blank=True)
+    encrypted_password = models.TextField(blank=True)
+    encrypted_auth_token = models.TextField(blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["market", "provider"]
+        unique_together = ("market", "provider")
+
+    def __str__(self) -> str:
+        status = "enabled" if self.enabled else "disabled"
+        return f"{self.provider} {self.get_mode_display()} ({status})"
+
+    @classmethod
+    def for_market(cls, market: str = "IN") -> "GstnApiConfig | None":
+        return cls.objects.filter(market=market).first()
+
+    @classmethod
+    def active(cls, market: str = "IN") -> "GstnApiConfig | None":
+        config = cls.for_market(market)
+        if config and config.enabled and config.is_configured:
+            return config
+        return None
+
+    @property
+    def client_id(self) -> str:
+        return decrypt_secret(self.encrypted_client_id)
+
+    @client_id.setter
+    def client_id(self, value: str) -> None:
+        self.encrypted_client_id = encrypt_secret(value)
+
+    @property
+    def client_secret(self) -> str:
+        return decrypt_secret(self.encrypted_client_secret)
+
+    @client_secret.setter
+    def client_secret(self, value: str) -> None:
+        self.encrypted_client_secret = encrypt_secret(value)
+
+    @property
+    def username(self) -> str:
+        return decrypt_secret(self.encrypted_username)
+
+    @username.setter
+    def username(self, value: str) -> None:
+        self.encrypted_username = encrypt_secret(value)
+
+    @property
+    def password(self) -> str:
+        return decrypt_secret(self.encrypted_password)
+
+    @password.setter
+    def password(self, value: str) -> None:
+        self.encrypted_password = encrypt_secret(value)
+
+    @property
+    def auth_token(self) -> str:
+        return decrypt_secret(self.encrypted_auth_token)
+
+    @auth_token.setter
+    def auth_token(self, value: str) -> None:
+        self.encrypted_auth_token = encrypt_secret(value)
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.base_url and self.client_id and self.client_secret and self.username and self.password)
+
+    @property
+    def token_valid(self) -> bool:
+        return bool(self.encrypted_auth_token) and self.token_expires_at is not None and self.token_expires_at > timezone.now()
+
+    def store_token(self, token: str, ttl_seconds: int) -> None:
+        from datetime import timedelta
+
+        self.auth_token = token
+        self.token_expires_at = timezone.now() + timedelta(seconds=max(ttl_seconds, 60))
+        self.save(update_fields=["encrypted_auth_token", "token_expires_at", "updated_at"])
+
+    def clear_token(self) -> None:
+        self.encrypted_auth_token = ""
+        self.token_expires_at = None
+        self.save(update_fields=["encrypted_auth_token", "token_expires_at", "updated_at"])
+
+    @property
+    def masked_client_id(self) -> str:
+        return mask_secret(self.client_id)
+
+    @property
+    def masked_client_secret(self) -> str:
+        return mask_secret(self.client_secret)
+
+    @property
+    def masked_username(self) -> str:
+        return mask_secret(self.username)
+
+    @property
+    def masked_password(self) -> str:
+        return mask_secret(self.password)

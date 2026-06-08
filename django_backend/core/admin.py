@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, GstnApiConfig, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -467,3 +467,101 @@ class PaymentEventAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+class GstnApiConfigForm(forms.ModelForm):
+    api_client_id = forms.CharField(label="Client ID", required=False, help_text="Paste to add or rotate. Leave blank to keep the current value.")
+    api_client_secret = forms.CharField(label="Client Secret", required=False, widget=forms.PasswordInput(render_value=False), help_text="Encrypted before saving. Leave blank to keep the current value.")
+    api_username = forms.CharField(label="API Username", required=False, help_text="Leave blank to keep the current value.")
+    api_password = forms.CharField(label="API Password", required=False, widget=forms.PasswordInput(render_value=False), help_text="Encrypted before saving. Leave blank to keep the current value.")
+
+    class Meta:
+        model = GstnApiConfig
+        fields = ("market", "provider", "enabled", "mode", "base_url", "gstin", "api_email", "ip_address", "default_hsn", "api_client_id", "api_client_secret", "api_username", "api_password")
+
+    def clean(self):
+        cleaned = super().clean()
+        instance = self.instance
+        enabled = cleaned.get("enabled")
+        has_base = bool(cleaned.get("base_url"))
+        has_id = bool(cleaned.get("api_client_id") or getattr(instance, "client_id", ""))
+        has_secret = bool(cleaned.get("api_client_secret") or getattr(instance, "client_secret", ""))
+        has_user = bool(cleaned.get("api_username") or getattr(instance, "username", ""))
+        has_pass = bool(cleaned.get("api_password") or getattr(instance, "password", ""))
+        if enabled and not (has_base and has_id and has_secret and has_user and has_pass):
+            raise forms.ValidationError("Base URL, Client ID, Client Secret, Username and Password are all required before enabling the GSTN API.")
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if self.cleaned_data.get("api_client_id"):
+            instance.client_id = self.cleaned_data["api_client_id"]
+        if self.cleaned_data.get("api_client_secret"):
+            instance.client_secret = self.cleaned_data["api_client_secret"]
+        if self.cleaned_data.get("api_username"):
+            instance.username = self.cleaned_data["api_username"]
+        if self.cleaned_data.get("api_password"):
+            instance.password = self.cleaned_data["api_password"]
+        if commit:
+            instance.save()
+        return instance
+
+
+@admin.register(GstnApiConfig)
+class GstnApiConfigAdmin(admin.ModelAdmin):
+    form = GstnApiConfigForm
+    list_display = ("market", "provider", "enabled", "mode", "configured", "token_status", "updated_at")
+    list_filter = ("market", "provider", "enabled", "mode")
+    readonly_fields = (
+        "configured",
+        "token_status",
+        "masked_client_id_display",
+        "masked_client_secret_display",
+        "masked_username_display",
+        "masked_password_display",
+        "token_expires_at",
+        "updated_at",
+    )
+    fieldsets = (
+        ("Connection", {"fields": ("market", "provider", "enabled", "mode", "base_url", "gstin", "api_email", "ip_address", "default_hsn", "configured", "updated_at")}),
+        ("Auth token (managed automatically)", {"fields": ("token_status", "token_expires_at")}),
+        (
+            "Encrypted credentials",
+            {
+                "fields": (
+                    "masked_client_id_display",
+                    "masked_client_secret_display",
+                    "masked_username_display",
+                    "masked_password_display",
+                    "api_client_id",
+                    "api_client_secret",
+                    "api_username",
+                    "api_password",
+                )
+            },
+        ),
+    )
+
+    @admin.display(boolean=True, description="Configured")
+    def configured(self, obj):
+        return obj.is_configured
+
+    @admin.display(boolean=True, description="Token valid")
+    def token_status(self, obj):
+        return obj.token_valid
+
+    @admin.display(description="Stored Client ID")
+    def masked_client_id_display(self, obj):
+        return obj.masked_client_id
+
+    @admin.display(description="Stored Client Secret")
+    def masked_client_secret_display(self, obj):
+        return obj.masked_client_secret
+
+    @admin.display(description="Stored Username")
+    def masked_username_display(self, obj):
+        return obj.masked_username
+
+    @admin.display(description="Stored Password")
+    def masked_password_display(self, obj):
+        return obj.masked_password

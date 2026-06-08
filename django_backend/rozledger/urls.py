@@ -73,6 +73,7 @@ urlpatterns = [
     path("dashboard/billing/pro/", views.pro_billing, name="pro_billing"),
     path("dashboard/billing/request-pro/", views.request_pro_activation, name="request_pro_activation"),
     path("dashboard/billing/subscribe/", views.pro_subscribe, name="pro_subscribe"),
+    path("dashboard/gstn/", views.gstn_settings, name="gstn_settings"),
     path("dashboard/accounting/journal/<int:entry_id>/", views.journal_detail, name="journal_detail"),
     path("admin/", admin.site.urls),
     path("api/health", views.health, name="health"),
