@@ -29,7 +29,8 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from . import razorpay_client
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -6924,6 +6925,55 @@ def invoice_delete(request: HttpRequest, invoice_id: int) -> HttpResponse:
 
 
 @login_required
+def razorpay_webhook_status_panel(request: HttpRequest) -> str:
+    """Staff-only panel on the billing page: shows the webhook URL, gateway readiness and recent events."""
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return ""
+
+    webhook_url = absolute_url(request, "/webhooks/razorpay/")
+    config = PaymentGatewayConfig.razorpay()
+    if config:
+        gateway_state = "enabled" if config.enabled else "disabled"
+        configured = "yes" if config.is_configured else "no"
+        secret_state = "set" if config.webhook_secret else "MISSING"
+        mode = config.get_mode_display()
+        amount = f"{config.subscription_amount} {config.subscription_currency}"
+        plan_id = config.razorpay_plan_id or "auto-creates on first subscribe"
+    else:
+        gateway_state = configured = secret_state = "no config row"
+        mode = amount = plan_id = "—"
+
+    recent = list(PaymentEvent.objects.all()[:8])
+    if recent:
+        rows = "".join(
+            f"<tr><td>{escape(event.event_type)}</td><td>{escape(event.reference_id or '—')}</td>"
+            f"<td>{event.created_at:%d %b %Y %H:%M}</td></tr>"
+            for event in recent
+        )
+        events_block = (
+            f"<table class=\"webhook-events\"><thead><tr><th>Event</th><th>Subscription</th>"
+            f"<th>Received (server time)</th></tr></thead><tbody>{rows}</tbody></table>"
+            f"<p class=\"webhook-caption\">Latest {len(recent)} of {PaymentEvent.objects.count()} received webhook event(s).</p>"
+        )
+    else:
+        events_block = (
+            "<p class=\"webhook-caption\">No webhook events received yet. After you create the Razorpay "
+            "webhook and a subscription charges, deliveries appear here.</p>"
+        )
+
+    return f"""
+        <div class="pro-status-panel webhook-status-panel">
+          <h2>Razorpay webhook status <span class="staff-tag">staff only</span></h2>
+          <p class="billing-meta">
+            Webhook URL (set this in Razorpay): <code>{escape(webhook_url)}</code><br />
+            Gateway: <strong>{escape(gateway_state)}</strong> &middot; Keys configured: <strong>{escape(configured)}</strong> &middot; Webhook secret: <strong>{escape(secret_state)}</strong><br />
+            Mode: <strong>{escape(str(mode))}</strong> &middot; Amount: <strong>{escape(str(amount))}</strong> &middot; Plan id: <code>{escape(str(plan_id))}</code>
+          </p>
+          {events_block}
+        </div>
+    """
+
+
 @require_http_methods(["GET", "POST"])
 def pro_billing(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
@@ -6936,14 +6986,22 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
     payment_gateway = active_payment_gateway_for_market(market)
     gateway_name = gateway_name_for_market(market)
     paid_price = market_price(request)
+    auto_checkout = bool(payment_gateway) and market == "IN"
     gateway_message = (
-        f"{payment_gateway.get_gateway_display()} {payment_gateway.get_mode_display()} mode is configured, but manual admin approval is still kept as a control step."
-        if payment_gateway
+        f"{payment_gateway.get_gateway_display()} {payment_gateway.get_mode_display()} checkout is enabled. Pay securely and your Pro access activates automatically — no waiting for manual approval."
+        if auto_checkout
         else f"{gateway_name} checkout is not enabled yet. This request will be reviewed and approved manually from Django admin."
     )
     request_button = ""
     if subscription.is_pro_active:
         request_button = '<a class="button primary" href="/dashboard/">Go to dashboard</a>'
+    elif auto_checkout:
+        request_button = f"""
+          <form method="post" action="/dashboard/billing/subscribe/" class="account-form compact-form">
+            {csrf_input(request)}
+            <button class="button primary" type="submit">Subscribe with Razorpay &mdash; {escape(paid_price)}</button>
+          </form>
+        """
     else:
         button_label = "Request Pro activation again" if subscription.status in {"paused", "cancelled"} else "Request Pro activation"
         request_button = f"""
@@ -6988,6 +7046,7 @@ def pro_billing(request: HttpRequest) -> HttpResponse:
             <p>The customer dashboard changes from requested to active automatically.</p>
           </article>
         </div>
+        {razorpay_webhook_status_panel(request)}
         <div class="dashboard-actions">
           {request_button}
           <a class="button secondary" href="/dashboard/">Back to dashboard</a>
@@ -7027,6 +7086,143 @@ def request_pro_activation(request: HttpRequest) -> HttpResponse:
         fail_silently=True,
     )
     return redirect("/dashboard/?pro=requested")
+
+
+ACTIVATION_EVENTS = {"subscription.activated", "subscription.charged", "subscription.resumed"}
+PAUSE_EVENTS = {"subscription.halted", "subscription.paused", "subscription.pending"}
+CANCEL_EVENTS = {"subscription.cancelled", "subscription.completed", "subscription.expired"}
+
+
+def apply_razorpay_subscription_event(subscription: PlanSubscription, event_type: str, payment_id: str = "") -> bool:
+    """Update a PlanSubscription from a verified Razorpay subscription webhook. Returns True if changed."""
+    now = timezone.now()
+    if event_type in ACTIVATION_EVENTS:
+        subscription.plan = "pro"
+        subscription.status = "active"
+        subscription.provider = "razorpay"
+        if subscription.activated_at is None:
+            subscription.activated_at = now
+        # Each successful charge re-extends access ~one cycle (plus a grace buffer).
+        subscription.expires_at = now + timedelta(days=32)
+        subscription.paused_at = None
+        subscription.cancelled_at = None
+        if payment_id:
+            subscription.last_payment_id = payment_id
+        subscription.save(update_fields=[
+            "plan", "status", "provider", "activated_at", "expires_at",
+            "paused_at", "cancelled_at", "last_payment_id", "updated_at",
+        ])
+        return True
+    if event_type in PAUSE_EVENTS:
+        subscription.status = "paused"
+        subscription.paused_at = now
+        subscription.save(update_fields=["status", "paused_at", "updated_at"])
+        return True
+    if event_type in CANCEL_EVENTS:
+        subscription.status = "cancelled"
+        subscription.cancelled_at = now
+        subscription.save(update_fields=["status", "cancelled_at", "updated_at"])
+        return True
+    return False
+
+
+@login_required
+@require_POST
+def pro_subscribe(request: HttpRequest) -> HttpResponse:
+    market = current_market(request)
+    subscription = get_subscription(request)
+    if subscription.is_pro_active:
+        return redirect("/dashboard/billing/pro/?pro=active")
+
+    config = PaymentGatewayConfig.active_razorpay() if market == "IN" else None
+    if config is None:
+        # No automated gateway for this market yet — keep the manual request path.
+        return request_pro_activation(request)
+
+    email = current_account_email(request)
+    if is_rate_limited(request, "subscribe", limit=8, identity=f"user:{request.user.id}"):
+        return rate_limit_response()
+
+    try:
+        plan_id = razorpay_client.ensure_monthly_plan(config)
+        result = razorpay_client.create_subscription(config, plan_id, notes={"owner_email": email, "market": market})
+    except razorpay_client.RazorpayError:
+        subscription.plan = "pro"
+        subscription.status = "requested"
+        subscription.provider = "razorpay"
+        subscription.requested_at = timezone.now()
+        subscription.save(update_fields=["plan", "status", "provider", "requested_at", "updated_at"])
+        audit_log(request, "subscription.request_failed", "PlanSubscription", subscription.id, "Razorpay subscription create failed; manual request recorded")
+        return redirect("/dashboard/billing/pro/?pro=error")
+
+    subscription.plan = "pro"
+    subscription.status = "requested"
+    subscription.provider = "razorpay"
+    subscription.requested_at = timezone.now()
+    subscription.razorpay_subscription_id = clean_text(result.get("id"), max_length=64)
+    subscription.razorpay_customer_id = clean_text(result.get("customer_id"), max_length=64)
+    subscription.save(update_fields=[
+        "plan", "status", "provider", "requested_at",
+        "razorpay_subscription_id", "razorpay_customer_id", "updated_at",
+    ])
+    audit_log(request, "subscription.checkout_started", "PlanSubscription", subscription.id, f"Razorpay subscription {subscription.razorpay_subscription_id} created")
+
+    short_url = result.get("short_url")
+    if short_url and isinstance(short_url, str) and short_url.startswith("https://"):
+        return redirect(short_url)
+    return redirect("/dashboard/billing/pro/?pro=error")
+
+
+@csrf_exempt
+@require_POST
+def razorpay_webhook(request: HttpRequest) -> HttpResponse:
+    config = PaymentGatewayConfig.razorpay()
+    secret = config.webhook_secret if config else ""
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    body = request.body
+
+    if not razorpay_client.verify_webhook_signature(body, signature, secret):
+        return HttpResponse("invalid signature", status=400)
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return HttpResponse("invalid payload", status=400)
+
+    event_type = clean_text(payload.get("event"), max_length=80)
+    entities = payload.get("payload") or {}
+    sub_entity = ((entities.get("subscription") or {}).get("entity")) or {}
+    payment_entity = ((entities.get("payment") or {}).get("entity")) or {}
+    subscription_id = clean_text(sub_entity.get("id"), max_length=64)
+    payment_id = clean_text(payment_entity.get("id"), max_length=64)
+
+    event_id = clean_text(request.headers.get("X-Razorpay-Event-Id"), max_length=120)
+    if not event_id:
+        event_id = clean_text(f"{event_type}:{subscription_id}:{payment_id}", max_length=120)
+
+    with transaction.atomic():
+        event, created = PaymentEvent.objects.get_or_create(
+            event_id=event_id,
+            defaults={
+                "provider": "razorpay",
+                "event_type": event_type,
+                "reference_id": subscription_id,
+                "summary": clean_text(f"{event_type} sub={subscription_id} pay={payment_id}", max_length=240),
+            },
+        )
+        if not created:
+            return JsonResponse({"status": "duplicate"}, status=200)
+
+        if subscription_id:
+            subscription = (
+                PlanSubscription.objects.select_for_update()
+                .filter(razorpay_subscription_id=subscription_id)
+                .first()
+            )
+            if subscription:
+                apply_razorpay_subscription_event(subscription, event_type, payment_id)
+
+    return JsonResponse({"status": "ok"}, status=200)
 
 
 @require_http_methods(GET_OR_HEAD)

@@ -44,10 +44,10 @@ class PublicPagesTests(TestCase):
         content = b"".join(response.streaming_content).decode("utf-8")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("US small service businesses", content)
+        self.assertIn("US service businesses", content)
         self.assertIn("Sales tax", content)
         self.assertIn("chart of accounts", content)
-        self.assertIn("vouchers and reports", content)
+        self.assertIn("balanced vouchers", content)
         self.assertNotIn("Built for India", content)
 
     def test_dot_in_homepage_keeps_india_positioning(self):
@@ -55,7 +55,7 @@ class PublicPagesTests(TestCase):
         content = b"".join(response.streaming_content).decode("utf-8")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Built for India", content)
+        self.assertIn("Made in India", content)
         self.assertIn("chart of accounts", content)
         self.assertIn("GST", content)
 
@@ -2467,3 +2467,132 @@ class LeadWorkflowTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Lead.objects.filter(email="noreferrer@example.com").exists())
+
+
+@override_settings(**TEST_SETTINGS)
+class RazorpaySubscriptionTests(TestCase):
+    WEBHOOK_SECRET = "whsec_test_123"
+
+    def _gateway(self):
+        from .models import PaymentGatewayConfig
+
+        config = PaymentGatewayConfig.objects.create(market="IN", gateway="razorpay", enabled=True, mode="test")
+        config.key_id = "rzp_test_key"
+        config.key_secret = "rzp_test_secret"
+        config.webhook_secret = self.WEBHOOK_SECRET
+        config.save()
+        return config
+
+    def _sign(self, body: bytes) -> str:
+        import hashlib
+        import hmac
+
+        return hmac.new(self.WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+    def _post_event(self, event_type, subscription_id="sub_test_1", payment_id="pay_test_1", event_id="evt_1", secret_ok=True):
+        body = json.dumps(
+            {
+                "event": event_type,
+                "payload": {
+                    "subscription": {"entity": {"id": subscription_id}},
+                    "payment": {"entity": {"id": payment_id}},
+                },
+            }
+        ).encode("utf-8")
+        signature = self._sign(body) if secret_ok else "deadbeef"
+        return self.client.post(
+            reverse("razorpay_webhook"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_RAZORPAY_SIGNATURE=signature,
+            HTTP_X_RAZORPAY_EVENT_ID=event_id,
+            HTTP_HOST="rozledger.in",
+        )
+
+    def test_signature_helpers(self):
+        import hashlib
+        import hmac
+
+        from . import razorpay_client
+
+        body = b'{"event":"subscription.charged"}'
+        good = hmac.new(b"sec", body, hashlib.sha256).hexdigest()
+        self.assertTrue(razorpay_client.verify_webhook_signature(body, good, "sec"))
+        self.assertFalse(razorpay_client.verify_webhook_signature(body, "bad", "sec"))
+        self.assertFalse(razorpay_client.verify_webhook_signature(body, good, "wrong-secret"))
+        pay_sig = hmac.new(b"keysec", b"pay_1|sub_1", hashlib.sha256).hexdigest()
+        self.assertTrue(razorpay_client.verify_subscription_payment_signature("pay_1", "sub_1", pay_sig, "keysec"))
+        self.assertFalse(razorpay_client.verify_subscription_payment_signature("pay_1", "sub_1", "bad", "keysec"))
+
+    def test_webhook_charge_activates_subscription(self):
+        self._gateway()
+        subscription = PlanSubscription.objects.create(
+            market="IN", owner_email="payer@example.com", plan="free", status="requested", razorpay_subscription_id="sub_test_1"
+        )
+        response = self._post_event("subscription.charged")
+        self.assertEqual(response.status_code, 200)
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.plan, "pro")
+        self.assertEqual(subscription.status, "active")
+        self.assertTrue(subscription.is_pro_active)
+        self.assertEqual(subscription.last_payment_id, "pay_test_1")
+        self.assertIsNotNone(subscription.expires_at)
+
+    def test_webhook_rejects_invalid_signature(self):
+        self._gateway()
+        subscription = PlanSubscription.objects.create(
+            market="IN", owner_email="payer2@example.com", plan="free", status="requested", razorpay_subscription_id="sub_test_2"
+        )
+        response = self._post_event("subscription.charged", subscription_id="sub_test_2", event_id="evt_2", secret_ok=False)
+        self.assertEqual(response.status_code, 400)
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.status, "requested")
+        self.assertFalse(subscription.is_pro_active)
+
+    def test_webhook_is_idempotent(self):
+        from .models import PaymentEvent
+
+        self._gateway()
+        PlanSubscription.objects.create(
+            market="IN", owner_email="payer3@example.com", plan="free", status="requested", razorpay_subscription_id="sub_test_3"
+        )
+        first = self._post_event("subscription.charged", subscription_id="sub_test_3", event_id="evt_dup")
+        second = self._post_event("subscription.charged", subscription_id="sub_test_3", event_id="evt_dup")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(json.loads(second.content)["status"], "duplicate")
+        self.assertEqual(PaymentEvent.objects.filter(event_id="evt_dup").count(), 1)
+
+    def test_webhook_cancel_marks_subscription_cancelled(self):
+        self._gateway()
+        subscription = PlanSubscription.objects.create(
+            market="IN",
+            owner_email="payer4@example.com",
+            plan="pro",
+            status="active",
+            razorpay_subscription_id="sub_test_4",
+            activated_at=timezone.now(),
+            expires_at=timezone.now() + timedelta(days=20),
+        )
+        response = self._post_event("subscription.cancelled", subscription_id="sub_test_4", event_id="evt_cancel")
+        self.assertEqual(response.status_code, 200)
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.status, "cancelled")
+        self.assertFalse(subscription.is_pro_active)
+
+    def test_billing_page_shows_webhook_status_for_staff(self):
+        staff = User.objects.create_user("staffbill@example.com", "staffbill@example.com", "password-123456", is_staff=True)
+        self.client.force_login(staff)
+        response = self.client.get(reverse("pro_billing"), HTTP_HOST="rozledger.in")
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn("Razorpay webhook status", content)
+        self.assertIn("/webhooks/razorpay/", content)
+
+    def test_billing_page_hides_webhook_status_for_non_staff(self):
+        user = User.objects.create_user("normbill@example.com", "normbill@example.com", "password-123456")
+        self.client.force_login(user)
+        response = self.client.get(reverse("pro_billing"), HTTP_HOST="rozledger.in")
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertNotIn("Razorpay webhook status", content)

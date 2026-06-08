@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
 
 
 @admin.register(Lead)
@@ -82,13 +82,14 @@ class BusinessProfileAdmin(admin.ModelAdmin):
 
 @admin.register(PlanSubscription)
 class PlanSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("market", "owner", "owner_email", "plan", "status", "requested_at", "activated_at", "expires_at", "updated_at")
-    search_fields = ("owner__username", "owner__email", "owner_email")
-    list_filter = ("market", "plan", "status", "requested_at", "activated_at", "expires_at")
-    readonly_fields = ("requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at", "updated_at")
+    list_display = ("market", "owner", "owner_email", "plan", "status", "provider", "requested_at", "activated_at", "expires_at", "updated_at")
+    search_fields = ("owner__username", "owner__email", "owner_email", "razorpay_subscription_id")
+    list_filter = ("market", "plan", "status", "provider", "requested_at", "activated_at", "expires_at")
+    readonly_fields = ("requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at", "razorpay_subscription_id", "razorpay_customer_id", "last_payment_id", "updated_at")
     fieldsets = (
         ("Customer", {"fields": ("market", "owner", "owner_email")}),
         ("Plan status", {"fields": ("plan", "status", "requested_at", "activated_at", "expires_at", "paused_at", "cancelled_at")}),
+        ("Razorpay subscription", {"fields": ("provider", "razorpay_subscription_id", "razorpay_customer_id", "last_payment_id")}),
         ("Admin note", {"fields": ("admin_note",)}),
     )
     actions = ("activate_15_day_trial", "approve_pro", "mark_requested", "pause_subscription", "cancel_subscription")
@@ -369,7 +370,7 @@ class PaymentGatewayConfigForm(forms.ModelForm):
 
     class Meta:
         model = PaymentGatewayConfig
-        fields = ("market", "gateway", "enabled", "mode", "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret")
+        fields = ("market", "gateway", "enabled", "mode", "subscription_amount", "razorpay_plan_id", "razorpay_key_id", "razorpay_key_secret", "razorpay_webhook_secret")
 
     def clean(self):
         cleaned = super().clean()
@@ -412,6 +413,13 @@ class PaymentGatewayConfigAdmin(admin.ModelAdmin):
     fieldsets = (
         ("Gateway", {"fields": ("market", "gateway", "enabled", "mode", "configured", "updated_at")}),
         (
+            "Recurring subscription",
+            {
+                "fields": ("subscription_amount", "razorpay_plan_id"),
+                "description": "Amount is in the smallest currency unit (paise for INR). Leave plan id blank to auto-create on the first subscription; clear it to force a new plan.",
+            },
+        ),
+        (
             "Encrypted gateway credentials",
             {
                 "fields": (
@@ -448,3 +456,14 @@ class AffiliateClickAdmin(admin.ModelAdmin):
     list_display = ("offer_name", "destination_url", "created_at")
     search_fields = ("offer_name", "destination_url")
     list_filter = ("created_at",)
+
+
+@admin.register(PaymentEvent)
+class PaymentEventAdmin(admin.ModelAdmin):
+    list_display = ("provider", "event_type", "reference_id", "event_id", "created_at")
+    search_fields = ("event_id", "reference_id", "event_type")
+    list_filter = ("provider", "event_type", "created_at")
+    readonly_fields = ("provider", "event_id", "event_type", "reference_id", "summary", "created_at")
+
+    def has_add_permission(self, request):
+        return False
