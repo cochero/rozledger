@@ -2183,6 +2183,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/ledger/customers/", "CL", "Customer ledger"),
         ("/dashboard/ledger/vendors/", "VL", "Vendor ledger"),
         ("/dashboard/search/", "F", "Search"),
+        ("/dashboard/help/", "?", "Help & guides"),
         ("/dashboard/audit/", "AT", "Audit trail"),
         ("/dashboard/reconciliation/", "RC", "Reconcile"),
         ("/dashboard/setup/", "T", "Business setup"),
@@ -2262,7 +2263,16 @@ def page_shell(title: str, body: str, request: HttpRequest | None = None) -> Htt
     dashboard_link = '<a href="/dashboard/">Dashboard</a>' if request and request.user.is_authenticated else ""
     is_app = bool(request and request.user.is_authenticated)
     body_class = "account-page app-page" if is_app else "account-page"
-    app_shell_open = f'<div class="app-layout">{app_sidebar(request)}<div class="app-main">' if is_app else ""
+    app_topbar = (
+        '<header class="app-topbar">'
+        '<form class="topbar-search" method="get" action="/dashboard/search/" role="search">'
+        '<input type="search" name="q" placeholder="Search anything — invoices, quotations, reports, GST, help…" aria-label="Search RozLedger" autocomplete="off" />'
+        '<button type="submit">Search</button>'
+        '</form>'
+        '<a class="app-topbar-help" href="/dashboard/help/">Help &amp; guides</a>'
+        '</header>'
+    ) if is_app else ""
+    app_shell_open = f'<div class="app-layout">{app_sidebar(request)}<div class="app-main">{app_topbar}' if is_app else ""
     app_shell_close = "</div></div>" if is_app else ""
 
     html = f"""<!doctype html>
@@ -5742,6 +5752,289 @@ def journal_detail(request: HttpRequest, entry_id: int) -> HttpResponse:
     return page_shell("Journal detail", body, request)
 
 
+# ---------------------------------------------------------------------------
+# Feature registry + knowledge base — the single source of truth that powers
+# the top-bar search, the search results page and the Help Center, so a user
+# can reach every function (and its how-to) just by typing what they want.
+# ---------------------------------------------------------------------------
+
+FEATURE_REGISTRY = [
+    {"title": "Dashboard", "url": "/dashboard/", "category": "Overview", "keywords": "home overview summary kpi receivables payables", "staff": False},
+    {"title": "Workflows guide", "url": "/dashboard/workflows/", "category": "Overview", "keywords": "workflow steps how to guide process order", "staff": False},
+    {"title": "Create invoice", "url": "/dashboard/invoices/new/", "category": "Sales", "keywords": "invoice tax invoice new sales bill gst create document", "staff": False},
+    {"title": "Create quotation", "url": "/dashboard/invoices/new/", "category": "Sales", "keywords": "quotation quote estimate proposal price offer", "staff": False},
+    {"title": "Create proforma invoice", "url": "/dashboard/invoices/new/", "category": "Sales", "keywords": "proforma pro forma advance payment request", "staff": False},
+    {"title": "Payments received", "url": "/dashboard/payments/new/", "category": "Sales", "keywords": "payment receipt collect money received customer paid", "staff": False},
+    {"title": "Customer ledger", "url": "/dashboard/ledger/customers/", "category": "Sales", "keywords": "customer ledger statement receivable account balance", "staff": False},
+    {"title": "Expenses & bills", "url": "/dashboard/expenses/new/", "category": "Purchases", "keywords": "expense vendor bill purchase pay supplier cost spend", "staff": False},
+    {"title": "Upload expense receipt", "url": "/dashboard/expenses/upload/", "category": "Purchases", "keywords": "upload scan receipt ocr bill photo pdf capture", "staff": False},
+    {"title": "Vendor ledger", "url": "/dashboard/ledger/vendors/", "category": "Purchases", "keywords": "vendor ledger statement payable supplier balance", "staff": False},
+    {"title": "Vouchers", "url": "/dashboard/vouchers/new/", "category": "Accounting", "keywords": "voucher journal payment receipt contra entry manual", "staff": False},
+    {"title": "Chart of accounts", "url": "/dashboard/#accounting", "category": "Accounting", "keywords": "chart accounts ledger codes account head", "staff": False},
+    {"title": "Inventory & stock", "url": "/dashboard/inventory/", "category": "Inventory", "keywords": "inventory stock products items fifo goods reorder", "staff": False},
+    {"title": "Reports", "url": "/dashboard/reports/", "category": "Reports", "keywords": "reports profit loss balance sheet trial balance tax gst aging cash flow", "staff": False},
+    {"title": "Audit trail", "url": "/dashboard/audit/", "category": "Reports", "keywords": "audit trail history log activity changes who", "staff": False},
+    {"title": "Bank reconciliation", "url": "/dashboard/reconciliation/", "category": "Tools", "keywords": "reconcile bank reconciliation statement match", "staff": False},
+    {"title": "AI assistant", "url": "/dashboard/ai/", "category": "Tools", "keywords": "ai assistant insights help ask question", "staff": False},
+    {"title": "Search records", "url": "/dashboard/search/", "category": "Tools", "keywords": "search find records lookup", "staff": False},
+    {"title": "Business setup", "url": "/dashboard/setup/", "category": "Settings", "keywords": "setup onboarding configure start getting started", "staff": False},
+    {"title": "Business profile", "url": "/dashboard/business-profile/", "category": "Settings", "keywords": "profile business gstin logo bank details address", "staff": False},
+    {"title": "Billing & plan", "url": "/dashboard/billing/pro/", "category": "Settings", "keywords": "billing plan pro upgrade subscription pay limit", "staff": False},
+    {"title": "Help & guides", "url": "/dashboard/help/", "category": "Help", "keywords": "help support knowledge guide how to docs library faq learn", "staff": False},
+    {"title": "GSTN e-Invoice API", "url": "/dashboard/gstn/", "category": "Settings", "keywords": "gstn gsp einvoice irn api credentials e-invoice", "staff": True},
+    {"title": "Monitoring", "url": "/dashboard/monitoring/", "category": "Admin", "keywords": "monitoring health status admin uptime", "staff": True},
+]
+
+KB_ARTICLES = [
+    {
+        "slug": "getting-started",
+        "title": "Getting started with RozLedger",
+        "category": "Getting started",
+        "summary": "Set up your business and create your first invoice in minutes.",
+        "keywords": "start setup onboarding first begin new account",
+        "action": ("Set up business profile", "/dashboard/business-profile/"),
+        "body": """
+<p>RozLedger turns your sales and purchases into clean, GST-ready books. Here is the fastest way to get going.</p>
+<ol>
+<li><strong>Set up your business.</strong> Open <a href="/dashboard/business-profile/">Business profile</a> and add your name, address, GSTIN, logo and bank details. These appear on every invoice.</li>
+<li><strong>Create your first document.</strong> Go to <a href="/dashboard/invoices/new/">Create invoice</a>. You can make a quotation, a proforma invoice or a tax invoice from the same screen.</li>
+<li><strong>Record money received.</strong> When a customer pays, open <a href="/dashboard/payments/new/">Payments received</a> and link the payment to the invoice.</li>
+<li><strong>Track expenses.</strong> Add supplier bills under <a href="/dashboard/expenses/new/">Expenses &amp; bills</a> so your profit is accurate.</li>
+<li><strong>Watch your numbers.</strong> <a href="/dashboard/reports/">Reports</a> show profit &amp; loss, GST summary, receivables and more.</li>
+</ol>
+<p>Everything posts to a proper double-entry ledger automatically, so your accountant gets correct books with no extra work.</p>
+""",
+    },
+    {
+        "slug": "find-anything",
+        "title": "Find anything with the top search",
+        "category": "Getting started",
+        "summary": "Use the search bar at the top of every page to jump to any function, record or guide.",
+        "keywords": "search find navigate stuck lost where command go to",
+        "action": ("Open search", "/dashboard/search/"),
+        "body": """
+<p>The search box at the top of every page is the fastest way to move around RozLedger. You never have to remember where a feature lives.</p>
+<p>Type anything and press <strong>Search</strong>. You will get three kinds of results:</p>
+<ul>
+<li><strong>Go to</strong> — jump straight to any function or screen (for example type "quotation", "reconcile" or "GST report").</li>
+<li><strong>Help articles</strong> — guides that match your words.</li>
+<li><strong>Records</strong> — your invoices, bills, receipts, vouchers and notes that match.</li>
+</ul>
+<p>So if you ever feel stuck, just search for what you want to do — the matching screen and the guide both come up.</p>
+""",
+    },
+    {
+        "slug": "create-tax-invoice",
+        "title": "Create a GST tax invoice",
+        "category": "Invoices",
+        "summary": "Make a legal tax invoice that posts to your books and splits GST.",
+        "keywords": "invoice tax invoice create gst sales bill line items",
+        "action": ("Create invoice", "/dashboard/invoices/new/"),
+        "body": """
+<p>A tax invoice is the legal GST document you give a customer. It records the sale in your books and the GST you owe.</p>
+<ol>
+<li>Open <a href="/dashboard/invoices/new/">Create invoice</a> and keep <strong>Document type</strong> as "Tax invoice".</li>
+<li>Pick a template and confirm your business details (they come from your profile).</li>
+<li>Add the customer, then add one or more line items with description, quantity and rate.</li>
+<li>Set the GST rate and, for India, the place of supply and whether it is intra-state or inter-state.</li>
+<li>Save. RozLedger posts the sale to your ledger, splits the GST and gives you a shareable link and PDF.</li>
+</ol>
+<p>You can email or WhatsApp the link, or download the PDF for your records.</p>
+""",
+    },
+    {
+        "slug": "quotation-proforma-invoice",
+        "title": "Quotations, proforma invoices and tax invoices",
+        "category": "Invoices",
+        "summary": "The full sales cycle: quote a price, send a proforma, then convert to a tax invoice.",
+        "keywords": "quotation quote proforma estimate convert document type sales cycle",
+        "action": ("Create a quotation", "/dashboard/invoices/new/"),
+        "body": """
+<p>RozLedger supports the full sales cycle: <strong>Quotation &rarr; Proforma invoice &rarr; Tax invoice</strong>. All three are made from the <a href="/dashboard/invoices/new/">Create invoice</a> screen using the <strong>Document type</strong> selector.</p>
+<ul>
+<li><strong>Quotation</strong> (number starts with QTN) — a price offer. It does not affect your books or GST.</li>
+<li><strong>Proforma invoice</strong> (PI) — a payment request before supply. Also does not post to your books.</li>
+<li><strong>Tax invoice</strong> (RL) — the legal document. This is the only one that records revenue, a receivable and GST.</li>
+</ul>
+<p>When a customer accepts, open the document on your dashboard and use <strong>Convert to invoice</strong> (a quotation can also become a proforma first). Converting to a tax invoice is the moment it posts to your ledger — so your books only ever count confirmed sales.</p>
+""",
+    },
+    {
+        "slug": "gst-cgst-sgst-igst",
+        "title": "How GST is calculated: CGST, SGST, IGST",
+        "category": "GST & tax",
+        "summary": "Intra-state sales split into CGST + SGST; inter-state sales charge IGST.",
+        "keywords": "gst cgst sgst igst tax split place of supply intra inter state",
+        "action": ("Open GST reports", "/dashboard/reports/"),
+        "body": """
+<p>RozLedger splits GST automatically based on the place of supply, so your returns are correct.</p>
+<ul>
+<li><strong>Intra-state</strong> (customer in your state): GST is split into <strong>CGST</strong> and <strong>SGST</strong>, each half of the rate. An 18% invoice becomes 9% CGST + 9% SGST.</li>
+<li><strong>Inter-state</strong> (customer in another state): the full rate is charged as <strong>IGST</strong>.</li>
+</ul>
+<p>On the invoice screen choose the <strong>supply type</strong> and <strong>place of supply</strong>. Each part posts to its own ledger account (CGST/SGST/IGST payable), and the <a href="/dashboard/reports/">GST summary report</a> totals what you owe for the period.</p>
+""",
+    },
+    {
+        "slug": "record-payment",
+        "title": "Record a payment received",
+        "category": "Payments",
+        "summary": "Link customer payments to invoices and keep receivables accurate.",
+        "keywords": "payment receipt received money collect partial paid customer",
+        "action": ("Record a payment", "/dashboard/payments/new/"),
+        "body": """
+<p>Recording payments keeps your receivables accurate and marks invoices as paid.</p>
+<ol>
+<li>Open <a href="/dashboard/payments/new/">Payments received</a>.</li>
+<li>Choose the customer's tax invoice from the list (quotations and proformas are not shown — only real invoices can receive payment).</li>
+<li>Enter the amount (full or partial) and the method, then save.</li>
+</ol>
+<p>RozLedger reduces the outstanding balance, updates the invoice status, and posts the receipt to your cash/bank ledger. Partial payments are supported — the balance stays open until fully paid.</p>
+""",
+    },
+    {
+        "slug": "expenses-bills",
+        "title": "Add expenses and vendor bills",
+        "category": "Purchases",
+        "summary": "Record what you spend so profit and GST input credit are correct.",
+        "keywords": "expense vendor bill purchase supplier pay cost upload receipt",
+        "action": ("Add an expense", "/dashboard/expenses/new/"),
+        "body": """
+<p>Recording what you spend makes your profit and GST input credit accurate.</p>
+<ol>
+<li>Open <a href="/dashboard/expenses/new/">Expenses &amp; bills</a> and add the vendor, category, amount and any GST.</li>
+<li>Or use <a href="/dashboard/expenses/upload/">Upload expense receipt</a> to capture a bill from a photo or PDF.</li>
+<li>Mark it paid now, or leave it as a bill payable and pay later.</li>
+</ol>
+<p>See what you owe each supplier in the <a href="/dashboard/ledger/vendors/">Vendor ledger</a>.</p>
+""",
+    },
+    {
+        "slug": "inventory",
+        "title": "Track inventory and stock",
+        "category": "Inventory",
+        "summary": "Create products, post stock movements and keep FIFO cost layers.",
+        "keywords": "inventory stock products items fifo goods reorder cost",
+        "action": ("Open inventory", "/dashboard/inventory/"),
+        "body": """
+<p>If you sell goods, track stock so your cost of sales is right.</p>
+<ol>
+<li>Open <a href="/dashboard/inventory/">Inventory &amp; stock</a> and create products or services.</li>
+<li>Post stock inward (purchases) and outward (sales). RozLedger keeps FIFO cost layers.</li>
+<li>Low-stock items are flagged on your dashboard so you can reorder in time.</li>
+</ol>
+""",
+    },
+    {
+        "slug": "reports",
+        "title": "Understand your reports",
+        "category": "Reports",
+        "summary": "Profit & loss, balance sheet, GST summary, aging and cash flow — always up to date.",
+        "keywords": "reports profit loss balance sheet trial balance gst aging cash flow",
+        "action": ("Open reports", "/dashboard/reports/"),
+        "body": """
+<p><a href="/dashboard/reports/">Reports</a> turn your entries into the numbers you and your accountant need:</p>
+<ul>
+<li><strong>Profit &amp; loss</strong> — income minus expenses for the period.</li>
+<li><strong>Balance sheet &amp; trial balance</strong> — the financial position of the business.</li>
+<li><strong>GST summary</strong> — tax collected and payable, ready for returns.</li>
+<li><strong>Receivables &amp; payables aging</strong> — who owes you and whom you owe, by age.</li>
+<li><strong>Cash flow</strong> — money in and out.</li>
+</ul>
+<p>Because every invoice, bill and payment posts automatically, these reports are always up to date.</p>
+""",
+    },
+    {
+        "slug": "reconcile",
+        "title": "Reconcile your bank",
+        "category": "Reports",
+        "summary": "Match RozLedger against your bank statement to keep books trustworthy.",
+        "keywords": "reconcile bank reconciliation statement match audit",
+        "action": ("Start reconciling", "/dashboard/reconciliation/"),
+        "body": """
+<p>Reconciliation makes sure your RozLedger cash/bank balance matches your real bank statement.</p>
+<ol>
+<li>Open <a href="/dashboard/reconciliation/">Bank reconciliation</a>.</li>
+<li>Match each statement line to a recorded payment or receipt.</li>
+<li>Anything unmatched shows you a missing or duplicate entry to fix.</li>
+</ol>
+<p>Reconciling regularly keeps your books trustworthy and audit-ready.</p>
+""",
+    },
+    {
+        "slug": "corrections",
+        "title": "Corrections: credit notes, debit notes and reversals",
+        "category": "Corrections",
+        "summary": "Never delete a posted record — correct it with an audit-safe entry.",
+        "keywords": "credit note debit note reversal correction cancel refund return adjust",
+        "action": ("Search records", "/dashboard/search/"),
+        "body": """
+<p>Never delete a posted document — correct it. RozLedger keeps an audit-safe trail.</p>
+<ul>
+<li><strong>Credit note</strong> — reduce or cancel a customer tax invoice (returns, discounts, errors). Open the invoice and choose <strong>Credit note</strong>.</li>
+<li><strong>Debit note</strong> — reduce a vendor bill. Open the bill and choose <strong>Debit note</strong>.</li>
+<li><strong>Reversal</strong> — undo a wrong payment or receipt.</li>
+</ul>
+<p>Each correction posts its own entry, so the original record and the fix are both preserved for audit.</p>
+""",
+    },
+    {
+        "slug": "gstn-einvoice",
+        "title": "Connect GSTN for e-Invoice (IRN)",
+        "category": "GST & tax",
+        "summary": "Optionally connect a GST Suvidha Provider to generate IRN and signed QR codes.",
+        "keywords": "gstn gsp einvoice e-invoice irn api connect turnover",
+        "action": None,
+        "body": """
+<p>For businesses that must issue e-Invoices, RozLedger can connect to the GST network through a GST Suvidha Provider (GSP) to generate the IRN and signed QR code.</p>
+<ol>
+<li>A staff admin opens <strong>GSTN e-Invoice API</strong> settings and enters the GSP credentials (stored encrypted).</li>
+<li>Use <strong>Test authentication</strong> to confirm the connection, and <strong>Validate GSTIN</strong> to check a customer's number.</li>
+</ol>
+<p>This is optional and only needed if your turnover requires e-Invoicing. Contact support if you are unsure whether it applies to you.</p>
+""",
+    },
+    {
+        "slug": "plans-billing",
+        "title": "Plans, billing and limits",
+        "category": "Account",
+        "summary": "Free and paid plans, and how monthly invoice limits work.",
+        "keywords": "plan billing pro free upgrade limit subscription price",
+        "action": ("Open billing", "/dashboard/billing/pro/"),
+        "body": f"""
+<p>RozLedger has a free plan and a paid plan.</p>
+<ul>
+<li><strong>Free</strong> — up to {FREE_MONTHLY_INVOICE_LIMIT} saved invoices per month with full GST features.</li>
+<li><strong>Paid</strong> — up to {PAID_MONTHLY_INVOICE_LIMIT} invoices per month.</li>
+</ul>
+<p>Manage your plan under <a href="/dashboard/billing/pro/">Billing &amp; plan</a>. We always contact you before any paid activation — nothing is charged automatically.</p>
+""",
+    },
+]
+
+
+def search_features(q: str, is_staff: bool = False) -> list[dict]:
+    items = [f for f in FEATURE_REGISTRY if is_staff or not f["staff"]]
+    tokens = [t for t in (q or "").lower().split() if t]
+    if not tokens:
+        return []
+    return [f for f in items if any(tok in (f["title"] + " " + f["keywords"]).lower() for tok in tokens)]
+
+
+def search_articles(q: str) -> list[dict]:
+    tokens = [t for t in (q or "").lower().split() if t]
+    if not tokens:
+        return []
+    return [a for a in KB_ARTICLES if any(tok in (a["title"] + " " + a["summary"] + " " + a["keywords"]).lower() for tok in tokens)]
+
+
+def get_article(slug: str) -> dict | None:
+    for article in KB_ARTICLES:
+        if article["slug"] == slug:
+            return article
+    return None
+
+
 @login_required
 @require_GET
 def global_search(request: HttpRequest) -> HttpResponse:
@@ -5807,21 +6100,50 @@ def global_search(request: HttpRequest) -> HttpResponse:
         """
         for kind, reference, name, amount, link in rows
     ) or '<tr><td colspan="4" class="empty-report-row">No matching records.</td></tr>'
+
+    feature_hits = search_features(q, request.user.is_staff) if q else []
+    article_hits = search_articles(q) if q else []
+    feature_section = ""
+    if feature_hits:
+        feature_cards = "".join(
+            f'<a class="search-jump-card" href="{escape(feature["url"])}"><strong>{escape(feature["title"])}</strong><span>{escape(feature["category"])}</span></a>'
+            for feature in feature_hits[:12]
+        )
+        feature_section = f"""
+      <section class="dashboard-section">
+        <h2 class="search-group-title">Go to</h2>
+        <div class="search-jump-grid">{feature_cards}</div>
+      </section>"""
+    article_section = ""
+    if article_hits:
+        article_cards = "".join(
+            f'<a class="search-jump-card" href="/dashboard/help/{escape(article["slug"])}/"><strong>{escape(article["title"])}</strong><span>{escape(article["summary"])}</span></a>'
+            for article in article_hits[:8]
+        )
+        article_section = f"""
+      <section class="dashboard-section">
+        <h2 class="search-group-title">Help articles</h2>
+        <div class="search-jump-grid">{article_cards}</div>
+      </section>"""
+
     body = f"""
     <main class="dashboard-shell">
       <section class="dashboard-hero reports-hero">
         <p class="eyebrow">Search</p>
-        <h1>Find records</h1>
-        <p>Search invoices, vendor bills, receipts and vouchers across this account.</p>
+        <h1>Find anything</h1>
+        <p>Jump to any function, open a help guide, or find your invoices, bills, receipts and vouchers — all from one search.</p>
       </section>
       <section class="dashboard-section">
         <form method="get" class="dashboard-form invoice-server-form">
-          <label>Search<input name="q" value="{escape(q)}" placeholder="Client, vendor, voucher, reference" /></label>
+          <label>Search<input name="q" value="{escape(q)}" placeholder="Try: quotation, GST report, reconcile, a client name…" /></label>
           <label>Type<select name="type">{type_options}</select></label>
           <button class="button primary" type="submit">Search</button>
         </form>
       </section>
+      {feature_section}
+      {article_section}
       <section class="report-section">
+        <h2 class="search-group-title">Records</h2>
         <div class="report-table-wrap">
           <table class="report-table">
             <thead><tr><th>Type</th><th>Reference</th><th>Name</th><th>Amount</th></tr></thead>
@@ -5831,7 +6153,96 @@ def global_search(request: HttpRequest) -> HttpResponse:
       </section>
     </main>
     """
-    return page_shell("Search records", body, request)
+    return page_shell("Search", body, request)
+
+
+@login_required
+@require_GET
+def help_center(request: HttpRequest) -> HttpResponse:
+    q = clean_text(request.GET.get("q"), max_length=120)
+    articles = search_articles(q) if q else KB_ARTICLES
+    categories: list[str] = []
+    grouped: dict[str, list[dict]] = {}
+    for article in articles:
+        if article["category"] not in grouped:
+            categories.append(article["category"])
+            grouped[article["category"]] = []
+        grouped[article["category"]].append(article)
+    if articles:
+        sections = "".join(
+            f"""
+      <section class="dashboard-section">
+        <h2 class="search-group-title">{escape(category)}</h2>
+        <div class="search-jump-grid">{''.join(f'<a class="search-jump-card" href="/dashboard/help/{escape(item["slug"])}/"><strong>{escape(item["title"])}</strong><span>{escape(item["summary"])}</span></a>' for item in grouped[category])}</div>
+      </section>"""
+            for category in categories
+        )
+    else:
+        sections = '<section class="dashboard-section"><p class="empty-report-row">No guides matched. Try another word, or contact support below.</p></section>'
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">Help &amp; guides</p>
+        <h1>Knowledge library</h1>
+        <p>Step-by-step guides for every part of RozLedger. Search from the bar at the top of any page, or browse by topic below.</p>
+      </section>
+      <section class="dashboard-section">
+        <form method="get" class="dashboard-form invoice-server-form">
+          <label>Search guides<input name="q" value="{escape(q)}" placeholder="invoice, GST, payment, reconcile…" /></label>
+          <button class="button primary" type="submit">Search</button>
+        </form>
+      </section>
+      {sections}
+      <section class="dashboard-section help-contact">
+        <h2 class="search-group-title">Still need help?</h2>
+        <p>Chat with us on <a href="https://wa.me/919516022222" rel="noopener">WhatsApp</a> or visit the <a href="/contact/">Contact</a> page — we are happy to help.</p>
+      </section>
+    </main>
+    """
+    return page_shell("Help & guides", body, request)
+
+
+@login_required
+@require_GET
+def help_article(request: HttpRequest, slug: str) -> HttpResponse:
+    article = get_article(slug)
+    if not article:
+        raise Http404("Help article not found")
+    action = article.get("action")
+    action_html = ""
+    if action:
+        label, url = action
+        action_html = f'<a class="button primary" href="{escape(url)}">{escape(label)}</a>'
+    related = search_features(article["keywords"], request.user.is_staff)[:6]
+    related_html = ""
+    if related:
+        related_cards = "".join(
+            f'<a class="search-jump-card" href="{escape(feature["url"])}"><strong>{escape(feature["title"])}</strong><span>{escape(feature["category"])}</span></a>'
+            for feature in related
+        )
+        related_html = f"""
+      <section class="dashboard-section">
+        <h2 class="search-group-title">Related screens</h2>
+        <div class="search-jump-grid">{related_cards}</div>
+      </section>"""
+    body = f"""
+    <main class="dashboard-shell">
+      <section class="dashboard-hero reports-hero">
+        <p class="eyebrow">{escape(article["category"])}</p>
+        <h1>{escape(article["title"])}</h1>
+        <p>{escape(article["summary"])}</p>
+      </section>
+      <section class="dashboard-section">
+        <article class="help-article">{article["body"]}</article>
+        <div class="help-article-actions">{action_html}<a class="button ghost" href="/dashboard/help/">All guides</a></div>
+      </section>
+      {related_html}
+      <section class="dashboard-section help-contact">
+        <p>Did this help? If not, chat on <a href="https://wa.me/919516022222" rel="noopener">WhatsApp</a> or visit <a href="/contact/">Contact</a>.</p>
+      </section>
+    </main>
+    """
+    return page_shell(article["title"], body, request)
 
 
 @login_required

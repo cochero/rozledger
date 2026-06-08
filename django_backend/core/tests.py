@@ -14,6 +14,7 @@ from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient, CustomerCreditNote
 from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationSession, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, VendorDebitNote, Voucher
 from .views import invoice_outstanding_amount, vendor_bill_outstanding_amount, invoice_number, document_type_label
+from .views import search_features, search_articles, get_article
 
 
 TEST_SETTINGS = {
@@ -1944,7 +1945,7 @@ class AccountWorkflowTests(TestCase):
 
         search_response = self.client.get(f"{reverse('global_search')}?q=Ops&type=all", HTTP_HOST="rozledger.com")
         self.assertEqual(search_response.status_code, 200)
-        self.assertContains(search_response, "Find records")
+        self.assertContains(search_response, "Find anything")
         self.assertContains(search_response, "Ops Client")
         self.assertContains(search_response, "OPS-PAY-1")
 
@@ -3021,3 +3022,88 @@ class DocumentWorkflowTests(TestCase):
         body = response.content.decode("utf-8")
         self.assertIn("Quotation", body)
         self.assertIn("not a tax invoice", body)
+
+
+@override_settings(**TEST_SETTINGS)
+class HelpAndSearchTests(TestCase):
+    """Top-bar search reaching every function + the in-app knowledge library."""
+
+    def _login(self, email="search-user@example.com", staff=False):
+        user = User.objects.create_user(username=email, email=email, password="strong-password-123", is_staff=staff)
+        self.client.force_login(user)
+        return user
+
+    def test_top_search_box_and_help_on_every_dashboard_page(self):
+        self._login()
+        response = self.client.get(reverse("dashboard"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn('class="app-topbar"', body)
+        self.assertIn('class="topbar-search"', body)
+        self.assertIn('action="/dashboard/search/"', body)
+        self.assertIn('href="/dashboard/help/"', body)
+
+    def test_search_finds_functions(self):
+        self._login()
+        response = self.client.get(reverse("global_search"), {"q": "quotation"})
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Go to", body)
+        self.assertIn("Create quotation", body)
+
+    def test_search_finds_help_articles(self):
+        self._login()
+        response = self.client.get(reverse("global_search"), {"q": "reconcile"})
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Help articles", body)
+        self.assertIn("/dashboard/help/reconcile/", body)
+
+    def test_search_features_hides_staff_only_screens_from_non_staff(self):
+        titles = [feature["title"] for feature in search_features("gstn monitoring", is_staff=False)]
+        self.assertNotIn("GSTN e-Invoice API", titles)
+        self.assertNotIn("Monitoring", titles)
+        staff_titles = [feature["title"] for feature in search_features("gstn monitoring", is_staff=True)]
+        self.assertIn("GSTN e-Invoice API", staff_titles)
+
+    def test_search_helpers_empty_query_returns_nothing(self):
+        self.assertEqual(search_features(""), [])
+        self.assertEqual(search_articles(""), [])
+
+    def test_help_center_lists_articles_by_topic(self):
+        self._login()
+        response = self.client.get(reverse("help_center"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Knowledge library", body)
+        self.assertIn("Getting started with RozLedger", body)
+        self.assertIn("Quotations, proforma invoices and tax invoices", body)
+
+    def test_help_center_search_filters(self):
+        self._login()
+        response = self.client.get(reverse("help_center"), {"q": "gst"})
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("How GST is calculated", body)
+        self.assertNotIn("Track inventory and stock", body)
+
+    def test_help_article_renders(self):
+        self._login()
+        response = self.client.get(reverse("help_article", args=["quotation-proforma-invoice"]))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Convert to invoice", body)
+        self.assertIn("Related screens", body)
+
+    def test_help_article_unknown_returns_404(self):
+        self._login()
+        response = self.client.get(reverse("help_article", args=["does-not-exist"]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_help_requires_login(self):
+        response = self.client.get(reverse("help_center"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_article_lookup(self):
+        self.assertIsNotNone(get_article("getting-started"))
+        self.assertIsNone(get_article("nope"))
