@@ -2634,3 +2634,283 @@ textarea {
     padding: 0;
   }
 }
+
+/* ============================================================
+   Homepage 2026 redesign — professional sections
+   ============================================================ */
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--green);
+  color: #fff;
+  border-radius: 0 0 8px 0;
+  font-weight: 800;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+.nav-cta {
+  min-height: 38px;
+  padding: 0 14px;
+  margin-left: 6px;
+}
+
+.trust-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.trust-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+.trust-chips li::before {
+  content: "\2713";
+  color: var(--green);
+  font-weight: 900;
+}
+
+.stat-band {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  padding: clamp(24px, 4vw, 36px) clamp(18px, 4vw, 54px);
+  border-top: 1px solid var(--line);
+  background: var(--green-dark);
+}
+.stat {
+  text-align: center;
+  color: #fff;
+}
+.stat strong {
+  display: block;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.1;
+}
+.stat span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.pillar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: clamp(22px, 3vw, 30px);
+  background: var(--panel);
+}
+.pillar.accent {
+  border-color: var(--green);
+  box-shadow: var(--shadow);
+}
+.pillar-tag {
+  align-self: flex-start;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(18, 107, 79, 0.1);
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.pillar.accent .pillar-tag {
+  background: var(--green);
+  color: #fff;
+}
+.pillar p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.pillar .button {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
+.check-list {
+  display: grid;
+  gap: 9px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+.check-list li {
+  position: relative;
+  padding-left: 26px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.check-list li::before {
+  content: "\2713";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--green);
+  font-weight: 900;
+}
+
+.how .steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--panel);
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--green);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 900;
+}
+.step p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.cta-band {
+  padding: clamp(48px, 7vw, 84px) clamp(18px, 4vw, 54px);
+  background: linear-gradient(135deg, var(--green), var(--green-dark));
+  color: #fff;
+  text-align: center;
+}
+.cta-inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.cta-inner h2 {
+  color: #fff;
+}
+.cta-inner p {
+  margin: 14px 0 22px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 18px;
+  line-height: 1.6;
+}
+.cta-inner .hero-actions {
+  justify-content: center;
+}
+.button.secondary.light {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+  background: transparent;
+}
+.button.secondary.light:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.pricing-foot {
+  max-width: 1180px;
+  margin: 6px auto 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.pricing-foot a {
+  color: var(--green-dark);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+@media (max-width: 920px) {
+  .pillars,
+  .how .steps {
+    grid-template-columns: 1fr;
+  }
+  .stat-band {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Staff-only Razorpay webhook status panel (billing page) */
+.webhook-status-panel {
+  margin-top: 18px;
+}
+.webhook-status-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+}
+.staff-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.webhook-status-panel code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(18, 107, 79, 0.08);
+  color: var(--green-dark);
+  font-size: 13px;
+  word-break: break-all;
+}
+.webhook-events {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.webhook-events th,
+.webhook-events td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.webhook-events th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.webhook-events td:first-child {
+  font-weight: 700;
+  color: var(--green-dark);
+}
+.webhook-caption {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

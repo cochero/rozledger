@@ -72,6 +72,7 @@ urlpatterns = [
     path("dashboard/invoices/<int:invoice_id>/delete/", views.invoice_delete, name="invoice_delete"),
     path("dashboard/billing/pro/", views.pro_billing, name="pro_billing"),
     path("dashboard/billing/request-pro/", views.request_pro_activation, name="request_pro_activation"),
+    path("dashboard/billing/subscribe/", views.pro_subscribe, name="pro_subscribe"),
     path("dashboard/accounting/journal/<int:entry_id>/", views.journal_detail, name="journal_detail"),
     path("admin/", admin.site.urls),
     path("api/health", views.health, name="health"),
@@ -79,4 +80,5 @@ urlpatterns = [
     path("api/leads", views.create_lead, name="create_lead"),
     path("api/invoices", views.create_invoice, name="create_invoice"),
     path("api/affiliate-clicks", views.affiliate_click, name="affiliate_click"),
+    path("webhooks/razorpay/", views.razorpay_webhook, name="razorpay_webhook"),
 ]

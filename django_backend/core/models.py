@@ -915,6 +915,10 @@ class PlanSubscription(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     paused_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    provider = models.CharField(max_length=20, blank=True)
+    razorpay_subscription_id = models.CharField(max_length=64, blank=True, db_index=True)
+    razorpay_customer_id = models.CharField(max_length=64, blank=True)
+    last_payment_id = models.CharField(max_length=64, blank=True)
     admin_note = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -948,6 +952,11 @@ class PaymentGatewayConfig(models.Model):
     gateway = models.CharField(max_length=30, choices=GATEWAY_CHOICES, default="razorpay")
     enabled = models.BooleanField(default=False)
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="test")
+    razorpay_plan_id = models.CharField(max_length=64, blank=True)
+    subscription_amount = models.PositiveIntegerField(
+        default=29900,
+        help_text="Recurring amount in the smallest currency unit (paise for INR, cents for USD).",
+    )
     encrypted_key_id = models.TextField(blank=True)
     encrypted_key_secret = models.TextField(blank=True)
     encrypted_webhook_secret = models.TextField(blank=True)
@@ -1019,3 +1028,24 @@ class PaymentGatewayConfig(models.Model):
     @property
     def masked_webhook_secret(self) -> str:
         return mask_secret(self.webhook_secret)
+
+    @property
+    def subscription_currency(self) -> str:
+        return "USD" if self.market == "US" else "INR"
+
+
+class PaymentEvent(models.Model):
+    """Idempotency + audit log for incoming payment-gateway webhooks."""
+
+    provider = models.CharField(max_length=20, default="razorpay")
+    event_id = models.CharField(max_length=120, unique=True)
+    event_type = models.CharField(max_length=80, db_index=True)
+    reference_id = models.CharField(max_length=80, blank=True, db_index=True)
+    summary = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.event_type}:{self.event_id}"

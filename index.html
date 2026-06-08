@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IN">
   <head>
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-KLPE4CG3TK"></script>
@@ -9,95 +9,183 @@
       gtag('js', new Date());
       gtag('config', 'G-KLPE4CG3TK');
     </script>
+
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#126b4f" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="author" content="Klickevents Infosolutions Private Limited" />
+
+    <title>RozLedger — Free GST Invoicing + Accounting Suite for Indian Small Business</title>
     <meta
       name="description"
-      content="RozLedger helps Indian small businesses create GST invoices, save clients, track payments, record expenses and vendor bills, manage inventory basics and review small-business finance reports."
+      content="Create free GST invoices in 60 seconds, then run a full small-business accounting suite — clients, UPI payment links, WhatsApp reminders, receipts, vendor bills, inventory and finance reports. Free plan, no credit card."
     />
-    <title>RozLedger Accounting, Invoices and GST Tools for Indian Small Business</title>
+    <meta name="keywords" content="free GST invoice, GST invoicing software India, free invoice generator, UPI payment link, accounting software for small business, RozLedger" />
+
+    <link rel="canonical" href="https://rozledger.in/" />
+    <link rel="alternate" hreflang="en-in" href="https://rozledger.in/" />
+    <link rel="alternate" hreflang="en-us" href="https://rozledger.com/" />
+    <link rel="alternate" hreflang="x-default" href="https://rozledger.in/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RozLedger" />
+    <meta property="og:locale" content="en_IN" />
+    <meta property="og:title" content="Free GST Invoicing + Accounting Suite for Indian Small Business" />
+    <meta property="og:description" content="Make a free GST invoice in 60 seconds, share a UPI payment link, send a WhatsApp reminder — then grow into clients, receipts, vendor bills, inventory and finance reports." />
+    <meta property="og:url" content="https://rozledger.in/" />
+    <meta property="og:image" content="https://rozledger.in/rozledger-logo.png" />
+    <meta property="og:image:alt" content="RozLedger" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Free GST Invoicing + Accounting Suite for Indian Small Business" />
+    <meta name="twitter:description" content="Free GST invoices, UPI links and WhatsApp reminders — plus a real accounting suite for clients, payments, bills, inventory and reports." />
+    <meta name="twitter:image" content="https://rozledger.in/rozledger-logo.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.qrserver.com" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/styles.css" />
+
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "RozLedger",
-        "applicationCategory": "BusinessApplication",
-        "operatingSystem": "Web",
-        "url": "https://rozledger.in",
-        "description": "Invoices, GST calculations, payment reminders, client records, chart of accounts, AR/AP workflows, inventory basics and finance reports for Indian small businesses.",
-        "provider": {
-          "@type": "Organization",
-          "name": "Klickevents Infosolutions Private Limited",
-          "url": "https://klickevents.in",
-          "email": "cs@rozledger.in",
-          "telephone": "+919516022222"
-        }
-      }
-    </script>
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        "mainEntity": [
+        "@graph": [
           {
-            "@type": "Question",
-            "name": "What does RozLedger help Indian small businesses manage?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "RozLedger helps with invoice creation, GST totals, UPI payment links, WhatsApp reminders, client records, receipt posting, vendor bills, a chart of accounts, vouchers and finance reports."
+            "@type": "Organization",
+            "@id": "https://rozledger.in/#organization",
+            "name": "RozLedger",
+            "legalName": "Klickevents Infosolutions Private Limited",
+            "url": "https://rozledger.in/",
+            "logo": "https://rozledger.in/rozledger-logo.png",
+            "email": "cs@rozledger.in",
+            "telephone": "+919516022222",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "CC-39/2342, South Janath Road, Palarivattom, Thaimuriyil Building",
+              "addressLocality": "Ernakulam",
+              "addressRegion": "Kerala",
+              "postalCode": "682025",
+              "addressCountry": "IN"
+            },
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "telephone": "+919516022222",
+              "email": "cs@rozledger.in",
+              "contactType": "customer support",
+              "areaServed": "IN",
+              "availableLanguage": ["en", "hi"]
             }
           },
           {
-            "@type": "Question",
-            "name": "Can RozLedger replace a chartered accountant?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. RozLedger is a business recordkeeping and workflow tool. Tax filings and accounting advice should be verified with a qualified professional."
-            }
+            "@type": "WebSite",
+            "@id": "https://rozledger.in/#website",
+            "url": "https://rozledger.in/",
+            "name": "RozLedger",
+            "inLanguage": "en-IN",
+            "publisher": { "@id": "https://rozledger.in/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "RozLedger",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web",
+            "url": "https://rozledger.in/",
+            "description": "Free GST invoicing plus a small-business accounting suite: invoices, UPI payment links, WhatsApp reminders, clients, receipts, vendor bills, chart of accounts, inventory basics and finance reports.",
+            "publisher": { "@id": "https://rozledger.in/#organization" },
+            "offers": [
+              { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "INR" },
+              { "@type": "Offer", "name": "Pro (monthly)", "price": "299", "priceCurrency": "INR" }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://rozledger.in/" }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is RozLedger free to use?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. The Free plan lets you create GST invoice text, calculate GST, generate UPI payment links and QR codes, copy WhatsApp reminders and save up to 5 invoices per month — with no credit card required." }
+              },
+              {
+                "@type": "Question",
+                "name": "What is RozLedger?",
+                "acceptedAnswer": { "@type": "Answer", "text": "RozLedger is an India-first invoicing and accounting suite for small businesses. It combines free GST invoicing with clients, payment tracking, vendor bills, a double-entry chart of accounts, inventory basics and finance reports." }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I make a GST invoice for free?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Enter your business name, client, service and amount, choose a GST rate (5%, 12%, 18% or 28%), and RozLedger instantly builds invoice text with the GST total, due date, a UPI payment link and a WhatsApp reminder you can copy or save." }
+              },
+              {
+                "@type": "Question",
+                "name": "What accounting features does RozLedger include?",
+                "acceptedAnswer": { "@type": "Answer", "text": "RozLedger includes a chart of accounts, double-entry vouchers, customer receipts and accounts receivable, vendor bills and accounts payable, partial payments, credit and debit notes, FIFO inventory, audit logs and reports such as profit and loss, trial balance and AR/AP aging." }
+              },
+              {
+                "@type": "Question",
+                "name": "Does RozLedger work for freelancers, shops and agencies?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is built for Indian freelancers, tutors and coaching centres, agencies, consultants, traders and local service businesses that bill clients and want simple daily records." }
+              },
+              {
+                "@type": "Question",
+                "name": "Is RozLedger tax or accounting advice?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. RozLedger is a recordkeeping and workflow tool. GST filing, tax and legal treatment should be confirmed with a qualified professional." }
+              }
+            ]
           }
         ]
       }
     </script>
-    </head>
-  <body>
+  </head>
+  <body data-market="in">
+    <a class="skip-link" href="#tool-panel">Skip to the invoice tool</a>
+
     <header class="topbar">
-      <a class="brand" href="#tool" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
+      <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" width="200" height="52" /></a>
       <nav aria-label="Primary navigation">
-        <a href="#tool">Tool</a>
+        <a href="#suite">Accounting suite</a>
+        <a href="#pricing">Pricing</a>
         <a href="/content/">Templates</a>
         <a href="/blog/">Blog</a>
-        <a href="/pricing/">Pricing</a>
-        <a href="#pro">Pro</a>
         <a href="/contact/">Contact</a>
         <a href="/accounts/login/">Login</a>
+        <a class="button primary nav-cta" href="#tool-panel">Create free invoice</a>
       </nav>
     </header>
 
     <main>
       <section class="hero" id="tool">
         <div class="hero-copy">
-          <p class="eyebrow">Built for India: freelancers, tutors, agencies, local shops</p>
-          <h1>Manage invoices, GST, payments, expenses and small-business accounts in one daily workspace.</h1>
+          <p class="eyebrow">Free invoicing + accounting suite · Made in India</p>
+          <h1>Free GST invoices today. A complete accounting suite as you grow.</h1>
           <p class="subcopy">
-            RozLedger helps Indian small businesses create invoices, calculate GST, save clients,
-            prepare UPI collection links, record receipts and bills, keep inventory basics and review finance reports.
-            It supports day-to-day records, not tax or accounting advice.
+            RozLedger lets Indian small businesses raise a professional GST invoice in under a minute —
+            with the UPI payment link and WhatsApp reminder ready to send. Keep going and you get clients,
+            payment tracking, vendor bills, inventory and finance reports in one workspace.
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="#tool-panel">Start using</a>
-            <a class="button secondary" href="/accounts/register/">Create account</a>
-            <a class="button secondary" href="/pricing/">See pricing</a>
-            <a class="button secondary" href="/blog/">Read guides</a>
-            <a class="button secondary" href="/content/">Browse templates</a>
-            <a class="button secondary" href="#business">How it helps</a>
+            <a class="button primary" href="#tool-panel">Create a free invoice</a>
+            <a class="button secondary" href="#pricing">See pricing</a>
+            <a class="button secondary" href="#suite">Explore the accounting suite</a>
           </div>
+          <ul class="trust-chips" aria-label="Why RozLedger">
+            <li>Free forever plan</li>
+            <li>No credit card</li>
+            <li>GST 5/12/18/28%</li>
+            <li>UPI &amp; WhatsApp ready</li>
+          </ul>
         </div>
 
         <div class="tool-panel" id="tool-panel" aria-label="Daily business tool">
@@ -166,7 +254,7 @@
                 <strong id="dueDate">Today</strong>
               </div>
             </div>
-            <textarea id="invoiceText" rows="7" readonly></textarea>
+            <textarea id="invoiceText" rows="7" readonly aria-label="Generated invoice text"></textarea>
             <div class="actions">
               <button class="button primary" id="copyInvoice" type="button">Copy invoice text</button>
               <button class="button secondary" id="saveInvoice" type="button">Save invoice details</button>
@@ -196,10 +284,10 @@
               </label>
             </div>
             <div class="qr-box">
-              <img id="upiQr" alt="UPI payment QR code" />
+              <img id="upiQr" alt="UPI payment QR code" width="190" height="190" />
               <div>
                 <p class="small-title">UPI payment URI</p>
-                <textarea id="upiLink" rows="4" readonly></textarea>
+                <textarea id="upiLink" rows="4" readonly aria-label="UPI payment link"></textarea>
                 <button class="button primary" id="copyUpi" type="button">Copy UPI link</button>
               </div>
             </div>
@@ -238,98 +326,217 @@
                 <strong id="ordersNeeded">0</strong>
               </div>
             </div>
-            <textarea id="reminderText" rows="6" readonly></textarea>
+            <textarea id="reminderText" rows="6" readonly aria-label="WhatsApp reminder text"></textarea>
             <button class="button primary" id="copyReminder" type="button">Copy WhatsApp reminder</button>
           </section>
         </div>
       </section>
 
-      <section class="band" id="business">
+      <section class="stat-band" aria-label="RozLedger at a glance">
+        <div class="stat"><strong>60 sec</strong><span>To a ready GST invoice</span></div>
+        <div class="stat"><strong>&#8377;0</strong><span>Free plan, no card</span></div>
+        <div class="stat"><strong>Double-entry</strong><span>Real accounting ledger</span></div>
+        <div class="stat"><strong>UPI + WhatsApp</strong><span>Get paid faster</span></div>
+      </section>
+
+      <section class="band" id="features">
         <div class="section-head">
-          <p class="eyebrow">Built for daily business work</p>
-          <h2>One place for invoices, payments, clients, bills, stock and accounting records</h2>
+          <p class="eyebrow">Two products, one login</p>
+          <h2>Start with free invoicing. Grow into full accounting.</h2>
         </div>
-        <div class="business-grid">
-          <article>
-            <h3>Use it every day</h3>
-            <p>
-              Small businesses repeatedly prepare invoices, reminders, UPI text, GST totals and
-              collection targets. RozLedger keeps those everyday tasks in one simple browser tool.
-            </p>
+        <div class="pillars">
+          <article class="pillar">
+            <span class="pillar-tag">Always free</span>
+            <h3>Free invoicing &amp; collections</h3>
+            <p>Everything you need to bill a client and get paid today — no account required to try.</p>
+            <ul class="check-list">
+              <li>GST invoice text with 5/12/18/28% totals</li>
+              <li>UPI payment links and QR codes</li>
+              <li>WhatsApp payment reminders</li>
+              <li>Daily collection target calculator</li>
+              <li>Save up to 5 invoices per month, free</li>
+            </ul>
+            <a class="button secondary" href="#tool-panel">Try the free tool</a>
           </article>
-          <article>
-            <h3>Save repeated work</h3>
-            <p>
-              Prepare invoice text, payment messages and due-date reminders without rebuilding
-              the same customer note from scratch every time.
-            </p>
-          </article>
-          <article>
-            <h3>Find the right format</h3>
-            <p>
-              Browse ready templates for invoices, receipts, GST calculations and WhatsApp
-              payment follow-ups made for Indian business use cases.
-            </p>
-          </article>
-          <article>
-            <h3>Start proper records</h3>
-            <p>
-              Build a chart of accounts, post vouchers and keep balanced journal entries
-              for receipts, expenses, payables, inventory and corrections.
-            </p>
-          </article>
-          <article>
-            <h3>Track AP and AR</h3>
-            <p>
-              Select invoices when receiving payments, select vendor bills when paying suppliers,
-              and review customer/vendor balances from dashboard statements.
-            </p>
-          </article>
-          <article>
-            <h3>Keep India and US separate</h3>
-            <p>
-              RozLedger separates India and US market records in the same system, so GST/UPI and
-              sales-tax/payment-link workflows do not get mixed.
-            </p>
+          <article class="pillar accent">
+            <span class="pillar-tag">RozLedger Pro</span>
+            <h3>A complete accounting suite</h3>
+            <p>When invoicing becomes a business, switch on real books — without heavy software.</p>
+            <ul class="check-list">
+              <li>Saved clients, invoice history and PDF invoices</li>
+              <li>Receipts, partial payments and AR tracking</li>
+              <li>Vendor bills, expenses and AP workflow</li>
+              <li>Chart of accounts, vouchers &amp; double-entry journals</li>
+              <li>Inventory (FIFO), reports, audit trail &amp; reconciliation</li>
+            </ul>
+            <a class="button primary" href="#pricing">See Pro pricing</a>
           </article>
         </div>
       </section>
 
-      <section class="band faq" id="finance">
+      <section class="band" id="suite">
         <div class="section-head">
-          <p class="eyebrow">Accounts and finance</p>
-          <h2>Built toward complete small-business finance management</h2>
+          <p class="eyebrow">Accounting suite</p>
+          <h2>The day-to-day finance work, handled in one place</h2>
+        </div>
+        <div class="business-grid">
+          <article>
+            <h3>Invoices &amp; GST</h3>
+            <p>Create branded invoices with line items, GST rates and due dates. Download PDFs and share a public link.</p>
+          </article>
+          <article>
+            <h3>Payments &amp; AR</h3>
+            <p>Record full or partial receipts against invoices, track who owes you and review customer ledger statements.</p>
+          </article>
+          <article>
+            <h3>Expenses &amp; AP</h3>
+            <p>Log vendor bills, pay selected bills, upload bill photos and watch accounts payable and aging.</p>
+          </article>
+          <article>
+            <h3>Double-entry books</h3>
+            <p>A real chart of accounts with balanced vouchers and journals — every sale posts to the ledger automatically.</p>
+          </article>
+          <article>
+            <h3>Inventory basics</h3>
+            <p>Track stock items, godowns and FIFO cost layers so trading and product businesses see true margins.</p>
+          </article>
+          <article>
+            <h3>Reports &amp; audit</h3>
+            <p>Profit &amp; loss, trial balance and AR/AP aging, plus credit notes, reversals and an audit log that keeps records explainable.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="band how" id="how">
+        <div class="section-head">
+          <p class="eyebrow">How it works</p>
+          <h2>From first invoice to managed books in three steps</h2>
+        </div>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-num">1</span>
+            <h3>Create &amp; send</h3>
+            <p>Fill the invoice tool, copy the GST invoice text, share a UPI link and a WhatsApp reminder. No signup needed to start.</p>
+          </li>
+          <li class="step">
+            <span class="step-num">2</span>
+            <h3>Save &amp; track</h3>
+            <p>Create a free account to save invoices and clients, download PDFs and record payments as they arrive.</p>
+          </li>
+          <li class="step">
+            <span class="step-num">3</span>
+            <h3>Run the books</h3>
+            <p>Upgrade to Pro for vendor bills, inventory, double-entry journals, reports and an audit-safe trail.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="pro" id="pricing">
+        <div class="section-head pricing-hero">
+          <p class="eyebrow">Pricing</p>
+          <h2>Start free. Upgrade when RozLedger saves daily billing time.</h2>
+        </div>
+        <div class="pricing-grid" aria-label="RozLedger pricing plans">
+          <article class="price-card">
+            <span>Free</span>
+            <h2>Daily Tools</h2>
+            <p class="price">&#8377;0</p>
+            <ul class="feature-list">
+              <li>Save up to 5 invoices per month</li>
+              <li>GST invoice &amp; total generator</li>
+              <li>UPI payment link and QR</li>
+              <li>WhatsApp reminder copy</li>
+              <li>Template library &amp; dashboard access</li>
+            </ul>
+            <a class="button secondary" href="/accounts/register/">Create free account</a>
+          </article>
+          <article class="price-card featured-price">
+            <span>Pro</span>
+            <h2>RozLedger Pro</h2>
+            <p class="price">&#8377;299/month</p>
+            <ul class="feature-list">
+              <li>Save up to 100 invoices per month</li>
+              <li>Saved clients, invoice history &amp; PDFs</li>
+              <li>Receipts, partial payments &amp; AR tracking</li>
+              <li>Vendor bills, expenses &amp; AP workflow</li>
+              <li>Inventory, reports, audit trail &amp; reconciliation</li>
+            </ul>
+            <a class="button primary" href="/dashboard/billing/pro/">Get Pro</a>
+          </article>
+          <article class="price-card">
+            <span>Business</span>
+            <h2>Setup Help</h2>
+            <p class="price">Contact us</p>
+            <ul class="feature-list">
+              <li>For agencies &amp; shops with repeat billing</li>
+              <li>Invoice template &amp; account setup</li>
+              <li>Staff onboarding support</li>
+              <li>Custom workflow review</li>
+              <li>Phone / WhatsApp consultation</li>
+            </ul>
+            <a class="button secondary" href="https://wa.me/919516022222?text=Hi%20RozLedger%2C%20I%20want%20business%20setup%20help." rel="noopener">WhatsApp us</a>
+          </article>
+        </div>
+        <p class="pricing-foot">Prices in INR. The Free plan stays free. See full details on the <a href="/pricing/">pricing page</a>.</p>
+      </section>
+
+      <section class="band faq" id="faq">
+        <div class="section-head">
+          <p class="eyebrow">Questions &amp; answers</p>
+          <h2>RozLedger, answered</h2>
         </div>
         <details open>
-          <summary>What accounting functions are available now?</summary>
-          <p>Customers can save invoices, manage clients, post receipts, record expenses and vendor bills, post vouchers, use inventory basics, maintain a chart of accounts and review reports from posted entries.</p>
+          <summary>Is RozLedger free to use?</summary>
+          <p>Yes. The Free plan creates GST invoice text, GST totals, UPI payment links and QR codes, and WhatsApp reminders, and saves up to 5 invoices per month — no credit card required.</p>
+        </details>
+        <details>
+          <summary>How do I make a GST invoice for free?</summary>
+          <p>Enter your business, client, service and amount, choose a GST rate (5%, 12%, 18% or 28%), and RozLedger instantly builds invoice text with the GST total, due date, a UPI payment link and a WhatsApp reminder to copy or save.</p>
+        </details>
+        <details>
+          <summary>What accounting features are included?</summary>
+          <p>A chart of accounts, double-entry vouchers, customer receipts and AR, vendor bills and AP, partial payments, credit and debit notes, FIFO inventory, an audit log, and reports such as profit &amp; loss, trial balance and AR/AP aging.</p>
+        </details>
+        <details>
+          <summary>Who is RozLedger for?</summary>
+          <p>Indian freelancers, tutors and coaching centres, agencies, consultants, traders and local service businesses that bill clients and want simple, reliable daily records.</p>
         </details>
         <details>
           <summary>How are corrections handled?</summary>
-          <p>Posted records should not be silently deleted. RozLedger uses credit notes, vendor debit notes, payment reversals and audit logs to keep the business record explainable.</p>
+          <p>Posted records are not silently deleted. RozLedger uses credit notes, vendor debit notes, payment reversals and audit logs so your business record stays explainable.</p>
         </details>
         <details>
-          <summary>Is RozLedger accounting advice?</summary>
-          <p>No. RozLedger helps organize business records and workflows. GST, tax filing and legal treatment should be confirmed with a qualified professional.</p>
+          <summary>Is RozLedger accounting or tax advice?</summary>
+          <p>No. RozLedger organises business records and workflows. GST filing, tax and legal treatment should be confirmed with a qualified professional.</p>
         </details>
+      </section>
+
+      <section class="cta-band">
+        <div class="cta-inner">
+          <h2>Send your first free GST invoice now</h2>
+          <p>No download, no card. Create it in the browser and upgrade only when it pays for itself.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="#tool-panel">Create a free invoice</a>
+            <a class="button secondary light" href="/accounts/register/">Create free account</a>
+          </div>
+        </div>
       </section>
 
       <section class="pro" id="pro">
         <div class="section-head">
           <p class="eyebrow">Early access</p>
-          <h2>Help shape RozLedger Pro</h2>
+          <h2>Be first to RozLedger Pro updates</h2>
         </div>
         <div class="pro-layout">
           <div>
             <p>
-              RozLedger Pro is being planned for users who need saved clients, invoice history,
-              branded PDFs, payment tracking, chart of accounts and accounting records. Join the early-access list if
-              you want to be contacted before the paid version is launched.
+              Pro is rolling out with saved clients, branded PDFs, payment tracking, vendor bills,
+              inventory and accounting reports. Join the list to be contacted before new paid features launch.
             </p>
             <ul class="feature-list">
-              <li>Free plan: save up to 5 invoices per month with invoice text, GST totals, UPI link and reminder copy.</li>
-              <li>Pro plan: save up to 100 invoices per month with clients, PDFs, receipts, vendor bills, accounting reports and payment tracking.</li>
-              <li>India Pro price: Rs 299/month after payment gateway approval.</li>
+              <li>Free plan: save up to 5 invoices per month with GST totals, UPI links and reminders.</li>
+              <li>Pro plan: save up to 100 invoices per month with clients, PDFs, receipts, vendor bills and reports.</li>
+              <li>India Pro price: &#8377;299/month.</li>
             </ul>
           </div>
           <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="home_pro_waitlist">
@@ -370,8 +577,8 @@
     <footer class="site-footer">
       <div class="footer-grid">
         <div class="footer-brand">
-          <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
-          <p>Practical invoice, GST, UPI, accounting and payment reminder helpers for Indian small businesses.</p>
+          <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" width="200" height="52" /></a>
+          <p>Free GST invoicing plus a practical accounting suite — invoices, UPI, payments, bills, inventory and reports for Indian small businesses.</p>
           <p class="footer-note">Verify tax and legal details with a qualified professional.</p>
         </div>
         <div>
@@ -419,6 +626,6 @@
       <span class="whatsapp-text">WhatsApp</span>
     </a>
 
-    <script src="app.js"></script>
+    <script src="/app.js"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-US">
   <head>
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-KLPE4CG3TK"></script>
@@ -9,82 +9,171 @@
       gtag('js', new Date());
       gtag('config', 'G-KLPE4CG3TK');
     </script>
+
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#126b4f" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+
+    <title>RozLedger — Free Invoicing + Accounting Suite for US Service Businesses</title>
     <meta
       name="description"
-      content="RozLedger helps US service businesses create invoices, save clients, track payments, record expenses and vendor bills, manage basic inventory and review small-business finance reports."
+      content="Create free invoices in seconds, share a payment link, send reminders — then run a real accounting suite: clients, receipts, vendor bills, expenses, inventory and finance reports. Free plan, no credit card."
     />
-    <title>RozLedger | Invoices, Accounting and Payment Records for US Service Businesses</title>
+    <meta name="keywords" content="free invoice generator, invoicing software for small business, payment link, accounting software for service business, RozLedger" />
+
+    <link rel="canonical" href="https://rozledger.com/" />
+    <link rel="alternate" hreflang="en-us" href="https://rozledger.com/" />
+    <link rel="alternate" hreflang="en-in" href="https://rozledger.in/" />
+    <link rel="alternate" hreflang="x-default" href="https://rozledger.in/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RozLedger" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Free Invoicing + Accounting Suite for US Service Businesses" />
+    <meta property="og:description" content="Make a free invoice in seconds, share a payment link, send a reminder — then grow into clients, receipts, vendor bills, inventory and finance reports." />
+    <meta property="og:url" content="https://rozledger.com/" />
+    <meta property="og:image" content="https://rozledger.com/rozledger-logo.png" />
+    <meta property="og:image:alt" content="RozLedger" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Free Invoicing + Accounting Suite for US Service Businesses" />
+    <meta name="twitter:description" content="Free invoices, payment links and reminders — plus a real accounting suite for clients, payments, bills, inventory and reports." />
+    <meta name="twitter:image" content="https://rozledger.com/rozledger-logo.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.qrserver.com" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
+
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "RozLedger",
-        "applicationCategory": "BusinessApplication",
-        "operatingSystem": "Web",
-        "url": "https://rozledger.com",
-        "description": "Invoices, client records, payment reminders, AR/AP workflows, chart of accounts, inventory basics and finance reports for US small service businesses."
-      }
-    </script>
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        "mainEntity": [
+        "@graph": [
           {
-            "@type": "Question",
-            "name": "What can US service businesses manage in RozLedger?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "RozLedger helps US service businesses create invoices, save clients, track payment status, record expenses and vendor bills, use a chart of accounts, post vouchers and review finance reports."
+            "@type": "Organization",
+            "@id": "https://rozledger.com/#organization",
+            "name": "RozLedger",
+            "legalName": "Klickevents Infosolutions Private Limited",
+            "url": "https://rozledger.com/",
+            "logo": "https://rozledger.com/rozledger-logo.png",
+            "email": "cs@rozledger.in",
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "email": "cs@rozledger.in",
+              "contactType": "customer support",
+              "areaServed": "US",
+              "availableLanguage": ["en"]
             }
           },
           {
-            "@type": "Question",
-            "name": "Is RozLedger a tax filing product?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. RozLedger is an invoice, recordkeeping and finance workflow tool. Tax and accounting decisions should be verified with a qualified professional."
-            }
+            "@type": "WebSite",
+            "@id": "https://rozledger.com/#website",
+            "url": "https://rozledger.com/",
+            "name": "RozLedger",
+            "inLanguage": "en-US",
+            "publisher": { "@id": "https://rozledger.com/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "RozLedger",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web",
+            "url": "https://rozledger.com/",
+            "description": "Free invoicing plus a small-business accounting suite: invoices, payment links, reminders, clients, receipts, vendor bills, chart of accounts, inventory basics and finance reports for US service businesses.",
+            "publisher": { "@id": "https://rozledger.com/#organization" },
+            "offers": [
+              { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
+              { "@type": "Offer", "name": "Pro (monthly)", "price": "3.99", "priceCurrency": "USD" }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://rozledger.com/" }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is RozLedger free to use?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. The Free plan creates professional invoices, payment links and QR codes, and reminder messages, and saves up to 5 invoices per month — no credit card required." }
+              },
+              {
+                "@type": "Question",
+                "name": "What is RozLedger?",
+                "acceptedAnswer": { "@type": "Answer", "text": "RozLedger is an invoicing and accounting suite for US service businesses. It combines free invoicing with clients, payment tracking, vendor bills, a double-entry chart of accounts, inventory basics and finance reports." }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I make a free invoice?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Enter your business, client, service and amount, add a sales-tax rate if needed, and RozLedger builds invoice text with the total, due date, a payment link and a reminder message you can copy or save." }
+              },
+              {
+                "@type": "Question",
+                "name": "What accounting features does RozLedger include?",
+                "acceptedAnswer": { "@type": "Answer", "text": "A chart of accounts, double-entry vouchers, customer receipts and accounts receivable, vendor bills and accounts payable, partial payments, credit and debit notes, FIFO inventory, audit logs and reports such as profit and loss, trial balance and AR/AP aging." }
+              },
+              {
+                "@type": "Question",
+                "name": "Who is RozLedger for?",
+                "acceptedAnswer": { "@type": "Answer", "text": "US handymen, cleaners, lawn care, mobile repair, tutors, consultants, photographers, coaches and other independent service businesses that bill clients and want simple records." }
+              },
+              {
+                "@type": "Question",
+                "name": "Is RozLedger tax or accounting advice?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. RozLedger is an invoice, recordkeeping and finance workflow tool. Tax and accounting decisions should be verified with a qualified professional." }
+              }
+            ]
           }
         ]
       }
     </script>
   </head>
   <body data-market="us">
+    <a class="skip-link" href="#tool-panel">Skip to the invoice tool</a>
+
     <header class="topbar">
-      <a class="brand" href="#tool" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
+      <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" width="200" height="52" /></a>
       <nav aria-label="Primary navigation">
-        <a href="#tool">Tool</a>
-        <a href="#business">Who it helps</a>
+        <a href="#suite">Accounting suite</a>
         <a href="#pricing">Pricing</a>
-        <a href="/accounts/register/">Create account</a>
+        <a href="#how">How it works</a>
+        <a href="/contact/">Contact</a>
         <a href="/accounts/login/">Login</a>
+        <a class="button primary nav-cta" href="#tool-panel">Create free invoice</a>
       </nav>
     </header>
 
     <main>
       <section class="hero" id="tool">
         <div class="hero-copy">
-          <p class="eyebrow">Built for US small service businesses</p>
-          <h1>Invoices, payment reminders and simple finance control for service businesses.</h1>
+          <p class="eyebrow">Free invoicing + accounting suite for service businesses</p>
+          <h1>Free invoices today. A complete accounting suite as you grow.</h1>
           <p class="subcopy">
-            Create a professional invoice, save the client, copy a payment reminder, keep a chart
-            of accounts, record customer payments, vendor bills and daily expenses without adopting heavy accounting software too early.
+            RozLedger lets US service businesses send a professional invoice in seconds — with a payment
+            link and reminder ready to go. Keep going and you get saved clients, payment tracking,
+            vendor bills, inventory and finance reports in one simple workspace.
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="#tool-panel">Create invoice</a>
-            <a class="button secondary" href="/accounts/register/">Save invoices</a>
+            <a class="button primary" href="#tool-panel">Create a free invoice</a>
             <a class="button secondary" href="#pricing">See pricing</a>
+            <a class="button secondary" href="#suite">Explore the accounting suite</a>
           </div>
+          <ul class="trust-chips" aria-label="Why RozLedger">
+            <li>Free forever plan</li>
+            <li>No credit card</li>
+            <li>Sales-tax ready</li>
+            <li>Payment links &amp; reminders</li>
+          </ul>
         </div>
 
         <div class="tool-panel" id="tool-panel" aria-label="Fast invoice tool">
@@ -154,7 +243,7 @@
                 <strong id="dueDate">Today</strong>
               </div>
             </div>
-            <textarea id="invoiceText" rows="7" readonly></textarea>
+            <textarea id="invoiceText" rows="7" readonly aria-label="Generated invoice text"></textarea>
             <div class="actions">
               <button class="button primary" id="copyInvoice" type="button">Copy invoice text</button>
               <button class="button secondary" id="saveInvoice" type="button">Save invoice details</button>
@@ -184,10 +273,10 @@
               </label>
             </div>
             <div class="qr-box">
-              <img id="upiQr" alt="Payment link QR code" />
+              <img id="upiQr" alt="Payment link QR code" width="190" height="190" />
               <div>
                 <p class="small-title">Payment link</p>
-                <textarea id="upiLink" rows="4" readonly></textarea>
+                <textarea id="upiLink" rows="4" readonly aria-label="Payment link"></textarea>
                 <button class="button primary" id="copyUpi" type="button">Copy payment link</button>
               </div>
             </div>
@@ -226,121 +315,283 @@
                 <strong id="ordersNeeded">0</strong>
               </div>
             </div>
-            <textarea id="reminderText" rows="6" readonly></textarea>
+            <textarea id="reminderText" rows="6" readonly aria-label="Reminder text"></textarea>
             <button class="button primary" id="copyReminder" type="button">Copy reminder</button>
           </section>
         </div>
       </section>
 
-      <section class="band" id="business">
+      <section class="stat-band" aria-label="RozLedger at a glance">
+        <div class="stat"><strong>Seconds</strong><span>To a ready invoice</span></div>
+        <div class="stat"><strong>$0</strong><span>Free plan, no card</span></div>
+        <div class="stat"><strong>Double-entry</strong><span>Real accounting ledger</span></div>
+        <div class="stat"><strong>Links + reminders</strong><span>Get paid faster</span></div>
+      </section>
+
+      <section class="band" id="features">
         <div class="section-head">
-          <p class="eyebrow">Use it after every job</p>
-          <h2>Made for service businesses that need billing, records and practical finance control</h2>
+          <p class="eyebrow">Two products, one login</p>
+          <h2>Start with free invoicing. Grow into full accounting.</h2>
+        </div>
+        <div class="pillars">
+          <article class="pillar">
+            <span class="pillar-tag">Always free</span>
+            <h3>Free invoicing &amp; collections</h3>
+            <p>Everything you need to bill a client and get paid today — no account required to try.</p>
+            <ul class="check-list">
+              <li>Professional invoice text with sales-tax totals</li>
+              <li>Payment links and QR codes</li>
+              <li>Polite payment reminder messages</li>
+              <li>Daily collection target calculator</li>
+              <li>Save up to 5 invoices per month, free</li>
+            </ul>
+            <a class="button secondary" href="#tool-panel">Try the free tool</a>
+          </article>
+          <article class="pillar accent">
+            <span class="pillar-tag">RozLedger Pro</span>
+            <h3>A complete accounting suite</h3>
+            <p>When invoicing becomes a business, switch on real books — without heavy software.</p>
+            <ul class="check-list">
+              <li>Saved clients, invoice history and PDF invoices</li>
+              <li>Receipts, partial payments and AR tracking</li>
+              <li>Vendor bills, expenses and AP workflow</li>
+              <li>Chart of accounts, vouchers &amp; double-entry journals</li>
+              <li>Inventory (FIFO), reports, audit trail &amp; reconciliation</li>
+            </ul>
+            <a class="button primary" href="#pricing">See Pro pricing</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="band" id="suite">
+        <div class="section-head">
+          <p class="eyebrow">Accounting suite</p>
+          <h2>The day-to-day finance work, handled in one place</h2>
         </div>
         <div class="business-grid">
           <article>
-            <span>Home services</span>
-            <h3>Handymen, cleaners, lawn care, mobile repair</h3>
-            <p>Create invoices fast, save repeat clients, and send polite reminders when payment is late.</p>
+            <h3>Invoices &amp; sales tax</h3>
+            <p>Create professional invoices with line items, optional sales tax and due dates. Download PDFs and share a link.</p>
           </article>
           <article>
-            <span>Independent work</span>
-            <h3>Tutors, consultants, photographers, coaches</h3>
-            <p>Keep each client, job, amount, due date and payment status in one practical dashboard.</p>
+            <h3>Payments &amp; AR</h3>
+            <p>Record full or partial payments against invoices, track who owes you and review customer ledger statements.</p>
           </article>
           <article>
-            <span>Simple records</span>
-            <h3>Professional PDFs without accounting complexity</h3>
-            <p>RozLedger helps with invoice records and payment follow-up. It is not tax filing or accounting advice.</p>
+            <h3>Expenses &amp; AP</h3>
+            <p>Log vendor bills, pay selected bills, upload receipts and watch accounts payable and aging.</p>
           </article>
           <article>
-            <span>Accounting base</span>
-            <h3>Chart of accounts, vouchers and reports</h3>
-            <p>Organize daily finance activity with accounts for bank, receivables, payables, income, expenses and corrections.</p>
+            <h3>Double-entry books</h3>
+            <p>A real chart of accounts with balanced vouchers and journals — every sale posts to the ledger automatically.</p>
           </article>
           <article>
-            <span>Growth path</span>
-            <h3>AP, AR and payment records</h3>
-            <p>Receive payments against selected invoices, record vendor bills and review customer/vendor balances from the dashboard.</p>
+            <h3>Inventory basics</h3>
+            <p>Track stock items and FIFO cost layers so product and trading businesses see true margins.</p>
           </article>
           <article>
-            <span>Two markets</span>
-            <h3>US and India records stay separate</h3>
-            <p>US users get dollar and sales-tax workflows while India users keep GST and UPI workflows in the same platform.</p>
+            <h3>Reports &amp; audit</h3>
+            <p>Profit &amp; loss, trial balance and AR/AP aging, plus credit notes, reversals and an audit log that keeps records explainable.</p>
           </article>
         </div>
       </section>
 
-      <section class="band faq" id="finance">
+      <section class="band how" id="how">
         <div class="section-head">
-          <p class="eyebrow">Finance workspace</p>
-          <h2>Designed to grow from invoices into small-business finance management</h2>
+          <p class="eyebrow">How it works</p>
+          <h2>From first invoice to managed books in three steps</h2>
         </div>
-        <details open>
-          <summary>What accounting functions are available now?</summary>
-          <p>Users can create invoices, save clients, record receipts, record expenses and vendor bills, maintain a chart of accounts, post vouchers and review reports from posted entries.</p>
-        </details>
-        <details>
-          <summary>How does this help with accounts receivable?</summary>
-          <p>Customer payments can be posted against selected invoices, including partial payments. Customer ledger statements show invoices, receipts and balances.</p>
-        </details>
-        <details>
-          <summary>How does this help with accounts payable?</summary>
-          <p>Users can record vendor bills, pay selected bills, track partial payments and review AP aging and vendor ledger statements.</p>
-        </details>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-num">1</span>
+            <h3>Create &amp; send</h3>
+            <p>Fill the invoice tool, copy the invoice text, share a payment link and a reminder. No signup needed to start.</p>
+          </li>
+          <li class="step">
+            <span class="step-num">2</span>
+            <h3>Save &amp; track</h3>
+            <p>Create a free account to save invoices and clients, download PDFs and record payments as they arrive.</p>
+          </li>
+          <li class="step">
+            <span class="step-num">3</span>
+            <h3>Run the books</h3>
+            <p>Upgrade to Pro for vendor bills, inventory, double-entry journals, reports and an audit-safe trail.</p>
+          </li>
+        </ol>
       </section>
 
       <section class="pro" id="pricing">
-        <div>
-          <p class="eyebrow">US launch plan</p>
+        <div class="section-head pricing-hero">
+          <p class="eyebrow">Pricing</p>
           <h2>Start free. Upgrade when reminders save time.</h2>
-          <ul>
-            <li>Free: save up to 5 invoices per month with client records.</li>
-            <li>Paid: save up to 100 invoices per month with logo, PDFs, clients, receipts, vendor bills, reminders and accounting records.</li>
-            <li>US launch price: $3.99/month after payment gateway setup.</li>
-          </ul>
         </div>
-        <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="us_launch_interest">
-          <input type="hidden" name="source" value="us_launch_interest" />
-          <input type="hidden" name="landing_path" value="/us-home" />
-          <label>Your name<input name="name" required /></label>
-          <label>Email<input name="email" type="email" required /></label>
-          <label>Phone<input name="phone" placeholder="Optional" /></label>
-          <label>Business type
-            <select name="business_type">
-              <option>Shop or local service</option>
-              <option>Freelancer</option>
-              <option>Consultant</option>
-              <option>Agency</option>
-              <option>Tutor or coaching</option>
-            </select>
-          </label>
-          <button class="button primary" type="submit">Join US early access</button>
-          <p class="status-text" id="leadStatus" aria-live="polite"></p>
-        </form>
+        <div class="pricing-grid" aria-label="RozLedger pricing plans">
+          <article class="price-card">
+            <span>Free</span>
+            <h2>Daily Tools</h2>
+            <p class="price">$0</p>
+            <ul class="feature-list">
+              <li>Save up to 5 invoices per month</li>
+              <li>Invoice &amp; total generator</li>
+              <li>Payment link and QR</li>
+              <li>Reminder message copy</li>
+              <li>Dashboard access</li>
+            </ul>
+            <a class="button secondary" href="/accounts/register/">Create free account</a>
+          </article>
+          <article class="price-card featured-price">
+            <span>Pro</span>
+            <h2>RozLedger Pro</h2>
+            <p class="price">$3.99/month</p>
+            <ul class="feature-list">
+              <li>Save up to 100 invoices per month</li>
+              <li>Saved clients, invoice history &amp; PDFs</li>
+              <li>Receipts, partial payments &amp; AR tracking</li>
+              <li>Vendor bills, expenses &amp; AP workflow</li>
+              <li>Inventory, reports, audit trail &amp; reconciliation</li>
+            </ul>
+            <a class="button primary" href="/dashboard/billing/pro/">Get Pro</a>
+          </article>
+          <article class="price-card">
+            <span>Business</span>
+            <h2>Setup Help</h2>
+            <p class="price">Contact us</p>
+            <ul class="feature-list">
+              <li>For teams with repeat billing</li>
+              <li>Invoice template &amp; account setup</li>
+              <li>Staff onboarding support</li>
+              <li>Custom workflow review</li>
+              <li>Email consultation</li>
+            </ul>
+            <a class="button secondary" href="/contact/">Contact us</a>
+          </article>
+        </div>
+        <p class="pricing-foot">Prices in USD. The Free plan stays free.</p>
+      </section>
+
+      <section class="band faq" id="faq">
+        <div class="section-head">
+          <p class="eyebrow">Questions &amp; answers</p>
+          <h2>RozLedger, answered</h2>
+        </div>
+        <details open>
+          <summary>Is RozLedger free to use?</summary>
+          <p>Yes. The Free plan creates professional invoice text, payment links and QR codes, and reminder messages, and saves up to 5 invoices per month — no credit card required.</p>
+        </details>
+        <details>
+          <summary>How do I make a free invoice?</summary>
+          <p>Enter your business, client, service and amount, add a sales-tax rate if needed, and RozLedger builds invoice text with the total, due date, a payment link and a reminder message to copy or save.</p>
+        </details>
+        <details>
+          <summary>What accounting features are included?</summary>
+          <p>A chart of accounts, double-entry vouchers, customer receipts and AR, vendor bills and AP, partial payments, credit and debit notes, FIFO inventory, an audit log, and reports such as profit &amp; loss, trial balance and AR/AP aging.</p>
+        </details>
+        <details>
+          <summary>Who is RozLedger for?</summary>
+          <p>US handymen, cleaners, lawn care, mobile repair, tutors, consultants, photographers, coaches and other independent service businesses that bill clients and want simple records.</p>
+        </details>
+        <details>
+          <summary>How does accounts receivable work?</summary>
+          <p>Customer payments can be posted against selected invoices, including partial payments, and customer ledger statements show invoices, receipts and balances.</p>
+        </details>
+        <details>
+          <summary>Is RozLedger tax or accounting advice?</summary>
+          <p>No. RozLedger is an invoice and recordkeeping tool. Tax and accounting decisions should be verified with a qualified professional.</p>
+        </details>
+      </section>
+
+      <section class="cta-band">
+        <div class="cta-inner">
+          <h2>Send your first free invoice now</h2>
+          <p>No download, no card. Create it in the browser and upgrade only when it pays for itself.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="#tool-panel">Create a free invoice</a>
+            <a class="button secondary light" href="/accounts/register/">Create free account</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="pro" id="pro">
+        <div class="section-head">
+          <p class="eyebrow">Early access</p>
+          <h2>Join the US early-access list</h2>
+        </div>
+        <div class="pro-layout">
+          <div>
+            <p>
+              Pro is rolling out with saved clients, branded PDFs, payment tracking, vendor bills,
+              inventory and accounting reports. Join the list to hear about new paid features first.
+            </p>
+            <ul class="feature-list">
+              <li>Free: save up to 5 invoices per month with client records.</li>
+              <li>Pro: save up to 100 invoices per month with PDFs, receipts, vendor bills, reminders and accounting records.</li>
+              <li>US Pro price: $3.99/month.</li>
+            </ul>
+          </div>
+          <form class="lead-form" id="leadForm" method="post" action="/pro/request/" data-source="us_launch_interest">
+            <input type="hidden" name="source" value="us_launch_interest" />
+            <input type="hidden" name="landing_path" value="/us-home" />
+            <label class="trap-field" aria-hidden="true" tabindex="-1">
+              Website
+              <input name="website" autocomplete="off" tabindex="-1" />
+            </label>
+            <label>
+              Your name
+              <input id="leadName" name="name" placeholder="Business owner name" required />
+            </label>
+            <label>
+              Email
+              <input id="leadEmail" name="email" type="email" placeholder="you@example.com" required />
+            </label>
+            <label>
+              Phone
+              <input id="leadPhone" name="phone" placeholder="Optional" />
+            </label>
+            <label>
+              Business type
+              <select id="leadBusiness" name="business_type">
+                <option>Shop or local service</option>
+                <option>Freelancer</option>
+                <option>Consultant</option>
+                <option>Agency</option>
+                <option>Tutor or coaching</option>
+              </select>
+            </label>
+            <button class="button primary" type="submit">Join US early access</button>
+            <p class="status-text" id="leadStatus" aria-live="polite"></p>
+          </form>
+        </div>
       </section>
     </main>
 
     <footer class="site-footer">
       <div class="footer-grid">
-        <div>
-          <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" /></a>
-          <p>Fast invoices, client records, accounting records and payment reminders for US small service businesses.</p>
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="RozLedger home"><img class="brand-logo" src="/rozledger-logo.png" alt="RozLedger" width="200" height="52" /></a>
+          <p>Free invoicing plus a practical accounting suite — invoices, payments, bills, inventory and reports for US service businesses.</p>
+          <p class="footer-note">RozLedger is an invoice and recordkeeping tool, not tax or accounting advice.</p>
         </div>
         <div>
-          <h3>Product</h3>
+          <h2>Product</h2>
           <ul>
-            <li><a href="#tool">Invoice tool</a></li>
+            <li><a href="#tool-panel">Invoice tool</a></li>
+            <li><a href="#suite">Accounting suite</a></li>
             <li><a href="#pricing">Pricing</a></li>
             <li><a href="/accounts/register/">Create account</a></li>
           </ul>
         </div>
         <div>
-          <h3>Legal</h3>
+          <h2>Support</h2>
           <ul>
-            <li><a href="/privacy/">Privacy</a></li>
-            <li><a href="/terms/">Terms</a></li>
+            <li><a href="mailto:cs@rozledger.in">cs@rozledger.in</a></li>
             <li><a href="/contact/">Contact</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Legal</h2>
+          <ul>
+            <li><a href="/privacy/">Privacy Policy</a></li>
+            <li><a href="/terms/">Terms of Use</a></li>
           </ul>
         </div>
       </div>
