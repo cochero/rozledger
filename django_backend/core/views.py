@@ -2080,7 +2080,6 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/invoices/new/", "I", "Create invoice"),
         ("/dashboard/payments/new/", "R", "Payments received"),
         ("/dashboard/expenses/new/", "E", "Expenses & bills"),
-        ("/dashboard/expenses/upload/", "U", "Upload bill"),
         ("/dashboard/ai/", "AI", "AI assistant"),
         ("/dashboard/vouchers/new/", "V", "Vouchers"),
         ("/dashboard/inventory/", "N", "Inventory"),
@@ -6085,6 +6084,10 @@ def expense_new(request: HttpRequest) -> HttpResponse:
         <p class="eyebrow">Accounts payable</p>
         <h1>Record expense or vendor bill</h1>
         <p class="account-copy">Use this for paid expenses and unpaid supplier bills. Paid expenses reduce bank or cash; unpaid bills increase accounts payable.</p>
+        <div class="upload-cta">
+          <p>Have a paper or photo bill? Upload it and RozLedger will prefill the vendor, amount and date for you.</p>
+          <a class="button secondary" href="/dashboard/expenses/upload/">Upload bill photo or PDF</a>
+        </div>
         {error_html}
         <form method="post" class="account-form invoice-server-form">
           {csrf_input(request)}
