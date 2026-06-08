@@ -13,7 +13,7 @@ from django.utils import timezone
 from .admin import PlanSubscriptionAdmin
 from .models import Account, AuditLog, BusinessProfile, Client as SavedClient, CustomerCreditNote
 from .models import ExpenseUploadDraft, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationSession, StockCostLayer, StockLayerConsumption, StockMovement, VendorBill, VendorBillPayment, VendorDebitNote, Voucher
-from .views import invoice_outstanding_amount, vendor_bill_outstanding_amount
+from .views import invoice_outstanding_amount, vendor_bill_outstanding_amount, invoice_number, document_type_label
 
 
 TEST_SETTINGS = {
@@ -2841,3 +2841,183 @@ class GstnApiTests(TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertIn("ACME LTD", response.content.decode("utf-8"))
+
+
+@override_settings(**TEST_SETTINGS)
+class DocumentWorkflowTests(TestCase):
+    """Quotation -> Proforma -> Tax invoice document workflow.
+
+    The defining rule: quotations and proforma invoices are non-accounting
+    documents (no sales voucher, no receivable, no GST liability). Only a tax
+    invoice posts to the ledger, and conversion to a tax invoice is what posts.
+    """
+
+    def _login(self, email="doc-owner@example.com"):
+        user = User.objects.create_user(username=email, email=email, password="strong-password-123")
+        self.client.force_login(user)
+        return user
+
+    def _create_document(self, document_type, *, amount="1000", gst_rate="18", include_gst="on"):
+        response = self.client.post(
+            reverse("invoice_new"),
+            {
+                "document_type": document_type,
+                "business_name": "Doc Business",
+                "template": "classic",
+                "accent_color": "#126b4f",
+                "business_phone": "+91 90000 11111",
+                "business_address": "Doc Address",
+                "client_name": "Doc Client",
+                "client_phone": "+91 90000 22222",
+                "client_address": "Client Address",
+                "client_gstin": "",
+                "place_of_supply": "Kerala",
+                "supply_type": "intra",
+                "service_name": "Doc Service",
+                "include_gst": include_gst,
+                "amount_before_gst": amount,
+                "gst_rate": gst_rate,
+                "due_days": "7",
+                "upi_link": "",
+                "bank_details": "",
+                "thank_you_note": "Thanks.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        return Invoice.objects.order_by("-id").first()
+
+    def test_quotation_does_not_post_to_ledger(self):
+        self._login()
+        inv = self._create_document("quotation")
+        self.assertEqual(inv.document_type, "quotation")
+        self.assertIsNone(inv.sales_voucher)
+        self.assertEqual(invoice_outstanding_amount(inv), Decimal("0.00"))
+        self.assertFalse(Voucher.objects.filter(voucher_type="sales").exists())
+
+    def test_proforma_does_not_post_to_ledger(self):
+        self._login()
+        inv = self._create_document("proforma")
+        self.assertEqual(inv.document_type, "proforma")
+        self.assertIsNone(inv.sales_voucher)
+        self.assertEqual(invoice_outstanding_amount(inv), Decimal("0.00"))
+        self.assertFalse(Voucher.objects.filter(voucher_type="sales").exists())
+
+    def test_tax_invoice_posts_to_ledger(self):
+        self._login()
+        inv = self._create_document("tax_invoice")
+        self.assertEqual(inv.document_type, "tax_invoice")
+        self.assertIsNotNone(inv.sales_voucher)
+        self.assertGreater(invoice_outstanding_amount(inv), Decimal("0"))
+
+    def test_document_number_prefixes(self):
+        self._login()
+        quotation = self._create_document("quotation")
+        proforma = self._create_document("proforma")
+        tax_invoice = self._create_document("tax_invoice")
+        self.assertTrue(invoice_number(quotation).startswith("QTN-"))
+        self.assertTrue(invoice_number(proforma).startswith("PI-"))
+        self.assertTrue(invoice_number(tax_invoice).startswith("RL-"))
+
+    def test_convert_quotation_to_proforma_keeps_books_clean(self):
+        self._login()
+        inv = self._create_document("quotation")
+        response = self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "proforma"})
+        self.assertEqual(response.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.document_type, "proforma")
+        self.assertIsNone(inv.sales_voucher)
+
+    def test_convert_proforma_to_tax_invoice_posts(self):
+        self._login()
+        inv = self._create_document("proforma")
+        response = self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "tax_invoice"})
+        self.assertEqual(response.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.document_type, "tax_invoice")
+        self.assertEqual(inv.status, "sent")
+        self.assertIsNotNone(inv.sales_voucher)
+        self.assertTrue(inv.sales_voucher.journal_entry.lines.filter(account__code="1100").exists())
+        self.assertGreater(invoice_outstanding_amount(inv), Decimal("0"))
+
+    def test_convert_quotation_directly_to_tax_invoice_posts(self):
+        self._login()
+        inv = self._create_document("quotation")
+        self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "tax_invoice"})
+        inv.refresh_from_db()
+        self.assertEqual(inv.document_type, "tax_invoice")
+        self.assertIsNotNone(inv.sales_voucher)
+
+    def test_cannot_convert_tax_invoice_backwards(self):
+        self._login()
+        inv = self._create_document("tax_invoice")
+        voucher_id = inv.sales_voucher_id
+        self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "quotation"})
+        inv.refresh_from_db()
+        self.assertEqual(inv.document_type, "tax_invoice")
+        self.assertEqual(inv.sales_voucher_id, voucher_id)
+
+    def test_convert_to_tax_invoice_is_idempotent(self):
+        self._login()
+        inv = self._create_document("proforma")
+        self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "tax_invoice"})
+        inv.refresh_from_db()
+        first_voucher = inv.sales_voucher_id
+        self.assertIsNotNone(first_voucher)
+        # Already a tax invoice: a second convert is a no-op, no duplicate voucher.
+        self.client.post(reverse("invoice_convert", args=[inv.id]), {"target": "tax_invoice"})
+        inv.refresh_from_db()
+        self.assertEqual(inv.sales_voucher_id, first_voucher)
+        self.assertEqual(Voucher.objects.filter(voucher_type="sales").count(), 1)
+
+    def test_payment_new_excludes_quotations_and_proformas(self):
+        self._login()
+        quotation = self._create_document("quotation")
+        proforma = self._create_document("proforma")
+        tax_invoice = self._create_document("tax_invoice")
+        response = self.client.get(reverse("payment_new"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn(invoice_number(tax_invoice), body)
+        self.assertNotIn(invoice_number(quotation), body)
+        self.assertNotIn(invoice_number(proforma), body)
+
+    def test_create_invoice_api_respects_document_type(self):
+        user = self._login("api-doc@example.com")
+        response = self.client.post(
+            reverse("create_invoice"),
+            data=json.dumps(
+                {
+                    "business_name": "API Biz",
+                    "client_name": "API Client",
+                    "service_name": "API Service",
+                    "amount_before_gst": "1000",
+                    "gst_rate": "18",
+                    "include_gst": True,
+                    "document_type": "quotation",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        inv = Invoice.objects.order_by("-id").first()
+        self.assertEqual(inv.document_type, "quotation")
+        self.assertIsNone(inv.sales_voucher)
+
+    def test_dashboard_shows_document_label_and_convert_action(self):
+        self._login()
+        self._create_document("quotation")
+        response = self.client.get(reverse("dashboard"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Quotation", body)
+        self.assertIn("Convert to invoice", body)
+        self.assertIn('name="target" value="proforma"', body)
+
+    def test_quotation_public_page_shows_disclaimer(self):
+        self._login()
+        inv = self._create_document("quotation")
+        response = self.client.get(reverse("invoice_print", args=[inv.public_token]))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Quotation", body)
+        self.assertIn("not a tax invoice", body)
