@@ -2693,3 +2693,151 @@ class GstSplitTests(TestCase):
         content = b"".join(response.streaming_content).decode("utf-8") if hasattr(response, "streaming_content") else response.content.decode("utf-8")
         self.assertIn("CGST", content)
         self.assertIn("SGST", content)
+
+
+@override_settings(**TEST_SETTINGS)
+class GstnApiTests(TestCase):
+    def _config(self, *, enabled=True, mode="sandbox"):
+        from .models import GstnApiConfig
+
+        config = GstnApiConfig.objects.create(
+            market="IN", provider="whitebooks", enabled=enabled, mode=mode,
+            base_url="https://gsp.example.com", gstin="29AAGCB1286Q000",
+            api_email="dev@example.com", ip_address="1.2.3.4",
+        )
+        config.client_id = "cid"
+        config.client_secret = "csecret"
+        config.username = "uname"
+        config.password = "pwd"
+        config.save()
+        return config
+
+    def test_parse_envelope_success_dict(self):
+        from . import gstn_client
+
+        data = gstn_client.parse_envelope(json.dumps({"status_cd": "1", "data": {"Gstin": "X", "lgnm": "ACME"}}))
+        self.assertEqual(data["lgnm"], "ACME")
+
+    def test_parse_envelope_success_string_data(self):
+        from . import gstn_client
+
+        data = gstn_client.parse_envelope(json.dumps({"status_cd": "1", "data": json.dumps({"AuthToken": "tok"})}))
+        self.assertEqual(data["AuthToken"], "tok")
+
+    def test_parse_envelope_error_raises(self):
+        from . import gstn_client
+
+        with self.assertRaises(gstn_client.GstnApiError):
+            gstn_client.parse_envelope(json.dumps({"status_cd": "0", "error": {"message": "bad gstin"}}))
+
+    def test_parse_envelope_non_json_raises(self):
+        from . import gstn_client
+
+        with self.assertRaises(gstn_client.GstnApiError):
+            gstn_client.parse_envelope("<html>blocked</html>")
+
+    def test_token_ttl_by_mode(self):
+        from . import gstn_client
+        from .models import GstnApiConfig
+
+        self.assertEqual(gstn_client.token_ttl(GstnApiConfig(mode="sandbox")), gstn_client.SANDBOX_TOKEN_TTL)
+        self.assertEqual(gstn_client.token_ttl(GstnApiConfig(mode="production")), gstn_client.PRODUCTION_TOKEN_TTL)
+
+    def test_authenticate_caches_token(self):
+        from unittest import mock
+
+        from . import gstn_client
+
+        config = self._config()
+        with mock.patch.object(gstn_client, "_request", return_value={"AuthToken": "TOKEN123"}) as request_mock:
+            first = gstn_client.authenticate(config)
+            second = gstn_client.authenticate(config)
+        self.assertEqual(first, "TOKEN123")
+        self.assertEqual(second, "TOKEN123")
+        self.assertEqual(request_mock.call_count, 1)
+        config.refresh_from_db()
+        self.assertTrue(config.token_valid)
+        self.assertEqual(config.auth_token, "TOKEN123")
+
+    def test_get_gstin_details_builds_authed_request(self):
+        from unittest import mock
+
+        from . import gstn_client
+
+        config = self._config()
+        captured = {}
+
+        def fake_request(cfg, method, path, headers=None, query=None, body=None):
+            if path.endswith("/authenticate"):
+                return {"AuthToken": "TKN"}
+            captured.update(method=method, path=path, headers=headers, query=query)
+            return {"Gstin": "29AAGCB1286Q000", "lgnm": "ACME"}
+
+        with mock.patch.object(gstn_client, "_request", side_effect=fake_request):
+            details = gstn_client.get_gstin_details(config, "29AAGCB1286Q000")
+        self.assertEqual(details["lgnm"], "ACME")
+        self.assertEqual(captured["method"], "GET")
+        self.assertIn("GSTNDETAILS", captured["path"])
+        self.assertEqual(captured["query"], {"param1": "29AAGCB1286Q000"})
+        self.assertEqual(captured["headers"]["auth-token"], "TKN")
+        self.assertEqual(captured["headers"]["client_id"], "cid")
+
+    def test_admin_form_saves_encrypted_credentials(self):
+        from .admin import GstnApiConfigForm
+
+        form = GstnApiConfigForm(
+            data={
+                "market": "IN", "provider": "whitebooks", "enabled": False, "mode": "sandbox",
+                "base_url": "https://gsp.example.com", "gstin": "29AAGCB1286Q000",
+                "api_email": "dev@example.com", "ip_address": "1.2.3.4", "default_hsn": "998314",
+                "api_client_id": "CID", "api_client_secret": "SECRET", "api_username": "USER", "api_password": "PASS",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save()
+        obj.refresh_from_db()
+        self.assertEqual(obj.client_id, "CID")
+        self.assertEqual(obj.password, "PASS")
+        self.assertNotIn("SECRET", obj.encrypted_client_secret)
+
+    def test_admin_form_requires_credentials_to_enable(self):
+        from .admin import GstnApiConfigForm
+
+        form = GstnApiConfigForm(
+            data={
+                "market": "IN", "provider": "whitebooks", "enabled": True, "mode": "sandbox",
+                "base_url": "", "gstin": "", "api_email": "", "ip_address": "", "default_hsn": "",
+                "api_client_id": "", "api_client_secret": "", "api_username": "", "api_password": "",
+            }
+        )
+        self.assertFalse(form.is_valid())
+
+    def test_gstn_settings_page_staff_only(self):
+        staff = User.objects.create_user("gstnstaff@example.com", "gstnstaff@example.com", "password-123456", is_staff=True)
+        self.client.force_login(staff)
+        response = self.client.get(reverse("gstn_settings"), HTTP_HOST="rozledger.in")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("GSTN API settings", response.content.decode("utf-8"))
+
+    def test_gstn_settings_page_hidden_for_non_staff(self):
+        user = User.objects.create_user("gstnuser@example.com", "gstnuser@example.com", "password-123456")
+        self.client.force_login(user)
+        response = self.client.get(reverse("gstn_settings"), HTTP_HOST="rozledger.in")
+        self.assertEqual(response.status_code, 404)
+
+    def test_gstn_settings_validate_gstin_action(self):
+        from unittest import mock
+
+        from . import gstn_client
+
+        staff = User.objects.create_user("gstnval@example.com", "gstnval@example.com", "password-123456", is_staff=True)
+        self.client.force_login(staff)
+        self._config()
+        with mock.patch.object(gstn_client, "get_gstin_details", return_value={"lgnm": "ACME LTD", "Status": "Active"}):
+            response = self.client.post(
+                reverse("gstn_settings"),
+                {"action": "validate_gstin", "gstin": "29AAGCB1286Q000"},
+                HTTP_HOST="rozledger.in",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("ACME LTD", response.content.decode("utf-8"))

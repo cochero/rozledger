@@ -29,8 +29,9 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
+from .models import Account, AffiliateClick, AuditLog, BusinessProfile, Client, CustomerCreditNote, ExpenseUploadDraft, Godown, GstnApiConfig, InventoryItem, Invoice, InvoiceLineItem, JournalEntry, JournalLine, Lead, PaymentEvent, PaymentGatewayConfig, PaymentReceipt, PaymentReversal, PlanSubscription, ReconciliationLine, ReconciliationSession, StockCostLayer, StockGroup, StockLayerConsumption, StockMovement, UnitOfMeasure, VendorBill, VendorBillPayment, VendorDebitNote, Voucher, VoucherInventoryLine, VoucherLedgerLine
 from . import razorpay_client
+from . import gstn_client
 
 
 GET_OR_HEAD = ["GET", "HEAD"]
@@ -2169,6 +2170,7 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
     ]
     if request.user.is_staff:
         links.append(("/dashboard/monitoring/", "M", "Monitoring"))
+        links.append(("/dashboard/gstn/", "GS", "GSTN API"))
     current_path = request.path
     items = []
     for href, icon, label in links:
@@ -7078,6 +7080,90 @@ def razorpay_webhook_status_panel(request: HttpRequest) -> str:
           {events_block}
         </div>
     """
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def gstn_settings(request: HttpRequest) -> HttpResponse:
+    if not request.user.is_staff:
+        raise Http404("Not found")
+    config = GstnApiConfig.for_market("IN")
+    result_html = ""
+    if request.method == "POST":
+        action = clean_text(request.POST.get("action"), max_length=40)
+        if not config or not config.is_configured:
+            result_html = '<p class="form-error">Configure the GSTN API in Django admin (Gstn api configs) before testing.</p>'
+        elif action == "test_auth":
+            try:
+                gstn_client.authenticate(config, force=True)
+                result_html = '<p class="status-text">Authentication succeeded &mdash; a fresh auth token is cached.</p>'
+            except gstn_client.GstnApiError as exc:
+                result_html = f'<p class="form-error">{escape(str(exc))}</p>'
+        elif action == "validate_gstin":
+            gstin = clean_text(request.POST.get("gstin"), max_length=20).upper()
+            if not gstin:
+                result_html = '<p class="form-error">Enter a GSTIN to validate.</p>'
+            else:
+                try:
+                    details = gstn_client.get_gstin_details(config, gstin)
+                    legal = details.get("LegalName") or details.get("lgnm") or details.get("Lgnm") or ""
+                    status = details.get("Status") or details.get("sts") or ""
+                    pretty = escape(json.dumps(details, indent=2)[:2000])
+                    result_html = (
+                        f'<div class="pro-status-panel"><strong>GSTIN {escape(gstin)}</strong>'
+                        f'<p>Legal name: {escape(str(legal)) or "&mdash;"} &middot; Status: {escape(str(status)) or "&mdash;"}</p>'
+                        f'<pre class="webhook-events">{pretty}</pre></div>'
+                    )
+                except gstn_client.GstnApiError as exc:
+                    result_html = f'<p class="form-error">{escape(str(exc))}</p>'
+
+    if config:
+        status_rows = (
+            f"Provider: <strong>{escape(config.provider)}</strong> &middot; Mode: <strong>{escape(config.get_mode_display())}</strong><br />"
+            f"Base URL: <code>{escape(config.base_url or 'not set')}</code><br />"
+            f"GSTIN: <strong>{escape(config.gstin or '&mdash;')}</strong> &middot; Configured: <strong>{'yes' if config.is_configured else 'no'}</strong> &middot; Enabled: <strong>{'yes' if config.enabled else 'no'}</strong><br />"
+            f"Auth token: <strong>{'valid' if config.token_valid else 'not cached / expired'}</strong>"
+        )
+    else:
+        status_rows = "No GSTN API config yet. Create one in Django admin under <strong>Gstn api configs</strong>."
+
+    body = f"""
+    <main class="account-shell wide-form">
+      <section class="account-card">
+        <p class="eyebrow">GST e-Invoice / e-Way Bill</p>
+        <h1>GSTN API settings <span class="staff-tag">staff only</span></h1>
+        <p class="account-copy">Connection to the GST Suvidha Provider (WhiteBooks). Credentials are stored encrypted in Django admin; this page verifies the connection and validates a GSTIN.</p>
+        <div class="pro-status-panel">
+          <p class="billing-meta">{status_rows}</p>
+        </div>
+        {result_html}
+        <div class="pro-workflow-grid">
+          <article>
+            <h2>Test authentication</h2>
+            <form method="post" action="/dashboard/gstn/" class="account-form compact-form">
+              {csrf_input(request)}
+              <input type="hidden" name="action" value="test_auth" />
+              <button class="button secondary" type="submit">Test authentication</button>
+            </form>
+          </article>
+          <article>
+            <h2>Validate a GSTIN</h2>
+            <form method="post" action="/dashboard/gstn/" class="account-form compact-form">
+              {csrf_input(request)}
+              <input type="hidden" name="action" value="validate_gstin" />
+              <label>GSTIN<input name="gstin" placeholder="e.g. 29AAGCB1286Q000" maxlength="20" required /></label>
+              <button class="button primary" type="submit">Validate GSTIN</button>
+            </form>
+          </article>
+        </div>
+        <div class="dashboard-actions">
+          <a class="button secondary" href="/admin/core/gstnapiconfig/">Edit credentials in admin</a>
+          <a class="button ghost" href="/dashboard/">Back to dashboard</a>
+        </div>
+      </section>
+    </main>
+    """
+    return page_shell("GSTN API settings", body, request)
 
 
 @require_http_methods(["GET", "POST"])
