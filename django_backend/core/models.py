@@ -64,6 +64,11 @@ MARKET_CHOICES = [
     ("US", "United States"),
 ]
 
+SUPPLY_TYPE_CHOICES = [
+    ("intra", "Intra-state (CGST + SGST)"),
+    ("inter", "Inter-state (IGST)"),
+]
+
 ACCOUNT_TYPE_CHOICES = [
     ("asset", "Asset"),
     ("liability", "Liability"),
@@ -254,6 +259,10 @@ class Invoice(models.Model):
     amount_before_gst = models.DecimalField(max_digits=12, decimal_places=2)
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2)
     tax_label = models.CharField(max_length=40, default="GST")
+    seller_gstin = models.CharField(max_length=20, blank=True)
+    place_of_supply = models.CharField(max_length=80, blank=True)
+    supply_type = models.CharField(max_length=10, choices=SUPPLY_TYPE_CHOICES, default="intra")
+    reverse_charge = models.BooleanField(default=False)
     currency_symbol = models.CharField(max_length=8, default="\u20b9")
     due_days = models.PositiveIntegerField(default=0)
     total_text = models.CharField(max_length=80)

@@ -451,7 +451,8 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(invoice.sales_voucher.total_amount, Decimal("2360.00"))
         self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="1100", debit=Decimal("2360.00")).exists())
         self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="4000", credit=Decimal("2000.00")).exists())
-        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="2100", credit=Decimal("360.00")).exists())
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="2110", credit=Decimal("180.00")).exists())
+        self.assertTrue(invoice.sales_voucher.journal_entry.lines.filter(account__code="2120", credit=Decimal("180.00")).exists())
         self.assertTrue(invoice.business_logo.name)
         saved_client = SavedClient.objects.get(owner=user, owner_email="form-owner@example.com")
         self.assertEqual(saved_client.phone, "+91 90000 22222")
@@ -2089,7 +2090,8 @@ class AccountWorkflowTests(TestCase):
         self.assertEqual(credit_note.total_amount, Decimal("590.00"))
         self.assertEqual(credit_note.voucher.voucher_type, "credit_note")
         self.assertTrue(credit_note.journal_entry.lines.filter(account__code="4000", debit=Decimal("500.00")).exists())
-        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="2100", debit=Decimal("90.00")).exists())
+        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="2110", debit=Decimal("45.00")).exists())
+        self.assertTrue(credit_note.journal_entry.lines.filter(account__code="2120", debit=Decimal("45.00")).exists())
         self.assertTrue(credit_note.journal_entry.lines.filter(account__code="1100", credit=Decimal("590.00")).exists())
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "partially_credited")
@@ -2596,3 +2598,98 @@ class RazorpaySubscriptionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
         self.assertNotIn("Razorpay webhook status", content)
+
+
+@override_settings(**TEST_SETTINGS)
+class GstSplitTests(TestCase):
+    def _create_invoice_in(self, user, *, rate="1000", gst_rate="18", supply_type="intra", place="", host="rozledger.in", client="GST Client"):
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST=host)
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "GST Business",
+                "client_name": client,
+                "item_description": ["Taxable work"],
+                "item_quantity": ["1"],
+                "item_rate": [rate],
+                "include_gst": "on",
+                "gst_rate": gst_rate,
+                "supply_type": supply_type,
+                "place_of_supply": place,
+                "due_days": "7",
+            },
+            HTTP_HOST=host,
+        )
+        return Invoice.objects.get(owner=user, client_name=client)
+
+    def test_gst_split_intra_state_halves(self):
+        from .views import gst_split
+
+        result = gst_split(Decimal("360.00"), "intra")
+        self.assertEqual(result["cgst"], Decimal("180.00"))
+        self.assertEqual(result["sgst"], Decimal("180.00"))
+        self.assertEqual(result["igst"], Decimal("0.00"))
+
+    def test_gst_split_inter_state_is_igst(self):
+        from .views import gst_split
+
+        result = gst_split(Decimal("360.00"), "inter")
+        self.assertEqual(result["igst"], Decimal("360.00"))
+        self.assertEqual(result["cgst"], Decimal("0.00"))
+        self.assertEqual(result["sgst"], Decimal("0.00"))
+
+    def test_gst_split_odd_amount_loses_no_paisa(self):
+        from .views import gst_split
+
+        result = gst_split(Decimal("45.01"), "intra")
+        self.assertEqual(result["cgst"] + result["sgst"], Decimal("45.01"))
+
+    def test_intra_state_invoice_posts_cgst_and_sgst(self):
+        user = User.objects.create_user("intra@example.com", "intra@example.com", "password-123456")
+        invoice = self._create_invoice_in(user, supply_type="intra", client="Intra Client")
+        self.assertEqual(invoice.supply_type, "intra")
+        lines = invoice.sales_voucher.journal_entry.lines
+        self.assertTrue(lines.filter(account__code="2110", credit=Decimal("90.00")).exists())
+        self.assertTrue(lines.filter(account__code="2120", credit=Decimal("90.00")).exists())
+        self.assertFalse(lines.filter(account__code="2130").exists())
+
+    def test_inter_state_invoice_posts_igst(self):
+        user = User.objects.create_user("inter@example.com", "inter@example.com", "password-123456")
+        invoice = self._create_invoice_in(user, supply_type="inter", place="Maharashtra", client="Inter Client")
+        self.assertEqual(invoice.supply_type, "inter")
+        self.assertEqual(invoice.place_of_supply, "Maharashtra")
+        lines = invoice.sales_voucher.journal_entry.lines
+        self.assertTrue(lines.filter(account__code="2130", credit=Decimal("180.00")).exists())
+        self.assertFalse(lines.filter(account__code__in=["2110", "2120"]).exists())
+
+    def test_us_invoice_uses_single_sales_tax_account(self):
+        user = User.objects.create_user("ussplit@example.com", "ussplit@example.com", "password-123456")
+        self.client.force_login(user)
+        self.client.get(reverse("dashboard"), HTTP_HOST="rozledger.com")
+        self.client.post(
+            reverse("invoice_new"),
+            {
+                "business_name": "US Business",
+                "client_name": "US Client",
+                "item_description": ["Service"],
+                "item_quantity": ["1"],
+                "item_rate": ["1000"],
+                "include_gst": "on",
+                "gst_rate": "10",
+                "due_days": "7",
+            },
+            HTTP_HOST="rozledger.com",
+        )
+        invoice = Invoice.objects.get(owner=user, client_name="US Client")
+        lines = invoice.sales_voucher.journal_entry.lines
+        self.assertTrue(lines.filter(account__code="2100", credit=Decimal("100.00")).exists())
+        self.assertFalse(lines.filter(account__code__in=["2110", "2120", "2130"]).exists())
+
+    def test_intra_invoice_print_shows_cgst_sgst(self):
+        user = User.objects.create_user("printsplit@example.com", "printsplit@example.com", "password-123456")
+        invoice = self._create_invoice_in(user, supply_type="intra", client="Print Client")
+        response = self.client.get(reverse("invoice_print", args=[invoice.public_token]))
+        content = b"".join(response.streaming_content).decode("utf-8") if hasattr(response, "streaming_content") else response.content.decode("utf-8")
+        self.assertIn("CGST", content)
+        self.assertIn("SGST", content)
