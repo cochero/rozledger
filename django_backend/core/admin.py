@@ -52,6 +52,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         "owner",
         "owner_email",
         "status",
+        "document_type",
         "client_name",
         "client_phone",
         "amount_before_gst",
@@ -62,7 +63,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("public_token", "sales_voucher", "created_at")
     search_fields = ("business_name", "business_phone", "owner__username", "owner__email", "owner_email", "client_name", "client_phone", "service_name", "public_token", "sales_voucher__voucher_number")
-    list_filter = ("market", "status", "gst_rate", "created_at")
+    list_filter = ("market", "status", "document_type", "gst_rate", "created_at")
     inlines = (InvoiceLineItemInline,)
 
 

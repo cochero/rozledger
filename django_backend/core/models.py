@@ -59,6 +59,12 @@ INVOICE_STATUS_CHOICES = [
     ("overdue", "Overdue"),
 ]
 
+DOCUMENT_TYPE_CHOICES = [
+    ("tax_invoice", "Tax invoice"),
+    ("proforma", "Proforma invoice"),
+    ("quotation", "Quotation"),
+]
+
 MARKET_CHOICES = [
     ("IN", "India"),
     ("US", "United States"),
@@ -244,6 +250,7 @@ class Invoice(models.Model):
     )
     owner_email = models.EmailField(blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent", db_index=True)
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default="tax_invoice", db_index=True)
     template = models.CharField(max_length=20, choices=TEMPLATE_CHOICES, default="classic")
     accent_color = models.CharField(max_length=7, default="#126b4f")
     business_name = models.CharField(max_length=180)

@@ -807,6 +807,8 @@ def invoice_amount_credited(invoice: Invoice) -> Decimal:
 
 
 def invoice_outstanding_amount(invoice: Invoice) -> Decimal:
+    if invoice.document_type != "tax_invoice":
+        return Decimal("0.00")
     balance = invoice_total_amount(invoice) - invoice_amount_received(invoice) - invoice_amount_credited(invoice)
     return max(balance, Decimal("0")).quantize(Decimal("0.01"))
 
@@ -1141,8 +1143,8 @@ def ai_match_payment_invoices(request: HttpRequest, payer_name: str, amount: Dec
 def ai_dashboard_summary(request: HttpRequest) -> list[str]:
     finance = finance_summary_for_user(request)
     totals = journal_totals_for_user(request)
-    open_invoices = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
-    overdue_invoices = sum(1 for invoice in Invoice.objects.filter(account_q(request)).exclude(status="paid") if invoice_due_date(invoice).date() < timezone.localdate())
+    open_invoices = Invoice.objects.filter(account_q(request), document_type="tax_invoice").exclude(status="paid").count()
+    overdue_invoices = sum(1 for invoice in Invoice.objects.filter(account_q(request), document_type="tax_invoice").exclude(status="paid") if invoice_due_date(invoice).date() < timezone.localdate())
     low_stock = 0
     for item in InventoryItem.objects.filter(account_q(request), is_active=True).prefetch_related("movements"):
         quantity = stock_quantity(item)
@@ -1280,6 +1282,11 @@ def clean_supply_type(value: Any) -> str:
     return value if value in {"intra", "inter"} else "intra"
 
 
+def clean_document_type(value: Any) -> str:
+    value = clean_text(value, max_length=20)
+    return value if value in {"tax_invoice", "proforma", "quotation"} else "tax_invoice"
+
+
 def gst_payable_lines(request: HttpRequest, invoice: Invoice, tax_amount: Decimal, *, on_debit: bool = False) -> list[dict]:
     """Ledger line(s) for the tax component of an invoice.
 
@@ -1328,6 +1335,10 @@ def delete_invoice_sales_voucher(invoice: Invoice) -> None:
 
 def post_invoice_sales_voucher(request: HttpRequest, invoice: Invoice, *, replace: bool = False) -> Voucher | None:
     if not request.user.is_authenticated or invoice.owner_id is None:
+        return None
+    if invoice.document_type != "tax_invoice":
+        # Quotations and proforma invoices are non-accounting documents: no revenue,
+        # no receivable and no GST liability until they become a tax invoice.
         return None
     ensure_default_chart(request)
     if invoice.sales_voucher_id and not replace:
@@ -1938,8 +1949,20 @@ def expense_draft_from_text(request: HttpRequest, text: str) -> dict[str, Any]:
     }
 
 
+DOCUMENT_NUMBER_PREFIX = {"quotation": "QTN", "proforma": "PI"}
+
+
 def invoice_number(invoice: Invoice) -> str:
-    return f"RL-{invoice.created_at:%Y%m}-{invoice.id:05d}"
+    prefix = DOCUMENT_NUMBER_PREFIX.get(invoice.document_type, "RL")
+    return f"{prefix}-{invoice.created_at:%Y%m}-{invoice.id:05d}"
+
+
+def document_type_label(invoice: Invoice) -> str:
+    if invoice.document_type == "quotation":
+        return "Quotation"
+    if invoice.document_type == "proforma":
+        return "Proforma invoice"
+    return "Invoice" if invoice_is_us(invoice) else "Tax invoice"
 
 
 def invoice_due_date(invoice: Invoice):
@@ -2627,8 +2650,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         notice += '<p class="dashboard-notice">Invoice saved. It is now available in your dashboard.</p>'
     if request.GET.get("profile") == "saved":
         notice += '<p class="dashboard-notice">Business profile saved. New invoices will use these defaults.</p>'
-    paid_count = Invoice.objects.filter(account_q(request), status="paid").count()
-    pending_count = Invoice.objects.filter(account_q(request)).exclude(status="paid").count()
+    paid_count = Invoice.objects.filter(account_q(request), document_type="tax_invoice", status="paid").count()
+    pending_count = Invoice.objects.filter(account_q(request), document_type="tax_invoice").exclude(status="paid").count()
     accounts = Account.objects.filter(account_q(request), is_active=True)[:30]
     journal_entries = JournalEntry.objects.filter(account_q(request))[:10]
     accounting_totals = journal_totals_for_user(request)
@@ -2720,11 +2743,21 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         balance = invoice_outstanding_amount(invoice)
         payment_action = f'<a class="button ghost" href="/dashboard/payments/new/?invoice={invoice.id}">Record payment</a>' if balance > 0 else ""
         credit_action = f'<a class="button ghost" href="/dashboard/invoices/{invoice.id}/credit-notes/new/">Credit note</a>' if balance > 0 else ""
+        doc_label = document_type_label(invoice)
+        if invoice.document_type == "quotation":
+            convert_action = (
+                f'<form method="post" action="/dashboard/invoices/{invoice.id}/convert/" style="display:inline-block">{csrf_input(request)}<input type="hidden" name="target" value="proforma" /><button class="button ghost" type="submit">To proforma</button></form>'
+                f'<form method="post" action="/dashboard/invoices/{invoice.id}/convert/" style="display:inline-block">{csrf_input(request)}<input type="hidden" name="target" value="tax_invoice" /><button class="button secondary" type="submit">Convert to invoice</button></form>'
+            )
+        elif invoice.document_type == "proforma":
+            convert_action = f'<form method="post" action="/dashboard/invoices/{invoice.id}/convert/" style="display:inline-block">{csrf_input(request)}<input type="hidden" name="target" value="tax_invoice" /><button class="button secondary" type="submit">Convert to invoice</button></form>'
+        else:
+            convert_action = ""
         invoice_rows.append(
             f"""
             <article class="dashboard-card invoice-card">
               <div>
-                <div class="card-meta-row"><span>Invoice</span><strong class="status-pill status-{escape(invoice.status)}">{escape(invoice.get_status_display())}</strong></div>
+                <div class="card-meta-row"><span>{escape(doc_label)}</span><strong class="status-pill status-{escape(invoice.status)}">{escape(invoice.get_status_display())}</strong></div>
                 <h2>{escape(inv_number)}</h2>
                 <p><strong>{escape(invoice.client_name)}</strong><br />{escape(invoice.service_name)}<br />Total {escape(invoice_total_display(invoice))} / Received {escape(money(received, invoice.currency_symbol))} / Credited {escape(money(credited, invoice.currency_symbol))} / Balance {escape(money(balance, invoice.currency_symbol))}<br />{invoice.created_at:%d %b %Y}</p>
               </div>
@@ -2737,6 +2770,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 <a class="button ghost" href="{escape(whatsapp_url(invoice.invoice_text))}" target="_blank" rel="noopener">WhatsApp</a>
                 {payment_action}
                 {credit_action}
+                {convert_action}
               </div>
             </article>
             """
@@ -5989,7 +6023,7 @@ def reconciliation(request: HttpRequest) -> HttpResponse:
 def payment_new(request: HttpRequest) -> HttpResponse:
     ensure_default_chart(request)
     clients = list(Client.objects.filter(account_q(request)).order_by("name"))
-    open_invoices = list(Invoice.objects.filter(account_q(request)).exclude(status="paid").order_by("-created_at"))
+    open_invoices = list(Invoice.objects.filter(account_q(request), document_type="tax_invoice").exclude(status="paid").order_by("-created_at"))
     invoice = None
     invoice_id = clean_text(request.GET.get("invoice") or request.POST.get("invoice_id"), max_length=20)
     if invoice_id:
@@ -6462,6 +6496,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
     payment_link_label = "Payment link" if us_market else "UPI/payment link"
     payment_placeholder = "Stripe, Square, PayPal, Venmo, Cash App or payment note" if us_market else "Optional UPI link or payment note"
     values = {
+        "document_type": "tax_invoice",
         "template": profile.template if profile else "classic",
         "accent_color": profile.accent_color if profile else "#126b4f",
         "business_name": profile.business_name if profile else request.user.first_name or "Your business",
@@ -6496,6 +6531,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         gst_rate = decimal_value(values["gst_rate"]) if include_gst else Decimal("0")
         supply_type = values["supply_type"] if values["supply_type"] in {"intra", "inter"} else "intra"
         reverse_charge = request.POST.get("reverse_charge") == "on"
+        document_type = values["document_type"] if values["document_type"] in {"tax_invoice", "proforma", "quotation"} else "tax_invoice"
         due_days_raw = digits_only(values["due_days"])
         due_days = int(due_days_raw or 0)
         logo_upload = request.FILES.get("business_logo")
@@ -6519,6 +6555,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     market=current_market(request),
                     owner=request.user,
                     owner_email=current_account_email(request),
+                    document_type=document_type,
                     template=values["template"],
                     accent_color=values["accent_color"],
                     business_name=values["business_name"],
@@ -6571,18 +6608,23 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             <label>Place of supply<input name="place_of_supply" value="{escape(values['place_of_supply'])}" placeholder="State of supply, e.g. Kerala" /></label>
             <label>Supply type<select name="supply_type">{supply_options}</select></label>
             <label class="checkbox-row"><input name="reverse_charge" type="checkbox" {reverse_charge_checked} /> Reverse charge applies</label>"""
+    document_type_options = "".join(
+        f'<option value="{value}" {"selected" if values["document_type"] == value else ""}>{escape(label)}</option>'
+        for value, label in [("tax_invoice", "Tax invoice"), ("proforma", "Proforma invoice"), ("quotation", "Quotation")]
+    )
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card invoice-builder-card">
         <div>
-          <p class="eyebrow">Invoice</p>
-          <h1>Create invoice</h1>
-          <p class="account-copy">Choose a professional template and preview it with your saved company information before saving the invoice.</p>
+          <p class="eyebrow">New document</p>
+          <h1>Create invoice, proforma or quotation</h1>
+          <p class="account-copy">Pick the document type and a professional template. Quotations and proforma invoices do not post to your books; convert them to a tax invoice when the sale is confirmed.</p>
           {error_html}
         </div>
         <div class="invoice-builder-layout">
           <form method="post" action="/dashboard/invoices/new/" class="account-form invoice-server-form invoice-builder-form" enctype="multipart/form-data">
             {csrf_input(request)}
+            <label>Document type<select name="document_type">{document_type_options}</select></label>
             <label>Professional template<select name="template" data-preview-field>{invoice_template_options(values['template'])}</select></label>
             <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" data-preview-field /></label>
             <label>Business name<input name="business_name" value="{escape(values['business_name'])}" required data-preview-field /></label>
@@ -6988,6 +7030,28 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
     </main>
     """
     return page_shell("Edit invoice", body, request)
+
+
+@login_required
+@require_POST
+def invoice_convert(request: HttpRequest, invoice_id: int) -> HttpResponse:
+    invoice = owned_invoice(request, invoice_id)
+    target = clean_text(request.POST.get("target"), max_length=20)
+    allowed = {
+        "quotation": {"proforma", "tax_invoice"},
+        "proforma": {"tax_invoice"},
+    }
+    if target not in allowed.get(invoice.document_type, set()):
+        return redirect("/dashboard/#invoices")
+    previous = invoice.document_type
+    invoice.document_type = target
+    if target == "tax_invoice":
+        invoice.status = "sent"
+    invoice.save(update_fields=["document_type", "status", "updated_at"])
+    if target == "tax_invoice":
+        post_invoice_sales_voucher(request, invoice)
+    audit_log(request, "invoice.converted", "Invoice", invoice.id, f"Converted {previous} to {target} ({invoice_number(invoice)})")
+    return redirect("/dashboard/?invoice=converted#invoices")
 
 
 @login_required
@@ -7431,7 +7495,14 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     tax_label = invoice_tax_label(invoice)
     total_text = invoice_total_display(invoice)
     us_invoice = invoice_is_us(invoice)
-    invoice_title = "Invoice" if us_invoice else "Tax invoice"
+    invoice_title = document_type_label(invoice)
+    doc_note = ""
+    if invoice.document_type == "proforma":
+        doc_note = '<p style="margin:8px 0 0;color:#9f2f22;font-weight:700;font-size:13px;letter-spacing:.02em;">This is a proforma invoice and not a valid tax invoice.</p>'
+    elif invoice.document_type == "quotation":
+        doc_note = '<p style="margin:8px 0 0;color:#9f2f22;font-weight:700;font-size:13px;letter-spacing:.02em;">This is a quotation. Prices are an estimate and not a tax invoice.</p>'
+    doc_word = {"quotation": "Quotation", "proforma": "Proforma"}.get(invoice.document_type, "Invoice")
+    due_label = "Valid until" if invoice.document_type == "quotation" else "Due date"
     payment_link_label = "Payment link" if us_invoice else "UPI / payment link"
     subtotal = invoice_subtotal(invoice)
     if invoice.include_gst:
@@ -7460,13 +7531,14 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
             <h1>{escape(invoice.business_name)}</h1>
             {f'<p class="invoice-contact-line">Phone: {escape(invoice.business_phone)}</p>' if invoice.business_phone else ''}
             <p>{escape(invoice.business_address).replace(chr(10), '<br />')}</p>
+            {doc_note}
           </div>
         </div>
         <aside class="invoice-number-card">
           <strong>{escape(invoice_number(invoice))}</strong>
-          <span>Invoice date</span>
+          <span>{doc_word} date</span>
           <p>{invoice.created_at:%d %b %Y}</p>
-          <span>Due date</span>
+          <span>{due_label}</span>
           <p>{due_date:%d %b %Y}</p>
           <span>Status</span>
           <p>{escape(invoice.get_status_display())}</p>
@@ -7607,16 +7679,22 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         Table([[""]], colWidths=[480], rowHeights=[5], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)])),
         Spacer(1, 18),
     ]
-    header_items = [Paragraph("INVOICE" if us_invoice else "TAX INVOICE", title_style), Paragraph(escape(invoice.business_name), heading_style)]
+    header_items = [Paragraph(document_type_label(invoice).upper(), title_style), Paragraph(escape(invoice.business_name), heading_style)]
     if invoice.business_phone:
         header_items.append(para(f"Phone: {invoice.business_phone}", small_style))
     if invoice.business_address:
         header_items.append(para(invoice.business_address, small_style))
+    if invoice.document_type == "proforma":
+        header_items.append(para("This is a proforma invoice and not a valid tax invoice.", small_style))
+    elif invoice.document_type == "quotation":
+        header_items.append(para("This is a quotation. Prices are an estimate and not a tax invoice.", small_style))
+    doc_word = {"quotation": "Quotation", "proforma": "Proforma"}.get(invoice.document_type, "Invoice")
+    due_label = "Valid until" if invoice.document_type == "quotation" else "Due date"
     meta_table = Table(
         [
-            [para("Invoice no.", small_style), para(invoice_number(invoice), meta_value_style)],
-            [para("Invoice date", small_style), para(f"{invoice.created_at:%d %b %Y}", meta_value_style)],
-            [para("Due date", small_style), para(f"{due_date:%d %b %Y}", meta_value_style)],
+            [para(f"{doc_word} no.", small_style), para(invoice_number(invoice), meta_value_style)],
+            [para(f"{doc_word} date", small_style), para(f"{invoice.created_at:%d %b %Y}", meta_value_style)],
+            [para(due_label, small_style), para(f"{due_date:%d %b %Y}", meta_value_style)],
             [para("Status", small_style), para(invoice.get_status_display(), meta_value_style)],
         ],
         colWidths=[66, 104],
@@ -8013,6 +8091,7 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         client_gstin=clean_text(payload.get("client_gstin"), max_length=20).upper(),
         place_of_supply=clean_text(payload.get("place_of_supply"), max_length=80),
         supply_type=clean_supply_type(payload.get("supply_type")),
+        document_type=clean_document_type(payload.get("document_type")),
         reverse_charge=bool(payload.get("reverse_charge")),
         service_name=clean_text(item_rows[0]["description"], "Service", 240),
         include_gst=include_gst,
