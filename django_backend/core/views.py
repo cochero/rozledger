@@ -53,6 +53,9 @@ DEFAULT_CHART = [
     ("1210", "Inventory asset", "asset", "debit"),
     ("2000", "Accounts payable", "liability", "credit"),
     ("2100", "Sales tax / GST payable", "liability", "credit"),
+    ("2110", "CGST payable", "liability", "credit"),
+    ("2120", "SGST payable", "liability", "credit"),
+    ("2130", "IGST payable", "liability", "credit"),
     ("3000", "Owner equity", "equity", "credit"),
     ("4000", "Service income", "revenue", "credit"),
     ("4100", "Other income", "revenue", "credit"),
@@ -1254,6 +1257,62 @@ def invoice_accounting_amounts(invoice: Invoice) -> dict[str, Decimal]:
     return {"subtotal": subtotal, "tax": tax, "total": total}
 
 
+def gst_split(tax_amount: Decimal, supply_type: str) -> dict[str, Decimal]:
+    """Split a GST amount into CGST/SGST (intra-state) or IGST (inter-state).
+
+    CGST and SGST are each half of the tax; the rounding remainder is given to
+    SGST so cgst + sgst == tax_amount exactly (no paisa lost).
+    """
+    tax_amount = (tax_amount or Decimal("0")).quantize(Decimal("0.01"))
+    zero = Decimal("0.00")
+    if tax_amount <= 0:
+        return {"cgst": zero, "sgst": zero, "igst": zero}
+    if supply_type == "inter":
+        return {"cgst": zero, "sgst": zero, "igst": tax_amount}
+    cgst = (tax_amount / Decimal("2")).quantize(Decimal("0.01"))
+    sgst = (tax_amount - cgst).quantize(Decimal("0.01"))
+    return {"cgst": cgst, "sgst": sgst, "igst": zero}
+
+
+def clean_supply_type(value: Any) -> str:
+    value = clean_text(value, max_length=10)
+    return value if value in {"intra", "inter"} else "intra"
+
+
+def gst_payable_lines(request: HttpRequest, invoice: Invoice, tax_amount: Decimal, *, on_debit: bool = False) -> list[dict]:
+    """Ledger line(s) for the tax component of an invoice.
+
+    US sales-tax invoices post to the single Sales tax / GST payable account (2100).
+    Indian GST invoices post the CGST/SGST/IGST split to dedicated accounts
+    (2110/2120/2130). Pass on_debit=True to reverse the side (credit notes).
+    """
+    tax_amount = (tax_amount or Decimal("0")).quantize(Decimal("0.01"))
+    if tax_amount <= 0:
+        return []
+    label = invoice_tax_label(invoice)
+
+    def line(code: str, amount: Decimal, suffix: str = "") -> dict:
+        return {
+            "account": account_by_code(request, code),
+            "description": f"{label} {suffix}".strip(),
+            "debit": amount if on_debit else Decimal("0"),
+            "credit": Decimal("0") if on_debit else amount,
+        }
+
+    if invoice_is_us(invoice):
+        return [line("2100", tax_amount)]
+
+    split = gst_split(tax_amount, invoice.supply_type)
+    lines = []
+    if split["igst"] > 0:
+        lines.append(line("2130", split["igst"], "IGST"))
+    if split["cgst"] > 0:
+        lines.append(line("2110", split["cgst"], "CGST"))
+    if split["sgst"] > 0:
+        lines.append(line("2120", split["sgst"], "SGST"))
+    return lines or [line("2100", tax_amount)]
+
+
 def delete_invoice_sales_voucher(invoice: Invoice) -> None:
     voucher = invoice.sales_voucher
     if not voucher:
@@ -1281,8 +1340,7 @@ def post_invoice_sales_voucher(request: HttpRequest, invoice: Invoice, *, replac
         {"account": account_by_code(request, "1100"), "description": invoice_number(invoice), "debit": amounts["total"], "credit": Decimal("0")},
         {"account": account_by_code(request, "4000"), "description": invoice.service_name or "Invoice income", "debit": Decimal("0"), "credit": amounts["subtotal"]},
     ]
-    if amounts["tax"] > 0:
-        ledger_lines.append({"account": account_by_code(request, "2100"), "description": invoice_tax_label(invoice), "debit": Decimal("0"), "credit": amounts["tax"]})
+    ledger_lines.extend(gst_payable_lines(request, invoice, amounts["tax"]))
     voucher = create_voucher_with_lines(
         request,
         voucher_type="sales",
@@ -1329,8 +1387,7 @@ def post_customer_credit_note(
         ledger_lines = []
         if taxable_amount > 0:
             ledger_lines.append({"account": account_by_code(request, "4000"), "description": reason or invoice_number(invoice), "debit": taxable_amount, "credit": Decimal("0")})
-        if tax_amount > 0:
-            ledger_lines.append({"account": account_by_code(request, "2100"), "description": invoice_tax_label(invoice), "debit": tax_amount, "credit": Decimal("0")})
+        ledger_lines.extend(gst_payable_lines(request, invoice, tax_amount, on_debit=True))
         ledger_lines.append({"account": account_by_code(request, "1100"), "description": invoice_number(invoice), "debit": Decimal("0"), "credit": total_amount})
         voucher = create_voucher_with_lines(
             request,
@@ -1892,6 +1949,21 @@ def invoice_gst_amount(invoice: Invoice) -> Decimal:
     if not invoice.include_gst:
         return Decimal("0")
     return (invoice_subtotal(invoice) * invoice.gst_rate / Decimal("100")).quantize(Decimal("0.01"))
+
+
+def invoice_tax_breakup(invoice: Invoice) -> list[tuple[str, Decimal]]:
+    """Tax line(s) to show on an invoice: CGST/SGST or IGST for Indian GST, single line for US sales tax."""
+    if not invoice.include_gst:
+        return []
+    tax = invoice_gst_amount(invoice)
+    label = invoice_tax_label(invoice)
+    if tax <= 0 or invoice_is_us(invoice):
+        return [(f"{label} @ {format_quantity(invoice.gst_rate)}%", tax)]
+    split = gst_split(tax, invoice.supply_type)
+    half = format_quantity(invoice.gst_rate / Decimal("2"))
+    if split["igst"] > 0:
+        return [(f"IGST @ {format_quantity(invoice.gst_rate)}%", split["igst"])]
+    return [(f"CGST @ {half}%", split["cgst"]), (f"SGST @ {half}%", split["sgst"])]
 
 
 def money(value: Decimal, currency_symbol: str = RUPEE_SYMBOL) -> str:
@@ -4454,7 +4526,7 @@ def reports(request: HttpRequest) -> HttpResponse:
     if not trial_rows:
         trial_rows.append('<tr><td colspan="5" class="empty-report-row">No posted ledger lines yet.</td></tr>')
 
-    tax_lines = JournalLine.objects.filter(entry__in=posted_entries, account__code="2100")
+    tax_lines = JournalLine.objects.filter(entry__in=posted_entries, account__code__in=["2100", "2110", "2120", "2130"])
     tax_collected = sum((line.credit for line in tax_lines), Decimal("0")).quantize(Decimal("0.01"))
     tax_reduced = sum((line.debit for line in tax_lines), Decimal("0")).quantize(Decimal("0.01"))
     tax_payable = (tax_collected - tax_reduced).quantize(Decimal("0.01"))
@@ -6397,6 +6469,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         "client_phone": "",
         "client_address": "",
         "client_gstin": "",
+        "place_of_supply": "",
+        "supply_type": "intra",
         "service_name": "",
         "include_gst": "" if us_market else "on",
         "amount_before_gst": "",
@@ -6418,6 +6492,8 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
         amount_before_gst = invoice_items_subtotal(item_rows)
         include_gst = request.POST.get("include_gst") == "on"
         gst_rate = decimal_value(values["gst_rate"]) if include_gst else Decimal("0")
+        supply_type = values["supply_type"] if values["supply_type"] in {"intra", "inter"} else "intra"
+        reverse_charge = request.POST.get("reverse_charge") == "on"
         due_days_raw = digits_only(values["due_days"])
         due_days = int(due_days_raw or 0)
         logo_upload = request.FILES.get("business_logo")
@@ -6450,6 +6526,10 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
                     client_phone=values["client_phone"],
                     client_address=values["client_address"],
                     client_gstin=values["client_gstin"].upper(),
+                    seller_gstin=(profile.gstin if profile else ""),
+                    place_of_supply=values["place_of_supply"],
+                    supply_type=supply_type,
+                    reverse_charge=reverse_charge,
                     service_name=service_name,
                     include_gst=include_gst,
                     amount_before_gst=amount_before_gst,
@@ -6480,6 +6560,15 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
     preview_logo = ""
     if profile and profile.business_logo:
         preview_logo = '<img class="invoice-preview-logo" data-preview-logo src="/dashboard/business-profile/logo/" alt="Business logo preview" />'
+    supply_options = "".join(
+        f'<option value="{value}" {"selected" if values["supply_type"] == value else ""}>{escape(label)}</option>'
+        for value, label in [("intra", "Intra-state (CGST + SGST)"), ("inter", "Inter-state (IGST)")]
+    )
+    reverse_charge_checked = "checked" if request.POST.get("reverse_charge") == "on" else ""
+    gst_supply_fields = "" if us_market else f"""
+            <label>Place of supply<input name="place_of_supply" value="{escape(values['place_of_supply'])}" placeholder="State of supply, e.g. Kerala" /></label>
+            <label>Supply type<select name="supply_type">{supply_options}</select></label>
+            <label class="checkbox-row"><input name="reverse_charge" type="checkbox" {reverse_charge_checked} /> Reverse charge applies</label>"""
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card invoice-builder-card">
@@ -6502,6 +6591,7 @@ def invoice_new(request: HttpRequest) -> HttpResponse:
             <label>Client phone<input name="client_phone" value="{escape(values['client_phone'])}" placeholder="Optional" data-preview-field /></label>
             <label>Client full address<textarea name="client_address" rows="3" data-preview-field>{escape(values['client_address'])}</textarea></label>
             <label>{tax_id_label}<input name="client_gstin" value="{escape(values['client_gstin'])}" placeholder="Optional" data-preview-field /></label>
+            {gst_supply_fields}
             <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if values['include_gst'] == 'on' else ''} data-preview-field /> {include_tax_label}</label>
             <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{escape(values['gst_rate'])}" required data-preview-field /></label>
             <label>Due days<input name="due_days" type="number" min="0" step="1" value="{escape(values['due_days'])}" data-preview-field /></label>
@@ -6780,6 +6870,10 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
             invoice.client_phone = clean_text(request.POST.get("client_phone"), max_length=40)
             invoice.client_address = clean_text(request.POST.get("client_address"))
             invoice.client_gstin = clean_text(request.POST.get("client_gstin"), max_length=20).upper()
+            invoice.place_of_supply = clean_text(request.POST.get("place_of_supply"), max_length=80)
+            supply_type_value = clean_text(request.POST.get("supply_type"), max_length=10)
+            invoice.supply_type = supply_type_value if supply_type_value in {"intra", "inter"} else invoice.supply_type
+            invoice.reverse_charge = request.POST.get("reverse_charge") == "on"
             invoice.service_name = clean_text(item_rows[0]["description"], invoice.service_name, 240)
             invoice.include_gst = include_gst
             invoice.amount_before_gst = amount_before_gst
@@ -6829,6 +6923,14 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
         </form>
         """
     )
+    edit_supply_options = "".join(
+        f'<option value="{value}" {"selected" if invoice.supply_type == value else ""}>{escape(label)}</option>'
+        for value, label in [("intra", "Intra-state (CGST + SGST)"), ("inter", "Inter-state (IGST)")]
+    )
+    edit_gst_supply_fields = "" if us_invoice else f"""
+          <label>Place of supply<input name="place_of_supply" value="{escape(invoice.place_of_supply)}" placeholder="State of supply, e.g. Kerala" /></label>
+          <label>Supply type<select name="supply_type">{edit_supply_options}</select></label>
+          <label class="checkbox-row"><input name="reverse_charge" type="checkbox" {'checked' if invoice.reverse_charge else ''} /> Reverse charge applies</label>"""
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card">
@@ -6847,6 +6949,7 @@ def invoice_edit(request: HttpRequest, invoice_id: int) -> HttpResponse:
           <label>Client phone<input name="client_phone" value="{escape(invoice.client_phone)}" placeholder="Optional" /></label>
           <label>Client full address<textarea name="client_address" rows="3">{escape(invoice.client_address)}</textarea></label>
           <label>{tax_id_label}<input name="client_gstin" value="{escape(invoice.client_gstin)}" /></label>
+          {edit_gst_supply_fields}
           <label class="checkbox-row"><input name="include_gst" type="checkbox" {'checked' if invoice.include_gst else ''} /> {include_tax_label}</label>
           <label>{tax_rate_label}<input name="gst_rate" type="number" min="0" step="0.01" value="{invoice.gst_rate}" /></label>
           <input name="service_name" type="hidden" value="{escape(invoice.service_name)}" />
@@ -7245,6 +7348,13 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
     invoice_title = "Invoice" if us_invoice else "Tax invoice"
     payment_link_label = "Payment link" if us_invoice else "UPI / payment link"
     subtotal = invoice_subtotal(invoice)
+    if invoice.include_gst:
+        tax_breakup_rows = "".join(
+            f'<div><span>{escape(row_label)}</span><strong>{escape(invoice_money(invoice, amount))}</strong></div>'
+            for row_label, amount in invoice_tax_breakup(invoice)
+        )
+    else:
+        tax_breakup_rows = f'<div><span>{escape(tax_label)}</span><strong>Not charged</strong></div>'
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -7309,10 +7419,7 @@ def invoice_print(request: HttpRequest, token: str) -> HttpResponse:
           <span>Subtotal</span>
           <strong>{escape(invoice_money(invoice, subtotal))}</strong>
         </div>
-        <div>
-          <span>{f'{tax_label} @ {invoice.gst_rate}%' if invoice.include_gst else tax_label}</span>
-          <strong>{escape(invoice_money(invoice, gst_amount)) if invoice.include_gst else 'Not charged'}</strong>
-        </div>
+        {tax_breakup_rows}
         <div class="grand-total">
           <span>Amount payable</span>
           <strong>{escape(total_text)}</strong>
@@ -7508,11 +7615,16 @@ def invoice_pdf(request: HttpRequest, token: str) -> HttpResponse:
         )
     )
     story.append(Spacer(1, 10))
+    pdf_tax_rows = (
+        [[para(row_label, right_style), para(invoice_money(invoice, amount), amount_bold_style)] for row_label, amount in invoice_tax_breakup(invoice)]
+        if invoice.include_gst
+        else [[para(invoice_tax_label(invoice), right_style), para("Not charged", amount_bold_style)]]
+    )
     story.append(
         Table(
             [
                 [para("Subtotal", right_style), para(invoice_money(invoice, subtotal), amount_bold_style)],
-                [para(f"{invoice_tax_label(invoice)} @ {invoice.gst_rate}%" if invoice.include_gst else invoice_tax_label(invoice), right_style), para(invoice_money(invoice, gst_amount) if invoice.include_gst else "Not charged", amount_bold_style)],
+                *pdf_tax_rows,
                 [para("Amount payable", right_bold_style), para(invoice_total_display(invoice), amount_bold_style)],
             ],
             colWidths=[330, 150],
@@ -7813,6 +7925,9 @@ def create_invoice(request: HttpRequest) -> JsonResponse:
         client_phone=clean_text(payload.get("client_phone"), max_length=40),
         client_address=clean_text(payload.get("client_address")),
         client_gstin=clean_text(payload.get("client_gstin"), max_length=20).upper(),
+        place_of_supply=clean_text(payload.get("place_of_supply"), max_length=80),
+        supply_type=clean_supply_type(payload.get("supply_type")),
+        reverse_charge=bool(payload.get("reverse_charge")),
         service_name=clean_text(item_rows[0]["description"], "Service", 240),
         include_gst=include_gst,
         amount_before_gst=amount_before_gst,
