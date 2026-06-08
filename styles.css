@@ -2914,3 +2914,25 @@ textarea {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* "Upload bill" call-to-action on the expenses page */
+.upload-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(18, 107, 79, 0.05);
+}
+.upload-cta p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.upload-cta .button {
+  flex: 0 0 auto;
+}
