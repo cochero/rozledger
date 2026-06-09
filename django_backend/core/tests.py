@@ -3107,3 +3107,134 @@ class HelpAndSearchTests(TestCase):
     def test_get_article_lookup(self):
         self.assertIsNotNone(get_article("getting-started"))
         self.assertIsNone(get_article("nope"))
+
+
+@override_settings(**TEST_SETTINGS)
+class POSTests(TestCase):
+    """Opt-in Point of Sale: gated by the business-profile toggle; a sale posts
+    cash + revenue + GST, reduces stock, and produces a printable/sendable receipt."""
+
+    def _user(self, email="pos-owner@example.com", pos=True):
+        user = User.objects.create_user(username=email, email=email, password="strong-password-123")
+        self.client.force_login(user)
+        BusinessProfile.objects.create(
+            market="IN",
+            owner=user,
+            owner_email=email,
+            business_name="Corner Shop",
+            business_type="trading",
+            pos_enabled=pos,
+        )
+        return user
+
+    def _item(self, user, name="Cola", sales_rate="100", gst_rate="18"):
+        return InventoryItem.objects.create(
+            market="IN",
+            owner=user,
+            owner_email=user.email,
+            name=name,
+            sales_rate=Decimal(sales_rate),
+            gst_rate=Decimal(gst_rate),
+            track_inventory=True,
+            is_active=True,
+        )
+
+    def test_pos_toggle_saves_on_business_profile(self):
+        user = User.objects.create_user(username="t@example.com", email="t@example.com", password="strong-password-123")
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("business_profile"),
+            {
+                "business_type": "trading",
+                "business_name": "Shop",
+                "template": "classic",
+                "accent_color": "#126b4f",
+                "pos_enabled": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(BusinessProfile.objects.get(owner=user).pos_enabled)
+
+    def test_pos_hidden_when_disabled(self):
+        self._user(pos=False)
+        self.assertEqual(self.client.get(reverse("pos")).status_code, 404)
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertNotIn("/dashboard/pos/", dashboard.content.decode("utf-8"))
+
+    def test_pos_screen_and_sidebar_when_enabled(self):
+        user = self._user(pos=True)
+        self._item(user)
+        response = self.client.get(reverse("pos"))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Point of Sale", body)
+        self.assertIn("pos-product", body)
+        self.assertIn("/dashboard/pos/", self.client.get(reverse("dashboard")).content.decode("utf-8"))
+
+    def test_pos_sale_posts_revenue_gst_cash_and_reduces_stock(self):
+        user = self._user(pos=True)
+        item = self._item(user, sales_rate="100", gst_rate="18")
+        response = self.client.post(
+            reverse("pos_sale"),
+            {"cart": json.dumps([{"id": item.id, "qty": 2}]), "payment_method": "cash", "customer_name": "Walk-in"},
+        )
+        self.assertEqual(response.status_code, 302)
+        voucher = Voucher.objects.get(voucher_type="sales")
+        self.assertEqual(voucher.total_amount, Decimal("236.00"))
+        lines = voucher.journal_entry.lines
+        self.assertTrue(lines.filter(account__code="1000", debit=Decimal("236.00")).exists())
+        self.assertTrue(lines.filter(account__code="4120", credit=Decimal("200.00")).exists())
+        self.assertTrue(lines.filter(account__code="2110", credit=Decimal("18.00")).exists())
+        self.assertTrue(lines.filter(account__code="2120", credit=Decimal("18.00")).exists())
+        self.assertTrue(StockMovement.objects.filter(item=item, movement_type="sale", quantity=Decimal("2")).exists())
+        self.assertEqual(response["Location"], f"/dashboard/pos/receipt/{voucher.id}/")
+
+    def test_pos_sale_card_payment_uses_bank_and_no_gst(self):
+        user = self._user(pos=True)
+        item = self._item(user, sales_rate="50", gst_rate="0")
+        self.client.post(
+            reverse("pos_sale"),
+            {"cart": json.dumps([{"id": item.id, "qty": 1}]), "payment_method": "card"},
+        )
+        voucher = Voucher.objects.get(voucher_type="sales")
+        self.assertEqual(voucher.total_amount, Decimal("50.00"))
+        self.assertTrue(voucher.journal_entry.lines.filter(account__code="1010", debit=Decimal("50.00")).exists())
+        self.assertFalse(voucher.journal_entry.lines.filter(account__code="2110").exists())
+
+    def test_pos_sale_empty_cart_redirects_without_posting(self):
+        self._user(pos=True)
+        response = self.client.post(reverse("pos_sale"), {"cart": "[]", "payment_method": "cash"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("error=empty", response["Location"])
+        self.assertFalse(Voucher.objects.filter(voucher_type="sales").exists())
+
+    def test_pos_sale_blocked_when_disabled(self):
+        user = self._user(pos=False)
+        item = self._item(user)
+        response = self.client.post(
+            reverse("pos_sale"),
+            {"cart": json.dumps([{"id": item.id, "qty": 1}]), "payment_method": "cash"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(Voucher.objects.filter(voucher_type="sales").exists())
+
+    def test_pos_receipt_renders_with_send_option(self):
+        user = self._user(pos=True)
+        item = self._item(user, name="Masala Tea", sales_rate="20", gst_rate="5")
+        self.client.post(
+            reverse("pos_sale"),
+            {"cart": json.dumps([{"id": item.id, "qty": 3}]), "payment_method": "cash"},
+        )
+        voucher = Voucher.objects.get(voucher_type="sales")
+        response = self.client.get(reverse("pos_receipt", args=[voucher.id]))
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode("utf-8")
+        self.assertIn("Masala Tea", body)
+        self.assertIn("Total", body)
+        self.assertIn("wa.me", body)
+
+    def test_pos_feature_in_search_only_when_enabled(self):
+        enabled = [feature["title"] for feature in search_features("point of sale", pos_enabled=True)]
+        disabled = [feature["title"] for feature in search_features("point of sale", pos_enabled=False)]
+        self.assertIn("Point of Sale", enabled)
+        self.assertNotIn("Point of Sale", disabled)

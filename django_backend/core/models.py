@@ -224,6 +224,7 @@ class BusinessProfile(models.Model):
     thank_you_note = models.TextField(blank=True)
     template = models.CharField(max_length=20, choices=INVOICE_TEMPLATE_CHOICES, default="classic")
     accent_color = models.CharField(max_length=7, default="#126b4f")
+    pos_enabled = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -696,6 +697,7 @@ class InventoryItem(models.Model):
     item_type = models.CharField(max_length=30, choices=INVENTORY_ITEM_TYPE_CHOICES, default="trading")
     unit = models.CharField(max_length=30, default="pcs")
     sales_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     purchase_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     reorder_level = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     track_inventory = models.BooleanField(default=True)
