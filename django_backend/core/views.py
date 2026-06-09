@@ -235,6 +235,13 @@ def get_business_profile(request: HttpRequest) -> BusinessProfile | None:
     return BusinessProfile.objects.filter(account_q(request)).first()
 
 
+def pos_enabled_for(request: HttpRequest) -> bool:
+    if not request.user.is_authenticated:
+        return False
+    profile = get_business_profile(request)
+    return bool(profile and profile.pos_enabled)
+
+
 def ensure_default_chart(request: HttpRequest) -> None:
     email = current_account_email(request)
     market = current_market(request)
@@ -456,7 +463,7 @@ def post_voucher_inventory_line(request: HttpRequest, voucher: Voucher, line: di
             unit_cost=rate,
         )
     elif voucher.voucher_type == "sales":
-        fifo_cost = consume_fifo_layers(voucher_line)
+        fifo_cost = consume_fifo_layers(voucher_line, strict=line.get("strict", True))
         if fifo_cost > 0 and voucher.journal_entry:
             cogs_account = account_by_code(request, "5010")
             inventory_account = account_by_code(request, "1210")
@@ -471,7 +478,7 @@ def post_voucher_inventory_line(request: HttpRequest, voucher: Voucher, line: di
     return voucher_line
 
 
-def consume_fifo_layers(sale_line: VoucherInventoryLine) -> Decimal:
+def consume_fifo_layers(sale_line: VoucherInventoryLine, *, strict: bool = True) -> Decimal:
     required = sale_line.quantity
     total_cost = Decimal("0")
     layers = StockCostLayer.objects.filter(
@@ -492,7 +499,7 @@ def consume_fifo_layers(sale_line: VoucherInventoryLine) -> Decimal:
         layer.save(update_fields=["remaining_quantity"])
         total_cost += amount
         required -= take
-    if required > 0:
+    if required > 0 and strict:
         raise ValueError(f"Insufficient FIFO stock for {sale_line.item.name}. Short by {required}.")
     return total_cost.quantize(Decimal("0.01"))
 
@@ -2192,6 +2199,9 @@ def app_sidebar(request: HttpRequest | None = None) -> str:
         ("/dashboard/#accounting", "A", "Chart of accounts"),
         ("/dashboard/billing/pro/", "B", "Billing"),
     ]
+    if pos_enabled_for(request):
+        insert_at = next((index + 1 for index, link in enumerate(links) if link[0] == "/dashboard/inventory/"), len(links))
+        links.insert(insert_at, ("/dashboard/pos/", "PS", "Point of Sale"))
     if request.user.is_staff:
         links.append(("/dashboard/monitoring/", "M", "Monitoring"))
         links.append(("/dashboard/gstn/", "GS", "GSTN API"))
@@ -3879,6 +3889,7 @@ def inventory(request: HttpRequest) -> HttpResponse:
                     item_type=item_type,
                     unit=clean_text(request.POST.get("unit"), "pcs", 30),
                     sales_rate=decimal_value(request.POST.get("sales_rate")),
+                    gst_rate=decimal_value(request.POST.get("gst_rate")),
                     purchase_rate=decimal_value(request.POST.get("purchase_rate")),
                     reorder_level=decimal_value(request.POST.get("reorder_level")),
                     track_inventory=request.POST.get("track_inventory") == "on",
@@ -3991,6 +4002,7 @@ def inventory(request: HttpRequest) -> HttpResponse:
           <label>Category<input name="category" placeholder="Materials, finished goods, packages" /></label>
           <label>Unit<input name="unit" value="pcs" placeholder="pcs, kg, hour, package" /></label>
           <label>Sales rate<input name="sales_rate" type="number" min="0" step="0.01" /></label>
+          <label>GST rate %<input name="gst_rate" type="number" min="0" max="100" step="0.01" value="0" placeholder="e.g. 5, 12, 18" /></label>
           <label>Purchase rate<input name="purchase_rate" type="number" min="0" step="0.01" /></label>
           <label>Opening quantity<input name="opening_quantity" type="number" min="0" step="0.01" /></label>
           <label>Reorder level<input name="reorder_level" type="number" min="0" step="0.01" /></label>
@@ -4287,6 +4299,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
         "thank_you_note": profile.thank_you_note if profile else "Thank you for your business.",
         "template": profile.template if profile else "classic",
         "accent_color": profile.accent_color if profile else "#126b4f",
+        "pos_enabled": profile.pos_enabled if profile else False,
     }
     error = ""
     if request.method == "POST":
@@ -4301,6 +4314,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
             "thank_you_note": clean_text(request.POST.get("thank_you_note")),
             "template": clean_invoice_template(request.POST.get("template")),
             "accent_color": clean_accent_color(request.POST.get("accent_color")),
+            "pos_enabled": request.POST.get("pos_enabled") == "on",
         }
         logo_upload = request.FILES.get("business_logo")
         logo_error = valid_logo_upload(logo_upload)
@@ -4327,6 +4341,7 @@ def business_profile(request: HttpRequest) -> HttpResponse:
 
     error_html = f'<p class="form-error">{escape(error)}</p>' if error else ""
     logo_hint = "Current logo is saved. Upload a new file to replace it." if profile and profile.business_logo else "Optional PNG, JPG, WebP or GIF logo."
+    pos_checked = "checked" if values["pos_enabled"] else ""
     body = f"""
     <main class="account-shell wide-form">
       <section class="account-card finance-form-card">
@@ -4348,6 +4363,8 @@ def business_profile(request: HttpRequest) -> HttpResponse:
           <label>Brand/accent color<input name="accent_color" type="color" value="{escape(values['accent_color'])}" /></label>
           <label class="full-row">Business logo<input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
           <p class="form-hint full-row">{escape(logo_hint)}</p>
+          <label class="checkbox-row full-row"><input type="checkbox" name="pos_enabled" {pos_checked} /> Enable Point of Sale (POS) — a fast counter screen to sell products from your inventory and print receipts</label>
+          <p class="form-hint full-row">Turn this on for shops, restaurants and counter B2C sales. When enabled a POS link appears in your menu. Set each product's price and GST rate in Inventory.</p>
           <div class="dashboard-actions">
             <button class="button primary" type="submit">Save business profile</button>
             <a class="button secondary" href="/dashboard/">Back to dashboard</a>
@@ -4368,6 +4385,253 @@ def business_profile_logo(request: HttpRequest) -> HttpResponse:
     response = FileResponse(profile.business_logo.open("rb"))
     response["Content-Type"] = image_content_type(profile.business_logo.name)
     return response
+
+
+POS_PAGE_SCRIPT = """
+<script>
+(function(){
+  const products = {};
+  const cart = {};
+  document.querySelectorAll('.pos-product').forEach(function(btn){
+    products[btn.dataset.id] = {name: btn.dataset.name, rate: parseFloat(btn.dataset.rate) || 0, gst: parseFloat(btn.dataset.gst) || 0};
+    btn.addEventListener('click', function(){ cart[btn.dataset.id] = (cart[btn.dataset.id] || 0) + 1; render(); });
+  });
+  const cartEl = document.getElementById('pos-cart');
+  const subEl = document.getElementById('pos-subtotal');
+  const gstEl = document.getElementById('pos-gst');
+  const totalEl = document.getElementById('pos-total');
+  const cartData = document.getElementById('pos-cart-data');
+  const completeBtn = document.getElementById('pos-complete');
+  const form = document.getElementById('pos-form');
+  const search = document.getElementById('pos-search-input');
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function setQty(id, q){ if(q <= 0){ delete cart[id]; } else { cart[id] = q; } render(); }
+  function render(){
+    cartEl.innerHTML = '';
+    let sub = 0, gst = 0;
+    const ids = Object.keys(cart);
+    ids.forEach(function(id){
+      const p = products[id]; const q = cart[id];
+      const net = p.rate * q; const g = net * p.gst / 100;
+      sub += net; gst += g;
+      const row = document.createElement('div');
+      row.className = 'pos-cart-row';
+      row.innerHTML = '<span class="pos-cart-name">' + escapeHtml(p.name) + '</span>'
+        + '<span class="pos-cart-qty"><button type="button" data-act="dec" data-id="' + id + '">-</button><b>' + q + '</b><button type="button" data-act="inc" data-id="' + id + '">+</button></span>'
+        + '<span class="pos-cart-amt">' + net.toFixed(2) + '</span>'
+        + '<button type="button" class="pos-cart-del" data-act="del" data-id="' + id + '" aria-label="Remove">&times;</button>';
+      cartEl.appendChild(row);
+    });
+    if(ids.length === 0){ cartEl.innerHTML = '<p class="pos-cart-empty">Tap a product to start a sale.</p>'; }
+    subEl.textContent = sub.toFixed(2);
+    gstEl.textContent = gst.toFixed(2);
+    totalEl.textContent = (sub + gst).toFixed(2);
+    completeBtn.disabled = ids.length === 0;
+  }
+  cartEl.addEventListener('click', function(e){
+    const b = e.target.closest('button'); if(!b || !b.dataset.act) return;
+    const id = b.dataset.id;
+    if(b.dataset.act === 'inc') setQty(id, (cart[id] || 0) + 1);
+    else if(b.dataset.act === 'dec') setQty(id, (cart[id] || 0) - 1);
+    else setQty(id, 0);
+  });
+  if(search){ search.addEventListener('input', function(){
+    const q = search.value.toLowerCase();
+    document.querySelectorAll('.pos-product').forEach(function(btn){
+      btn.style.display = btn.dataset.name.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    });
+  }); }
+  form.addEventListener('submit', function(e){
+    const items = Object.keys(cart).map(function(id){ return {id: parseInt(id, 10), qty: cart[id]}; });
+    if(items.length === 0){ e.preventDefault(); return; }
+    cartData.value = JSON.stringify(items);
+  });
+  render();
+})();
+</script>
+"""
+
+
+@login_required
+@require_GET
+def pos(request: HttpRequest) -> HttpResponse:
+    if not pos_enabled_for(request):
+        raise Http404("Point of Sale is not enabled for this business.")
+    ensure_default_chart(request)
+    currency = "$" if current_market(request) == "US" else RUPEE_SYMBOL
+    items = list(InventoryItem.objects.filter(account_q(request), is_active=True).order_by("name"))
+    product_cards = "".join(
+        f'<button type="button" class="pos-product" data-id="{item.id}" data-name="{escape(item.name)}" data-rate="{item.sales_rate}" data-gst="{item.gst_rate}">'
+        f'<strong>{escape(item.name)}</strong><span>{escape(currency)} {item.sales_rate}</span>'
+        + (f'<small>{item.gst_rate:g}% GST</small>' if item.gst_rate else '<small>No GST</small>')
+        + '</button>'
+        for item in items
+    )
+    if not items:
+        product_cards = '<p class="pos-empty">No products yet. Add products in <a href="/dashboard/inventory/">Inventory</a> with a sales price and GST rate to sell them here.</p>'
+    payment_options = "".join(f'<option value="{value}">{label}</option>' for value, label in [("cash", "Cash"), ("upi", "UPI"), ("card", "Card")])
+    error_html = '<p class="form-error">That sale was empty — add at least one product.</p>' if clean_text(request.GET.get("error"), max_length=20) == "empty" else ""
+    body = f"""
+    <main class="pos-shell">
+      <section class="pos-products-pane">
+        <div class="pos-pane-head">
+          <h1>Point of Sale</h1>
+          <input type="search" id="pos-search-input" placeholder="Search products…" aria-label="Search products" autocomplete="off" />
+        </div>
+        {error_html}
+        <div class="pos-products" id="pos-products">{product_cards}</div>
+      </section>
+      <aside class="pos-cart-pane">
+        <h2>Current sale</h2>
+        <div class="pos-cart" id="pos-cart"><p class="pos-cart-empty">Tap a product to start a sale.</p></div>
+        <div class="pos-totals">
+          <div><span>Subtotal</span><strong>{escape(currency)} <span id="pos-subtotal">0.00</span></strong></div>
+          <div><span>GST</span><strong>{escape(currency)} <span id="pos-gst">0.00</span></strong></div>
+          <div class="pos-grand"><span>Total</span><strong>{escape(currency)} <span id="pos-total">0.00</span></strong></div>
+        </div>
+        <form id="pos-form" method="post" action="/dashboard/pos/sale/">
+          {csrf_input(request)}
+          <input type="hidden" name="cart" id="pos-cart-data" />
+          <label>Customer (optional)<input name="customer_name" placeholder="Walk-in customer" maxlength="120" /></label>
+          <label>Payment method<select name="payment_method">{payment_options}</select></label>
+          <button class="button primary" type="submit" id="pos-complete" disabled>Complete sale</button>
+        </form>
+        <a class="pos-help-link" href="/dashboard/help/pos-sales/">How POS works</a>
+      </aside>
+    </main>
+    """ + POS_PAGE_SCRIPT
+    return page_shell("Point of Sale", body, request)
+
+
+@login_required
+@require_POST
+def pos_sale(request: HttpRequest) -> HttpResponse:
+    if not pos_enabled_for(request):
+        raise Http404("Point of Sale is not enabled for this business.")
+    ensure_default_chart(request)
+    try:
+        cart = json.loads(request.POST.get("cart") or "[]")
+    except (ValueError, TypeError):
+        cart = []
+    if not isinstance(cart, list):
+        cart = []
+    payment_method = clean_text(request.POST.get("payment_method"), "cash", 10)
+    if payment_method not in {"cash", "upi", "card"}:
+        payment_method = "cash"
+    customer = clean_text(request.POST.get("customer_name"), max_length=120) or "Walk-in customer"
+    subtotal = Decimal("0.00")
+    gst_total = Decimal("0.00")
+    cart_lines = []
+    for entry in cart:
+        if not isinstance(entry, dict):
+            continue
+        item = InventoryItem.objects.filter(account_q(request), id=entry.get("id"), is_active=True).first()
+        quantity = decimal_value(entry.get("qty"))
+        if not item or quantity <= 0:
+            continue
+        line_net = (quantity * item.sales_rate).quantize(Decimal("0.01"))
+        line_gst = (line_net * (item.gst_rate or Decimal("0")) / Decimal("100")).quantize(Decimal("0.01"))
+        subtotal += line_net
+        gst_total += line_gst
+        cart_lines.append((item, quantity))
+    if not cart_lines:
+        return redirect("/dashboard/pos/?error=empty")
+    total = (subtotal + gst_total).quantize(Decimal("0.01"))
+    cash_code = "1000" if payment_method == "cash" else "1010"
+    ledger_lines = [
+        {"account": account_by_code(request, cash_code), "debit": total, "credit": Decimal("0"), "description": f"POS sale ({payment_method})"},
+        {"account": account_by_code(request, "4120"), "debit": Decimal("0"), "credit": subtotal, "description": "POS product sales"},
+    ]
+    split = gst_split(gst_total, "intra")
+    if split["cgst"] > 0:
+        ledger_lines.append({"account": account_by_code(request, "2110"), "debit": Decimal("0"), "credit": split["cgst"], "description": "CGST on POS sale"})
+    if split["sgst"] > 0:
+        ledger_lines.append({"account": account_by_code(request, "2120"), "debit": Decimal("0"), "credit": split["sgst"], "description": "SGST on POS sale"})
+    if split["igst"] > 0:
+        ledger_lines.append({"account": account_by_code(request, "2130"), "debit": Decimal("0"), "credit": split["igst"], "description": "IGST on POS sale"})
+    inventory_lines = [
+        {"item": item, "quantity": quantity, "rate": item.sales_rate, "description": item.name, "strict": False}
+        for item, quantity in cart_lines
+    ]
+    voucher = create_voucher_with_lines(
+        request,
+        voucher_type="sales",
+        party_name=customer,
+        narration=f"POS sale paid by {payment_method}",
+        ledger_lines=ledger_lines,
+        inventory_lines=inventory_lines,
+    )
+    audit_log(request, "pos.sale", "Voucher", voucher.id, f"POS sale {voucher.voucher_number} for {customer}, total {total}")
+    return redirect(f"/dashboard/pos/receipt/{voucher.id}/")
+
+
+@login_required
+@require_GET
+def pos_receipt(request: HttpRequest, voucher_id: int) -> HttpResponse:
+    voucher = Voucher.objects.filter(account_q(request), id=voucher_id, voucher_type="sales").first()
+    if not voucher:
+        raise Http404("Receipt not found")
+    profile = get_business_profile(request)
+    currency = "$" if voucher.market == "US" else RUPEE_SYMBOL
+    inv_lines = list(voucher.inventory_lines.select_related("item"))
+    item_rows = "".join(
+        f'<tr><td>{escape(line.item.name)}</td><td class="r">{line.quantity:g}</td><td class="r">{currency} {line.rate}</td><td class="r">{currency} {line.amount}</td></tr>'
+        for line in inv_lines
+    ) or '<tr><td colspan="4">No items.</td></tr>'
+    subtotal = sum((line.amount for line in inv_lines), Decimal("0")).quantize(Decimal("0.01"))
+    total = voucher.total_amount
+    gst_total = (total - subtotal).quantize(Decimal("0.01"))
+    business_name = (profile.business_name if profile else "") or "RozLedger"
+    business_phone = (profile.business_phone if profile else "") or ""
+    business_address = (profile.business_address if profile else "") or ""
+    address_line = business_address.splitlines()[0] if business_address.strip() else ""
+    sub_line = " · ".join(part for part in [escape(business_phone), escape(address_line)] if part)
+    receipt_lines = "\n".join(f"{line.item.name} x{line.quantity:g} = {currency} {line.amount}" for line in inv_lines)
+    receipt_text = f"{business_name}\nReceipt {voucher.voucher_number} ({voucher.voucher_date:%d %b %Y})\n{receipt_lines}\nSubtotal: {currency} {subtotal}\nGST: {currency} {gst_total}\nTotal: {currency} {total}\nThank you!"
+    wa_link = "https://wa.me/?text=" + quote_plus(receipt_text)
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Receipt {escape(voucher.voucher_number)}</title>
+<style>
+  body {{ font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f4f7f5; margin: 0; padding: 24px; color: #16201d; }}
+  .receipt {{ max-width: 340px; margin: 0 auto; background: #fff; border: 1px solid #e0e6e3; border-radius: 10px; padding: 22px; }}
+  .receipt h1 {{ font-size: 18px; margin: 0 0 2px; text-align: center; }}
+  .receipt .muted {{ color: #6b7a74; font-size: 12px; text-align: center; margin: 0 0 12px; }}
+  .receipt table {{ width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }}
+  .receipt th, .receipt td {{ padding: 5px 0; text-align: left; }}
+  .receipt td.r, .receipt th.r {{ text-align: right; }}
+  .receipt tbody tr {{ border-bottom: 1px dashed #e6ebe8; }}
+  .receipt .tot {{ display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }}
+  .receipt .grand {{ font-weight: 700; font-size: 16px; border-top: 2px solid #222; margin-top: 6px; padding-top: 8px; }}
+  .receipt .meta {{ font-size: 12px; color: #6b7a74; margin-top: 14px; text-align: center; }}
+  .actions {{ max-width: 340px; margin: 14px auto 0; display: flex; gap: 8px; }}
+  .actions a, .actions button {{ flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #126b4f; text-align: center; text-decoration: none; cursor: pointer; font-size: 14px; }}
+  .actions .print {{ background: #126b4f; color: #fff; border: 0; }}
+  .actions .send {{ background: #25d366; color: #fff; border: 0; }}
+  .actions .new {{ background: #fff; color: #126b4f; }}
+  @media print {{ .actions {{ display: none; }} body {{ background: #fff; padding: 0; }} .receipt {{ border: 0; }} }}
+</style></head>
+<body>
+  <div class="receipt">
+    <h1>{escape(business_name)}</h1>
+    <p class="muted">{sub_line}</p>
+    <p class="muted">Receipt {escape(voucher.voucher_number)} · {voucher.voucher_date:%d %b %Y}</p>
+    <table>
+      <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
+      <tbody>{item_rows}</tbody>
+    </table>
+    <div class="tot"><span>Subtotal</span><span>{currency} {subtotal}</span></div>
+    <div class="tot"><span>GST</span><span>{currency} {gst_total}</span></div>
+    <div class="tot grand"><span>Total</span><span>{currency} {total}</span></div>
+    <p class="meta">{escape(voucher.narration)}<br />Customer: {escape(voucher.party_name)}<br />Thank you for your purchase!</p>
+  </div>
+  <div class="actions">
+    <button class="print" onclick="window.print()">Print receipt</button>
+    <a class="send" href="{wa_link}" target="_blank" rel="noopener">Send on WhatsApp</a>
+    <a class="new" href="/dashboard/pos/">New sale</a>
+  </div>
+</body></html>"""
+    return HttpResponse(html)
 
 
 @login_required
@@ -5772,6 +6036,7 @@ FEATURE_REGISTRY = [
     {"title": "Vouchers", "url": "/dashboard/vouchers/new/", "category": "Accounting", "keywords": "voucher journal payment receipt contra entry manual", "staff": False},
     {"title": "Chart of accounts", "url": "/dashboard/#accounting", "category": "Accounting", "keywords": "chart accounts ledger codes account head", "staff": False},
     {"title": "Inventory & stock", "url": "/dashboard/inventory/", "category": "Inventory", "keywords": "inventory stock products items fifo goods reorder", "staff": False},
+    {"title": "Point of Sale", "url": "/dashboard/pos/", "category": "Sales", "keywords": "pos point of sale counter shop retail restaurant sell cash receipt till checkout billing", "staff": False, "requires": "pos"},
     {"title": "Reports", "url": "/dashboard/reports/", "category": "Reports", "keywords": "reports profit loss balance sheet trial balance tax gst aging cash flow", "staff": False},
     {"title": "Audit trail", "url": "/dashboard/audit/", "category": "Reports", "keywords": "audit trail history log activity changes who", "staff": False},
     {"title": "Bank reconciliation", "url": "/dashboard/reconciliation/", "category": "Tools", "keywords": "reconcile bank reconciliation statement match", "staff": False},
@@ -5926,6 +6191,24 @@ KB_ARTICLES = [
 """,
     },
     {
+        "slug": "pos-sales",
+        "title": "Sell at the counter with POS",
+        "category": "Sales",
+        "summary": "Ring up walk-in sales fast, take payment, reduce stock and print or send a receipt.",
+        "keywords": "pos point of sale counter shop retail restaurant sell cash receipt checkout till billing",
+        "action": ("Open Point of Sale", "/dashboard/pos/"),
+        "body": """
+<p>Point of Sale (POS) is a fast counter screen for B2C shops, restaurants and on-premises sales. Turn it on in <a href="/dashboard/business-profile/">Business profile</a> — it stays hidden for businesses that do not need it.</p>
+<ol>
+<li><strong>Add products</strong> in <a href="/dashboard/inventory/">Inventory</a> with a sales price and a GST rate.</li>
+<li>Open <a href="/dashboard/pos/">Point of Sale</a>, tap products to build the cart and adjust quantities.</li>
+<li>Pick the payment method (Cash, UPI or Card) and press <strong>Complete sale</strong>.</li>
+<li><strong>Print or send</strong> the receipt — including a one-tap WhatsApp share.</li>
+</ol>
+<p>Every sale posts to your books automatically: it records the money received and the GST, and reduces stock with the correct cost of goods sold. POS sales flow into your profit &amp; loss, GST summary and inventory reports like any other sale.</p>
+""",
+    },
+    {
         "slug": "reports",
         "title": "Understand your reports",
         "category": "Reports",
@@ -6013,8 +6296,11 @@ KB_ARTICLES = [
 ]
 
 
-def search_features(q: str, is_staff: bool = False) -> list[dict]:
-    items = [f for f in FEATURE_REGISTRY if is_staff or not f["staff"]]
+def search_features(q: str, is_staff: bool = False, pos_enabled: bool = False) -> list[dict]:
+    items = [
+        f for f in FEATURE_REGISTRY
+        if (is_staff or not f["staff"]) and (f.get("requires") != "pos" or pos_enabled)
+    ]
     tokens = [t for t in (q or "").lower().split() if t]
     if not tokens:
         return []
@@ -6101,7 +6387,7 @@ def global_search(request: HttpRequest) -> HttpResponse:
         for kind, reference, name, amount, link in rows
     ) or '<tr><td colspan="4" class="empty-report-row">No matching records.</td></tr>'
 
-    feature_hits = search_features(q, request.user.is_staff) if q else []
+    feature_hits = search_features(q, request.user.is_staff, pos_enabled_for(request)) if q else []
     article_hits = search_articles(q) if q else []
     feature_section = ""
     if feature_hits:
@@ -6213,7 +6499,7 @@ def help_article(request: HttpRequest, slug: str) -> HttpResponse:
     if action:
         label, url = action
         action_html = f'<a class="button primary" href="{escape(url)}">{escape(label)}</a>'
-    related = search_features(article["keywords"], request.user.is_staff)[:6]
+    related = search_features(article["keywords"], request.user.is_staff, pos_enabled_for(request))[:6]
     related_html = ""
     if related:
         related_cards = "".join(
